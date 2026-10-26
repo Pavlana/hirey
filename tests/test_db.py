@@ -1,0 +1,113 @@
+import sqlite3
+import tempfile
+import unittest
+from datetime import date, timedelta
+from pathlib import Path
+from unittest import mock
+
+from prep import db
+
+TODAY = "2026-03-10"
+
+
+class DbTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sub" / "prep.db"
+        self.conn = db.connect(self.path)
+        self.addCleanup(self.conn.close)
+
+    def test_creates_tables(self) -> None:
+        names = {r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        self.assertTrue({"applications", "interviews", "tasks", "gaps"} <= names)
+        self.assertNotIn("sessions", names)
+        self.assertNotIn("cards", names)
+
+    def test_connect_is_idempotent(self) -> None:
+        db.add_application(self.conn, "Acme", "Engineer")
+        again = db.connect(self.path)
+        self.addCleanup(again.close)
+        self.assertEqual(len(db.list_applications(again)), 1)
+
+    def test_add_application_defaults(self) -> None:
+        app = db.get_application(self.conn, db.add_application(self.conn, "Acme", "Engineer"))
+        self.assertEqual(app["status"], "to_apply")
+        self.assertEqual(app["puzzle_round"], "unknown")
+        self.assertTrue(app["created_at"].endswith("Z"))
+        self.assertEqual(app["created_at"], app["updated_at"])
+
+    def test_invalid_values_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            db.add_application(self.conn, "Acme", "Engineer", status="hired")
+        with self.assertRaises(ValueError):
+            db.add_application(self.conn, "Acme", "Engineer", tier="D")
+        with self.assertRaises(ValueError):
+            db.add_application(self.conn, "Acme", "Engineer", next_action_date="next week")
+        with self.assertRaises(ValueError):
+            db.add_application(self.conn, "Acme", "Engineer", salary="x")
+        with self.assertRaises(ValueError):
+            db.add_task(self.conn, "x", kind="chores")
+
+    def test_update_application(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", next_action="Call", next_action_date=TODAY)
+        db.update_application(self.conn, app_id, status="technical", next_action=None)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual(app["status"], "technical")
+        self.assertIsNone(app["next_action"])
+        with self.assertRaises(LookupError):
+            db.update_application(self.conn, 999, status="applied")
+
+    def test_overdue_actions(self) -> None:
+        due = db.add_application(self.conn, "A", "r", next_action="x", next_action_date="2026-03-01")
+        db.add_application(self.conn, "B", "r", next_action="x", next_action_date="2026-03-11")
+        db.add_application(self.conn, "C", "r", status="rejected", next_action="x", next_action_date="2026-03-01")
+        today = db.add_application(self.conn, "D", "r", next_action="x", next_action_date=TODAY)
+        self.assertEqual([a["id"] for a in db.overdue_actions(self.conn, TODAY)], [due, today])
+
+    def test_linked_job_ids(self) -> None:
+        db.add_application(self.conn, "A", "r", getjo_job_id="gh:a:1")
+        db.add_application(self.conn, "B", "r")
+        self.assertEqual(db.linked_job_ids(self.conn), {"gh:a:1"})
+        self.assertEqual(db.find_by_job(self.conn, "gh:a:1")["company"], "A")
+
+    def test_tasks(self) -> None:
+        overdue = db.add_task(self.conn, "old", "prep", "2026-03-01")
+        db.add_task(self.conn, "later", "drill", "2026-04-01")
+        undated = db.add_task(self.conn, "whenever")
+        self.assertEqual([t["id"] for t in db.tasks_due(self.conn, TODAY)], [overdue])
+        self.assertEqual(db.list_tasks(self.conn)[-1]["id"], undated)
+
+        db.complete_task(self.conn, overdue)
+        self.assertEqual(db.tasks_due(self.conn, TODAY), [])
+        done = db.list_tasks(self.conn, "done")
+        self.assertEqual(done[0]["id"], overdue)
+        self.assertIsNotNone(done[0]["done_at"])
+        with self.assertRaises(LookupError):
+            db.complete_task(self.conn, 999)
+
+    def test_interviews_and_gaps(self) -> None:
+        app_id = db.add_application(self.conn, "A", "r")
+        db.add_interview(self.conn, app_id, TODAY, stage="technical")
+        gap_id = db.add_gap(self.conn, "explain DNS", TODAY, "mock")
+        task_id = db.add_task(self.conn, "drill DNS", "drill", gap_id=gap_id)
+        db.close_gap(self.conn, gap_id)
+        self.assertEqual(self.conn.execute("SELECT status FROM gaps").fetchone()[0], "closed")
+        self.assertEqual(self.conn.execute("SELECT gap_id FROM tasks WHERE id = ?", (task_id,)).fetchone()[0], gap_id)
+        with self.assertRaises(sqlite3.IntegrityError):
+            db.add_interview(self.conn, 999, TODAY)
+
+    def test_missing_columns_are_added(self) -> None:
+        with mock.patch.dict(db.MIGRATIONS, {"tasks": {"estimate": "INTEGER"}}):
+            conn = db.connect(self.path)
+            self.addCleanup(conn.close)
+            columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
+        self.assertIn("estimate", columns)
+
+    def test_today_iso(self) -> None:
+        self.assertEqual(db.today_iso(), date.today().isoformat())
+        self.assertLess(db.today_iso(), (date.today() + timedelta(days=1)).isoformat())
+
+
+if __name__ == "__main__":
+    unittest.main()

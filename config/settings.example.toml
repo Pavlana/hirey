@@ -1,0 +1,22 @@
+# Copy to ~/.config/inter_prep/settings.toml and fill in absolute paths.
+# That fixed per-user path is found from any checkout, dev3 worktree, launchd job or app,
+# without environment variables.
+#
+# Lookup order: $INTERPREP_SETTINGS, then config/settings.toml in the checkout (gitignored;
+# a per-checkout override), then ~/.config/inter_prep/settings.toml.
+# Each key can also be set with an environment variable, which wins over the file:
+#   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR
+#
+# Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
+# "../getjo" would point somewhere different in every worktree.
+
+# getjo's database. Opened read-only; never written.
+getjo_db = "/absolute/path/to/getjo/data/jobs.db"
+
+# This project's database. Use an absolute path outside any worktree, e.g. the main
+# checkout's data/ folder (gitignored). A relative path resolves against the repo root of
+# the running checkout, and a worktree's data/ folder is deleted with the worktree.
+prep_db = "/absolute/path/to/inter_prep/data/prep.db"
+
+# Folder holding cv.md, notes/ and sessions/. Never committed.
+private_dir = "/absolute/path/to/inter_prep"

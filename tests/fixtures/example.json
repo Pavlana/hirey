@@ -1,0 +1,21 @@
+{
+  "_comment": "Made-up data: fictional companies and people only. No pay values.",
+  "getjo_jobs": [
+    {"id": "greenhouse:acme-rockets:1001", "source": "greenhouse", "company": "Acme Rockets", "title": "Platform Engineer", "location": "London", "url": "https://boards.example.com/acme-rockets/jobs/1001", "description": "Fictional job.", "first_seen": "2026-01-10T08:00:00Z", "score": 9},
+    {"id": "lever:globex-labs:abc", "source": "lever", "company": "Globex Labs", "title": "Cloud Security Engineer", "location": "Remote", "url": "https://jobs.example.com/globex-labs/abc", "description": "Fictional job.", "first_seen": "2026-01-12T08:00:00Z", "score": 8},
+    {"id": "ashby:initech-cloud:x1", "source": "ashby", "company": "Initech Cloud", "title": "DevOps Engineer", "location": "Manchester", "url": "https://jobs.example.com/initech-cloud/x1", "description": "Fictional job.", "first_seen": "2026-01-14T08:00:00Z", "score": 7},
+    {"id": "workable:hooli-data:77", "source": "workable", "company": "Hooli Data", "title": "Site Reliability Engineer", "location": "London", "url": "https://apply.example.com/hooli-data/77", "description": "Fictional job.", "first_seen": "2026-01-15T08:00:00Z", "score": 6},
+    {"id": "greenhouse:umbrella-ops:5", "source": "greenhouse", "company": "Umbrella Ops", "title": "Infrastructure Engineer", "location": "Leeds", "url": "https://boards.example.com/umbrella-ops/jobs/5", "description": "Fictional job.", "first_seen": "2026-01-16T08:00:00Z", "score": null}
+  ],
+  "applications": [
+    {"getjo_job_id": "greenhouse:acme-rockets:1001", "company": "Acme Rockets", "role": "Platform Engineer", "link": "https://boards.example.com/acme-rockets/jobs/1001", "tier": "A", "type": "permanent", "source": "greenhouse", "date_applied": "2026-01-11", "status": "recruiter_call", "last_contact": "2026-01-18", "next_action": "Prepare for technical interview", "next_action_date": "2026-01-20", "puzzle_round": "unknown", "contact": "Jordan Sample (recruiter)"},
+    {"company": "Stark Example Ltd", "role": "Cloud Engineer", "link": "https://careers.example.com/stark/42", "tier": "B", "type": "contract", "source": "referral", "date_applied": "2026-01-05", "status": "applied", "last_contact": "2026-01-05", "next_action": "Follow up by email", "next_action_date": "2026-01-19", "puzzle_round": "no"}
+  ],
+  "tasks": [
+    {"title": "Revise networking basics", "kind": "prep", "due_date": "2026-01-19"},
+    {"title": "Update CV summary", "kind": "admin"}
+  ],
+  "gaps": [
+    {"date": "2026-01-15", "session": "mock", "gap": "Explain a load balancer health check end to end"}
+  ]
+}

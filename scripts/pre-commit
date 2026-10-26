@@ -1,0 +1,5 @@
+#!/bin/sh
+# Refuse a commit that stages a personal file (cv.md, data/*, notes/*, ...).
+# Install: see README.md, "Pre-commit hook".
+cd "$(git rev-parse --show-toplevel)" || exit 1
+exec python3 -m prep.privacy --staged

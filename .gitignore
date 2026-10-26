@@ -30,3 +30,9 @@ __pycache__/
 .DS_Store
 .idea/
 .vscode/
+
+# Local settings (absolute paths to private data)
+config/settings.toml
+
+# Private agent skill (dev3 build-board workflow)
+.claude/skills/board/
