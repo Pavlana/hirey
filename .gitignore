@@ -1,0 +1,32 @@
+# Personal data: never committed. Committed templates use the .example suffix.
+cv.md
+*.docx
+*.xlsx
+*.pdf
+mock-interview-kit.md
+stories.md
+gaps.md
+design-cases.md
+notes/*
+!notes/*.example.md
+sessions/*
+!sessions/*.example.md
+data/*
+!data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python, editors, macOS
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+.idea/
+.vscode/
