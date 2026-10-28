@@ -27,6 +27,8 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_DB": str(self.prep_db),
             "PREP_GETJO_DB": str(self.getjo_db),
             "PREP_PRIVATE_DIR": str(self.tmp / "private"),
+            "PREP_DASHBOARD_PORT": "",
+            "PREP_WEEKLY_TARGET": "",
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()

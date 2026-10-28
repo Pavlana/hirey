@@ -12,6 +12,8 @@ Keys:
     getjo_db     absolute path to getjo's data/jobs.db (read-only)
     prep_db      path to this project's database (default data/prep.db)
     private_dir  absolute path to the folder holding cv.md, notes/, sessions/
+    dashboard_port  port for the local dashboard (default 8765)
+    weekly_target   applications per week shown on the dashboard (default 10)
 
 Relative paths are resolved against the repo root, never the current directory,
 because the code also runs from dev3 worktrees.
@@ -26,6 +28,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SETTINGS_PATH = REPO_ROOT / "config" / "settings.toml"
 USER_SETTINGS_PATH = Path.home() / ".config" / "inter_prep" / "settings.toml"
 DEFAULT_PREP_DB = "data/prep.db"
+DEFAULT_DASHBOARD_PORT = 8765
+DEFAULT_WEEKLY_TARGET = 10
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -33,6 +37,8 @@ ENV_KEYS = {
     "getjo_db": "PREP_GETJO_DB",
     "prep_db": "PREP_DB",
     "private_dir": "PREP_PRIVATE_DIR",
+    "dashboard_port": "PREP_DASHBOARD_PORT",
+    "weekly_target": "PREP_WEEKLY_TARGET",
 }
 
 
@@ -45,6 +51,8 @@ class Settings:
     getjo_db: Path | None
     prep_db: Path
     private_dir: Path | None
+    dashboard_port: int = DEFAULT_DASHBOARD_PORT
+    weekly_target: int = DEFAULT_WEEKLY_TARGET
 
 
 def _resolve(value: str) -> Path:
@@ -71,6 +79,17 @@ def settings_path() -> Path:
     return USER_SETTINGS_PATH
 
 
+def _int(data: dict, key: str, default: int, low: int, high: int) -> int:
+    value = data.get(key, default)
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = None
+    if isinstance(value, bool) or number is None or not low <= number <= high:
+        raise ConfigError(f"{key} must be a whole number from {low} to {high}, got {value!r}")
+    return number
+
+
 def load_settings(path: Path | None = None) -> Settings:
     """Return settings from the file (if present) with env vars taking precedence.
 
@@ -93,4 +112,6 @@ def load_settings(path: Path | None = None) -> Settings:
         getjo_db=_resolve(data["getjo_db"]) if data.get("getjo_db") else None,
         prep_db=_resolve(data.get("prep_db") or DEFAULT_PREP_DB),
         private_dir=_resolve(data["private_dir"]) if data.get("private_dir") else None,
+        dashboard_port=_int(data, "dashboard_port", DEFAULT_DASHBOARD_PORT, 1, 65535),
+        weekly_target=_int(data, "weekly_target", DEFAULT_WEEKLY_TARGET, 1, 1000),
     )

@@ -143,18 +143,8 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     if not (company and role):
         raise SystemExit("error: URL not found in getjo; pass --company and --role too")
 
-    existing = None
-    if job:
-        existing = db.find_by_job(conn, job["id"])
-    if existing is None and fields["link"]:
-        existing = db.find_by_link(conn, fields["link"])
-
-    fields.update(_status_fields(args, existing))
-    if existing:
-        db.update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
-        app_id, verb = existing["id"], "Updated"
-    else:
-        app_id, verb = db.add_application(conn, company, role, **fields), "Recorded"
+    app_id, created = db.record_application(conn, company, role, status=args.status, date_applied=args.date, **fields)
+    verb = "Recorded" if created else "Updated"
     app = db.get_application(conn, app_id)
     log.info("application %s saved", app_id)
 
@@ -167,24 +157,6 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print("  no next action set — add one with: python -m prep.cli update "
               f"{app_id} --next-action TEXT --next-date DATE")
     return 0
-
-
-def _status_fields(args: argparse.Namespace, existing: dict | None) -> dict:
-    """Status and dates for /applied. Never moves an application backwards: a later stage
-    (technical, offer, ...) is kept unless --status is passed explicitly."""
-    current = existing["status"] if existing else None
-    if args.status:
-        status = args.status
-    elif current in (None, "to_apply"):
-        status = "applied"
-    else:
-        status = current
-    fields: dict = {"status": status}
-    if status != "to_apply" and (args.date or not (existing and existing["date_applied"])):
-        fields["date_applied"] = args.date or db.today_iso()
-        if current in (None, "to_apply"):
-            fields["last_contact"] = fields["date_applied"]
-    return fields
 
 
 def cmd_apps(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:

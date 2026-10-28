@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the inter_prep dashboard (http://localhost:8765).
+  Copy to ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist and replace both placeholders:
+    /ABSOLUTE/PATH/TO/python3    a Python 3.11+ interpreter (output of: command -v python3)
+    /ABSOLUTE/PATH/TO/inter_prep the MAIN checkout, never a dev3 worktree (worktrees are deleted)
+  launchd does not read shell profiles: settings come from ~/.config/inter_prep/settings.toml.
+  Install / uninstall steps: README.md, "Dashboard".
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>uk.inter-prep.dashboard</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/ABSOLUTE/PATH/TO/python3</string>
+        <string>-m</string>
+        <string>prep.web</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/ABSOLUTE/PATH/TO/inter_prep</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+    <key>StandardOutPath</key>
+    <string>/ABSOLUTE/PATH/TO/inter_prep/data/dashboard.log</string>
+    <key>StandardErrorPath</key>
+    <string>/ABSOLUTE/PATH/TO/inter_prep/data/dashboard.log</string>
+</dict>
+</plist>

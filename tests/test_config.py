@@ -7,7 +7,8 @@ from unittest import mock
 from prep import config
 from prep.config import REPO_ROOT, ConfigError, load_settings
 
-CLEAN_ENV = {"INTERPREP_SETTINGS": "", "PREP_DB": "", "PREP_GETJO_DB": "", "PREP_PRIVATE_DIR": ""}
+CLEAN_ENV = {"INTERPREP_SETTINGS": "", "PREP_DB": "", "PREP_GETJO_DB": "", "PREP_PRIVATE_DIR": "",
+             "PREP_DASHBOARD_PORT": "", "PREP_WEEKLY_TARGET": ""}
 
 
 class LoadSettingsTest(unittest.TestCase):
@@ -29,6 +30,20 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertIsNone(s.getjo_db)
         self.assertIsNone(s.private_dir)
         self.assertEqual(s.prep_db, REPO_ROOT / "data" / "prep.db")
+        self.assertEqual(s.dashboard_port, 8765)
+        self.assertEqual(s.weekly_target, 10)
+
+    def test_dashboard_keys_from_file_and_env(self) -> None:
+        path = self.write("dashboard_port = 9000\nweekly_target = 5\n")
+        self.assertEqual(load_settings(path).dashboard_port, 9000)
+        with mock.patch.dict(os.environ, {"PREP_WEEKLY_TARGET": "12", "PREP_DASHBOARD_PORT": "8766"}):
+            s = load_settings(path)
+        self.assertEqual((s.dashboard_port, s.weekly_target), (8766, 12))
+
+    def test_bad_dashboard_keys_rejected(self) -> None:
+        for text in ('dashboard_port = "x"\n', "dashboard_port = 0\n", "weekly_target = true\n"):
+            with self.subTest(text=text), self.assertRaises(ConfigError):
+                load_settings(self.write(text))
 
     def test_reads_file(self) -> None:
         path = self.write(f'getjo_db = "{self.tmp}/jobs.db"\nprep_db = "{self.tmp}/prep.db"\nprivate_dir = "{self.tmp}"\n')

@@ -2,8 +2,8 @@
 
 A personal job-search and interview-prep workspace. It tracks applications, tasks and
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
-skills in this repo and, from phase 2, a local web dashboard. Both read and write the same
-database.
+skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`).
+Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,
 scores each job against a CV with Claude, stores jobs in its own SQLite database
@@ -34,7 +34,8 @@ a committed file.
   Paths to getjo and private data are absolute. Never use relative paths such as
   `../getjo`: the code runs from dev3 worktrees, where relative paths point elsewhere.
 - getjo's database is opened with SQLite URI `mode=ro`. Never write to it.
-- Logging with `logging` to stdout. Never log CV text, personal notes or pay.
+- Logging with `logging` to stdout. Never log CV text, personal notes, pay or request bodies.
+- The dashboard never renders `pay`, escapes every database value, and binds to loopback only.
 - Pay/salary may be stored only in the local database (`applications.pay`); never in
   committed files, fixtures, examples, logs or commit messages.
 - Nothing here applies to jobs, sends email or posts anywhere.
@@ -58,11 +59,13 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
-             cli.py (commands used by skills), seed_example.py (example dbs), privacy.py (tracked-file check)
+             cli.py (commands used by skills), stats.py (dashboard numbers), web.py (dashboard server),
+             static/style.css, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, task/ — each SKILL.md calls python -m prep.cli <command>
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
+launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in README)
 docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow)
 data/        local databases (gitignored)
 ```
@@ -74,6 +77,8 @@ data/        local databases (gitignored)
 - Record an application: `python -m prep.cli applied --job-id ID --next-action "..." --next-date +7`
 - Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ...`
 - Tasks: `python -m prep.cli task add|list|done`
+- Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then
-  `PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today`
+  `PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
+  `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees)
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

@@ -1,5 +1,6 @@
 {
-  "_comment": "Made-up data: fictional companies and people only. No pay values.",
+  "_comment": "Made-up data: fictional companies and people only. No pay values. Dates are relative to _anchor_date: python -m prep.seed_example shifts them so the anchor becomes today.",
+  "_anchor_date": "2026-01-20",
   "getjo_jobs": [
     {"id": "greenhouse:acme-rockets:1001", "source": "greenhouse", "company": "Acme Rockets", "title": "Platform Engineer", "location": "London", "url": "https://boards.example.com/acme-rockets/jobs/1001", "description": "Fictional job.", "first_seen": "2026-01-10T08:00:00Z", "score": 9},
     {"id": "lever:globex-labs:abc", "source": "lever", "company": "Globex Labs", "title": "Cloud Security Engineer", "location": "Remote", "url": "https://jobs.example.com/globex-labs/abc", "description": "Fictional job.", "first_seen": "2026-01-12T08:00:00Z", "score": 8},
@@ -8,12 +9,22 @@
     {"id": "greenhouse:umbrella-ops:5", "source": "greenhouse", "company": "Umbrella Ops", "title": "Infrastructure Engineer", "location": "Leeds", "url": "https://boards.example.com/umbrella-ops/jobs/5", "description": "Fictional job.", "first_seen": "2026-01-16T08:00:00Z", "score": null}
   ],
   "applications": [
-    {"getjo_job_id": "greenhouse:acme-rockets:1001", "company": "Acme Rockets", "role": "Platform Engineer", "link": "https://boards.example.com/acme-rockets/jobs/1001", "tier": "A", "type": "permanent", "source": "greenhouse", "date_applied": "2026-01-11", "status": "recruiter_call", "last_contact": "2026-01-18", "next_action": "Prepare for technical interview", "next_action_date": "2026-01-20", "puzzle_round": "unknown", "contact": "Jordan Sample (recruiter)"},
-    {"company": "Stark Example Ltd", "role": "Cloud Engineer", "link": "https://careers.example.com/stark/42", "tier": "B", "type": "contract", "source": "referral", "date_applied": "2026-01-05", "status": "applied", "last_contact": "2026-01-05", "next_action": "Follow up by email", "next_action_date": "2026-01-19", "puzzle_round": "no"}
+    {"getjo_job_id": "greenhouse:acme-rockets:1001", "company": "Acme Rockets", "role": "Platform Engineer", "link": "https://boards.example.com/acme-rockets/jobs/1001", "tier": "A", "type": "permanent", "source": "greenhouse", "date_applied": "2026-01-11", "status": "recruiter_call", "last_contact": "2026-01-18", "next_action": "Prepare for technical interview", "next_action_date": "2026-01-20", "puzzle_round": "unknown", "contact": "Jordan Sample (recruiter)", "history": ["applied"]},
+    {"company": "Stark Example Ltd", "role": "Cloud Engineer", "link": "https://careers.example.com/stark/42", "tier": "B", "type": "contract", "source": "referral", "date_applied": "2026-01-05", "status": "applied", "last_contact": "2026-01-05", "next_action": "Follow up by email", "next_action_date": "2026-01-19", "puzzle_round": "no"},
+    {"company": "Wayne Analytics", "role": "AI Platform Engineer", "link": "https://careers.example.com/wayne/ai-7", "tier": "A", "type": "permanent", "source": "linkedin", "date_applied": "2025-12-29", "status": "technical", "history": ["applied", "recruiter_call"], "last_contact": "2026-01-16", "next_action": "Send take-home", "next_action_date": "2026-01-22", "puzzle_round": "yes"},
+    {"company": "Cyberdyne Example", "role": "ML Infrastructure Engineer", "link": "https://careers.example.com/cyberdyne/9", "tier": "B", "type": "permanent", "source": "greenhouse", "date_applied": "2025-12-30", "status": "rejected", "history": ["applied"], "last_contact": "2026-01-09", "puzzle_round": "unknown"},
+    {"company": "Soylent Systems", "role": "Applied AI Engineer", "link": "https://careers.example.com/soylent/3", "tier": "B", "type": "contract", "source": "reed", "date_applied": "2026-01-06", "status": "no_response", "history": ["applied"], "last_contact": "2026-01-06", "puzzle_round": "unknown"},
+    {"company": "Tyrell Robotics", "role": "LLM Engineer", "link": "https://careers.example.com/tyrell/12", "tier": "A", "type": "permanent", "source": "ashby", "date_applied": "2026-01-14", "status": "applied", "last_contact": "2026-01-14", "next_action": "Chase hiring manager", "next_action_date": "2026-01-21", "puzzle_round": "unknown"},
+    {"company": "Vandelay Cloud", "role": "Cloud AI Engineer", "link": "https://careers.example.com/vandelay/5", "tier": "C", "type": "contract", "source": "devitjobs", "date_applied": "2026-01-16", "status": "applied", "last_contact": "2026-01-16", "puzzle_round": "unknown"},
+    {"company": "Massive Dynamic Example", "role": "AI Solutions Engineer", "link": "https://careers.example.com/massive/88", "tier": "A", "type": "permanent", "source": "referral", "status": "to_apply", "next_action": "Tailor CV and apply", "next_action_date": "2026-01-23", "puzzle_round": "unknown"}
   ],
   "tasks": [
     {"title": "Revise networking basics", "kind": "prep", "due_date": "2026-01-19"},
-    {"title": "Update CV summary", "kind": "admin"}
+    {"title": "Update CV summary", "kind": "admin"},
+    {"title": "Write STAR story: migration incident", "kind": "prep", "due_date": "2026-01-14", "done_at": "2026-01-14T18:00:00Z"},
+    {"title": "Apply to two tier A roles", "kind": "apply", "due_date": "2026-01-16", "done_at": "2026-01-16T17:30:00Z"},
+    {"title": "System design drill: rate limiter", "kind": "drill", "due_date": "2026-01-08", "done_at": "2026-01-08T19:00:00Z"},
+    {"title": "Prepare questions for Wayne Analytics", "kind": "prep", "due_date": "2026-01-21"}
   ],
   "gaps": [
     {"date": "2026-01-15", "session": "mock", "gap": "Explain a load balancer health check end to end"}

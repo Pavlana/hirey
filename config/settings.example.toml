@@ -5,7 +5,7 @@
 # Lookup order: $INTERPREP_SETTINGS, then config/settings.toml in the checkout (gitignored;
 # a per-checkout override), then ~/.config/inter_prep/settings.toml.
 # Each key can also be set with an environment variable, which wins over the file:
-#   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR
+#   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
 # "../getjo" would point somewhere different in every worktree.
@@ -20,3 +20,9 @@ prep_db = "/absolute/path/to/inter_prep/data/prep.db"
 
 # Folder holding cv.md, notes/ and sessions/. Never committed.
 private_dir = "/absolute/path/to/inter_prep"
+
+# Optional. Port of the local dashboard (python -m prep.web); it always binds to 127.0.0.1.
+# dashboard_port = 8765
+
+# Optional. Applications per week the dashboard's Pipeline page measures against.
+# weekly_target = 10

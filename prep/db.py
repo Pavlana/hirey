@@ -1,4 +1,4 @@
-"""SQLite storage for applications, interviews, tasks and gaps (prep.db).
+"""SQLite storage for applications, their status history, interviews, tasks and gaps (prep.db).
 
 Allowed values for enum-like columns are checked in Python, not with CHECK
 constraints: later phases may add values, and SQLite cannot alter a CHECK in place.
@@ -74,7 +74,17 @@ CREATE TABLE IF NOT EXISTS tasks (
     created_at     TEXT NOT NULL
 );
 
+-- One row each time an application is created or its status changes. Applications that
+-- predate this table have no rows; their current status is the only known point.
+CREATE TABLE IF NOT EXISTS status_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    status         TEXT NOT NULL,
+    changed_at     TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
+CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 """
 
 # Columns added after a table was first created: {table: {column: definition}}.
@@ -154,8 +164,10 @@ def add_application(conn: sqlite3.Connection, company: str, role: str, **fields:
     names = ", ".join(fields)
     marks = ", ".join(f":{k}" for k in fields)
     cursor = conn.execute(f"INSERT INTO applications ({names}) VALUES ({marks})", fields)
+    app_id = cursor.lastrowid
+    _add_history(conn, app_id, fields.get("status", "to_apply"), stamp)
     conn.commit()
-    return cursor.lastrowid
+    return app_id
 
 
 def update_application(conn: sqlite3.Connection, app_id: int, **fields: str | None) -> None:
@@ -163,12 +175,74 @@ def update_application(conn: sqlite3.Connection, app_id: int, **fields: str | No
     if not fields:
         return
     _validate_application({k: v for k, v in fields.items() if v is not None})
-    fields["updated_at"] = now_iso()
-    assignments = ", ".join(f"{k} = :{k}" for k in fields)
-    cursor = conn.execute(f"UPDATE applications SET {assignments} WHERE id = :id", {**fields, "id": app_id})
-    conn.commit()
-    if cursor.rowcount == 0:
+    if fields.get("status") is None:
+        fields.pop("status", None)  # status is NOT NULL; None means "leave it"
+    row = conn.execute("SELECT status FROM applications WHERE id = ?", (app_id,)).fetchone()
+    if row is None:
         raise LookupError(f"no application with id {app_id}")
+    stamp = now_iso()
+    fields["updated_at"] = stamp
+    assignments = ", ".join(f"{k} = :{k}" for k in fields)
+    conn.execute(f"UPDATE applications SET {assignments} WHERE id = :id", {**fields, "id": app_id})
+    if "status" in fields and fields["status"] != row["status"]:
+        _add_history(conn, app_id, fields["status"], stamp)
+    conn.commit()
+
+
+def _add_history(conn: sqlite3.Connection, app_id: int, status: str, stamp: str) -> None:
+    conn.execute(
+        "INSERT INTO status_history (application_id, status, changed_at) VALUES (?, ?, ?)",
+        (app_id, status, stamp),
+    )
+
+
+def status_history(conn: sqlite3.Connection, app_id: int) -> list[str]:
+    """Statuses an application has had, oldest first (empty for rows older than the table)."""
+    rows = conn.execute(
+        "SELECT status FROM status_history WHERE application_id = ? ORDER BY id", (app_id,)
+    )
+    return [r[0] for r in rows]
+
+
+def record_application(
+    conn: sqlite3.Connection,
+    company: str,
+    role: str,
+    *,
+    status: str | None = None,
+    date_applied: str | None = None,
+    **fields: str | None,
+) -> tuple[int, bool]:
+    """Record that an application was made (used by /applied and the dashboard).
+
+    Reuses the application already linked to the same getjo job or link, if any, and
+    returns (id, created). `status` defaults to applied, but never moves an existing
+    application backwards: a later stage (technical, offer, ...) is kept unless `status`
+    is given. `date_applied` defaults to today when not already set.
+    """
+    existing = None
+    if fields.get("getjo_job_id"):
+        existing = find_by_job(conn, fields["getjo_job_id"])
+    if existing is None and fields.get("link"):
+        existing = find_by_link(conn, fields["link"])
+
+    fields.update(_status_fields(existing, status, date_applied))
+    if existing:
+        update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
+        return existing["id"], False
+    return add_application(conn, company, role, **fields), True
+
+
+def _status_fields(existing: dict | None, status: str | None, date_applied: str | None) -> dict:
+    current = existing["status"] if existing else None
+    if status is None:
+        status = "applied" if current in (None, "to_apply") else current
+    fields: dict = {"status": status}
+    if status != "to_apply" and (date_applied or not (existing and existing["date_applied"])):
+        fields["date_applied"] = date_applied or today_iso()
+        if current in (None, "to_apply"):
+            fields["last_contact"] = fields["date_applied"]
+    return fields
 
 
 def get_application(conn: sqlite3.Connection, app_id: int) -> dict | None:
@@ -241,6 +315,14 @@ def add_task(
     )
     conn.commit()
     return cursor.lastrowid
+
+
+def recent_done_tasks(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
+    """Most recently completed tasks, newest first."""
+    rows = conn.execute(
+        "SELECT * FROM tasks WHERE status = 'done' ORDER BY done_at DESC, id DESC LIMIT ?", (limit,)
+    )
+    return [dict(r) for r in rows]
 
 
 def complete_task(conn: sqlite3.Connection, task_id: int) -> None:

@@ -3,15 +3,20 @@
     python -m prep.seed_example
 
 Writes data/example.db (prep schema) and data/example-getjo.db (a stand-in for getjo's
-jobs.db). Both are gitignored. Try the commands against them with:
+jobs.db). Both are gitignored. Dates are shifted so the fixtures' _anchor_date becomes
+today, so the dashboard shows recent activity. Try the commands against them with:
 
     PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
+    PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
+
+Tests use the fixtures unshifted.
 """
 
 import json
 import logging
 import sqlite3
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 from prep import db
@@ -22,6 +27,9 @@ EXAMPLE_PREP_DB = REPO_ROOT / "data" / "example.db"
 EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
 
 log = logging.getLogger("prep.seed")
+
+# Fixture keys holding a date (YYYY-MM-DD) or a timestamp starting with one.
+DATE_KEYS = ("date_applied", "last_contact", "next_action_date", "due_date", "done_at", "date", "first_seen")
 
 # Same shape as getjo's jobs table (getjo/core/store.py), copied rather than imported.
 GETJO_SCHEMA = """
@@ -43,6 +51,19 @@ CREATE TABLE IF NOT EXISTS jobs (
 def load_fixtures(path: Path = FIXTURES) -> dict:
     with path.open(encoding="utf-8") as f:
         return json.load(f)
+
+
+def shift_dates(data: dict, days: int) -> dict:
+    """A copy of the fixtures with every date moved by `days` (time of day kept)."""
+    def shift(value: str) -> str:
+        return (date.fromisoformat(value[:10]) + timedelta(days=days)).isoformat() + value[10:]
+
+    shifted = {}
+    for key, value in data.items():
+        if isinstance(value, list):
+            value = [{k: shift(v) if k in DATE_KEYS and v else v for k, v in record.items()} for record in value]
+        shifted[key] = value
+    return shifted
 
 
 def build_getjo_db(path: Path, jobs: list[dict]) -> None:
@@ -71,11 +92,19 @@ def build_prep_db(path: Path, data: dict) -> None:
     try:
         for app in data.get("applications", []):
             fields = dict(app)
-            db.add_application(conn, fields.pop("company"), fields.pop("role"), **fields)
+            # "history" lists earlier statuses: replay them so status_history is filled.
+            statuses = [*fields.pop("history", []), fields.pop("status", "to_apply")]
+            app_id = db.add_application(conn, fields.pop("company"), fields.pop("role"), status=statuses[0], **fields)
+            for status in statuses[1:]:
+                db.update_application(conn, app_id, status=status)
         for gap in data.get("gaps", []):
             db.add_gap(conn, gap["gap"], gap.get("date"), gap.get("session"))
         for task in data.get("tasks", []):
-            db.add_task(conn, task["title"], task.get("kind", "admin"), task.get("due_date"))
+            task_id = db.add_task(conn, task["title"], task.get("kind", "admin"), task.get("due_date"))
+            if task.get("done_at"):
+                db.complete_task(conn, task_id)
+                conn.execute("UPDATE tasks SET done_at = ? WHERE id = ?", (task["done_at"], task_id))
+                conn.commit()
     finally:
         conn.close()
 
@@ -83,10 +112,12 @@ def build_prep_db(path: Path, data: dict) -> None:
 def main() -> int:
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
     data = load_fixtures()
+    data = shift_dates(data, (date.today() - date.fromisoformat(data["_anchor_date"])).days)
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
     log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
     log.info("try: PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
+    log.info("or:  PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
     return 0
 
 

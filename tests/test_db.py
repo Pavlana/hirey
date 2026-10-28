@@ -20,7 +20,7 @@ class DbTest(unittest.TestCase):
 
     def test_creates_tables(self) -> None:
         names = {r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertTrue({"applications", "interviews", "tasks", "gaps"} <= names)
+        self.assertTrue({"applications", "interviews", "tasks", "gaps", "status_history"} <= names)
         self.assertNotIn("sessions", names)
         self.assertNotIn("cards", names)
 
@@ -103,6 +103,41 @@ class DbTest(unittest.TestCase):
             self.addCleanup(conn.close)
             columns = {r[1] for r in conn.execute("PRAGMA table_info(tasks)")}
         self.assertIn("estimate", columns)
+
+    def test_status_history(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", status="applied")
+        db.update_application(self.conn, app_id, status="applied", next_action="Chase")  # unchanged: no row
+        db.update_application(self.conn, app_id, status="technical")
+        db.update_application(self.conn, app_id, notes="went well")
+        self.assertEqual(db.status_history(self.conn, app_id), ["applied", "technical"])
+        default = db.add_application(self.conn, "Globex", "Engineer")
+        self.assertEqual(db.status_history(self.conn, default), ["to_apply"])
+
+    def test_record_application_reuses_and_never_moves_back(self) -> None:
+        app_id, created = db.record_application(self.conn, "Acme", "Engineer", getjo_job_id="g:acme:1",
+                                                link="https://example.com/1")
+        self.assertTrue(created)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual((app["status"], app["date_applied"]), ("applied", db.today_iso()))
+        db.update_application(self.conn, app_id, status="technical", date_applied="2026-01-02")
+        again, created = db.record_application(self.conn, "Acme", "Engineer", getjo_job_id="g:acme:1",
+                                               next_action="Prepare")
+        self.assertEqual((again, created), (app_id, False))
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual((app["status"], app["date_applied"], app["next_action"]),
+                         ("technical", "2026-01-02", "Prepare"))
+        by_link, _ = db.record_application(self.conn, "Acme", "Engineer", link="https://example.com/1")
+        self.assertEqual(by_link, app_id)
+
+    def test_recent_done_tasks(self) -> None:
+        first = db.add_task(self.conn, "First")
+        second = db.add_task(self.conn, "Second")
+        db.add_task(self.conn, "Open")
+        db.complete_task(self.conn, first)
+        db.complete_task(self.conn, second)
+        self.conn.execute("UPDATE tasks SET done_at = '2026-01-01T00:00:00Z' WHERE id = ?", (first,))
+        self.assertEqual([t["title"] for t in db.recent_done_tasks(self.conn)], ["Second", "First"])
+        self.assertEqual(len(db.recent_done_tasks(self.conn, 1)), 1)
 
     def test_today_iso(self) -> None:
         self.assertEqual(db.today_iso(), date.today().isoformat())
