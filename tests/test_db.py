@@ -86,6 +86,17 @@ class DbTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             db.complete_task(self.conn, 999)
 
+    def test_reopen_task(self) -> None:
+        task_id = db.add_task(self.conn, "undo me")
+        db.complete_task(self.conn, task_id)
+        db.reopen_task(self.conn, task_id)
+        task = db.get_task(self.conn, task_id)
+        self.assertEqual((task["status"], task["done_at"]), ("todo", None))
+        db.reopen_task(self.conn, task_id)  # already open: no-op
+        with self.assertRaises(LookupError):
+            db.reopen_task(self.conn, 999)
+        self.assertIsNone(db.get_task(self.conn, 999))
+
     def test_interviews_and_gaps(self) -> None:
         app_id = db.add_application(self.conn, "A", "r")
         db.add_interview(self.conn, app_id, TODAY, stage="technical")

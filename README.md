@@ -61,15 +61,18 @@ Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 ## Dashboard
 
 `python -m prep.web [--port 8765]` serves a local website over `prep.db`, built with the
-standard library's `http.server` and plain HTML/CSS (no JavaScript, no external requests):
+standard library's `http.server`, plain HTML/CSS and one small optional script for sorting,
+filtering and saving without a reload (no build step, no external requests; one dark theme;
+charts are server-rendered SVG):
 
-- **Pipeline** (`/`): applied in the last 7 days against `weekly_target`, total applications,
-  reply rate (with a warning below 10% after 25 applications), overdue next actions, counts by
-  status and tier.
+- **Dashboard** (`/`): applied in the last 7 days against `weekly_target`, total applications,
+  reply rate (with a warning below 10% after 25 applications), overdue next actions, and charts:
+  applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
+  applications per week (columns with the target) and tasks done per week (line).
+  `/progress` redirects here.
 - **Matches** (`/matches`): getjo jobs scored 7 or more not yet tracked, each with a
   "Mark applied" form (same logic as `/applied --job-id`).
 - **Tasks** (`/tasks`): add tasks, tick them done, see recently done ones.
-- **Progress** (`/progress`): applications per week, stage conversion, tasks done per week.
 
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
 other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never

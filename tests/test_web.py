@@ -1,4 +1,6 @@
+import json
 import os
+import unittest
 from contextlib import closing
 from unittest import mock
 from urllib.parse import urlencode
@@ -10,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/matches", "/tasks", "/progress")
+PAGES = ("/", "/matches", "/tasks")
 PAY = "PAY-MARKER-31337"
 
 
@@ -63,6 +65,59 @@ class PagesTest(WebTestCase):
         self.assertIn("text/css", headers["Content-Type"])
         self.assertIn("--accent", body)
 
+    def test_static_js(self) -> None:
+        status, headers, body = self.get("/static/app.js")
+        self.assertEqual(status, 200)
+        self.assertIn("text/javascript", headers["Content-Type"])
+        self.assertIn("nosniff", headers["X-Content-Type-Options"])
+        self.assertIn("application/json", body)
+
+    def test_no_external_requests(self) -> None:
+        csp = self.get("/")[1]["Content-Security-Policy"]
+        self.assertIn("script-src 'self'", csp)
+        self.assertIn("connect-src 'self'", csp)
+        self.assertNotIn("unsafe-inline", csp)
+        for path in ("/static/style.css", "/static/app.js"):
+            with self.subTest(path=path):
+                body = self.get(path)[2]
+                self.assertNotIn("http://", body)
+                self.assertNotIn("https://", body)
+                self.assertNotIn("@import", body)
+        for path in PAGES:
+            with self.subTest(path=path):
+                body = self.get(path)[2]
+                self.assertNotIn(" style=", body, "inline styles are blocked by the CSP")
+                self.assertNotIn("<script>", body, "inline scripts are blocked by the CSP")
+                self.assertIn('src="/static/app.js"', body)
+
+    def test_shell_marks_active_page(self) -> None:
+        for path in PAGES:
+            with self.subTest(path=path):
+                body = self.get(path)[2]
+                self.assertEqual(body.count('aria-current="page"'), 1)
+                self.assertIn(f'<a href="{path}" aria-current="page">', body)
+
+    def test_dashboard_charts(self) -> None:
+        body = self.get("/")[2]
+        for chart in ("donut", "treemap", "funnel", "columns", "line"):
+            self.assertIn(f'class="chart {chart}"', body)
+        self.assertIn("target 10", body)
+        self.assertNotIn(" style=", body)
+
+    def test_each_page_has_its_hue(self) -> None:
+        for path, theme in web.PAGE_THEMES.items():
+            with self.subTest(path=path):
+                self.assertIn(f'<body class="theme-{theme}">', self.get(path)[2])
+        self.assertEqual(len(set(web.PAGE_THEMES.values())), len(web.PAGE_THEMES), "each page has its own colour")
+        css = self.get("/static/style.css")[2]
+        for theme in ("sage", "eucalyptus", "dusty-blue", "slate-indigo", "dusty-violet", "mauve-rose",
+                      "terracotta", "ochre"):
+            self.assertIn(f".theme-{theme} {{", css)
+
+    def test_progress_redirects_to_dashboard(self) -> None:
+        status, headers, _ = self.get("/progress")
+        self.assertEqual((status, headers["Location"]), (303, "/"))
+
     def test_not_found(self) -> None:
         self.assertEqual(self.get("/static/../web.py")[0], 404)
         self.assertEqual(self.get("/nope")[0], 404)
@@ -96,6 +151,98 @@ class PagesTest(WebTestCase):
     def test_unsafe_job_url_not_linked(self) -> None:
         self.assertEqual(web._link("javascript:alert(1)", "X"), "X")
         self.assertIn('href="https://example.com/a?b=1&amp;c=2"', web._link("https://example.com/a?b=1&c=2", "X"))
+
+
+class HelpersTest(unittest.TestCase):
+    EVIL = '<script>"x"&</script>'
+
+    def assertEscaped(self, out: str) -> None:
+        self.assertNotIn("<script>", out)
+        self.assertNotIn('"x"', out)
+        self.assertIn("&lt;script&gt;", out)
+
+    def test_helpers_escape_values(self) -> None:
+        e = self.EVIL
+        for out in (web._badge(e), web._badge(e, e), web._status_badge(e), web._tier_badge(e), web._kind_badge(e),
+                    web._score_badge(e), web._button(e, e, e), web._empty(e, e), web._banner(e, "warning"),
+                    web._filter(e, e), web._tile(e, e), web._card(e, "", count=1, cls=e, count_for=e),
+                    web._table(((e, e), e), [("ok",)], e, table_id=e), web._table((e,), [], e, hint=e),
+                    web._due(e, "2026-01-20"), web._note(e)):
+            with self.subTest(out=out[:40]):
+                self.assertEscaped(out)
+
+    def test_badge_tone_whitelisted(self) -> None:
+        self.assertIn('class="badge badge-neutral"', web._badge("x", "evil onclick"))
+        self.assertIn('class="badge s10"', web._status_badge("offer"))
+        self.assertIn('class="badge s1"', web._status_badge("rejected"))
+        self.assertIn(">recruiter call<", web._status_badge("recruiter_call"))
+        self.assertIn('class="badge s10"', web._score_badge(9))
+        self.assertIn('class="badge s6"', web._score_badge(7))
+
+    def test_table_sort_keys_and_empty_state(self) -> None:
+        out = web._table((("Due", "date"), "Task", ""), [("a", "b", "c")], "none")
+        self.assertIn('<th scope="col" data-sort="date">Due</th>', out)
+        self.assertIn('<th scope="col" data-sort="text">Task</th>', out)
+        self.assertIn('<th scope="col"></th>', out)
+        empty = web._table(("Due",), [], "Nothing here.", hint="Try later.")
+        self.assertIn('class="empty"', empty)
+        self.assertIn("Try later.", empty)
+        self.assertNotIn("<table", empty)
+
+    def test_due_states(self) -> None:
+        self.assertIn("overdue", web._due("2026-01-19", "2026-01-20"))
+        self.assertIn("due-today", web._due("2026-01-20", "2026-01-20"))
+        self.assertEqual(web._due("2026-01-21", "2026-01-20"), '<span class="mono">2026-01-21</span>')
+        self.assertEqual(web._due(None, "2026-01-20"), "")
+
+
+class JsonActionsTest(WebTestCase):
+    """The page script posts urlencoded forms with Accept: application/json."""
+    JSON = {**HOST, "Accept": "application/json", "Origin": "http://localhost:8765", "Sec-Fetch-Site": "same-origin"}
+
+    def post_json(self, path: str, form: dict) -> tuple[int, dict]:
+        status, headers, body = self.post(path, form, self.JSON)
+        self.assertIn("application/json", headers["Content-Type"])
+        return status, json.loads(body)
+
+    def test_add_returns_escaped_row(self) -> None:
+        status, reply = self.post_json("/tasks/add", {"title": "<b>Mock</b> & drill", "kind": "drill",
+                                                      "due_date": "2026-01-19", "application_id": "1"})
+        self.assertEqual(status, 200)
+        self.assertEqual((reply["ok"], reply["message"]), (True, "Task added."))
+        row = reply["html"]
+        self.assertTrue(row.startswith("<tr>"))
+        self.assertIn("&lt;b&gt;Mock&lt;/b&gt; &amp; drill", row)
+        self.assertIn("overdue", row)
+        self.assertIn("Acme Rockets", row)
+        self.assertIn('data-ajax="done"', row)
+        self.assertNotIn(PAY, row)
+
+    def test_done_then_reopen(self) -> None:
+        with self.conn() as conn:
+            task_id = db.add_task(conn, "Undo me")
+        status, reply = self.post_json("/tasks/done", {"task_id": str(task_id)})
+        self.assertEqual((status, reply), (200, {"ok": True, "message": "Task marked done."}))
+        status, reply = self.post_json("/tasks/reopen", {"task_id": str(task_id)})
+        self.assertEqual((status, reply), (200, {"ok": True, "message": "Task reopened."}))
+        with self.conn() as conn:
+            self.assertEqual(db.get_task(conn, task_id)["status"], "todo")
+
+    def test_apply(self) -> None:
+        status, reply = self.post_json("/matches/apply", {"job_id": "lever:globex-labs:abc", "tier": "B"})
+        self.assertEqual((status, reply["ok"]), (200, True))
+        self.assertNotIn("html", reply)
+        with self.conn() as conn:
+            self.assertEqual(db.find_by_job(conn, "lever:globex-labs:abc")["tier"], "B")
+
+    def test_errors_are_json(self) -> None:
+        for path, form in (("/tasks/add", {"title": ""}), ("/tasks/done", {"task_id": "999"}),
+                           ("/tasks/reopen", {}), ("/matches/apply", {"job_id": "no:such:job"})):
+            with self.subTest(path=path):
+                status, reply = self.post_json(path, form)
+                self.assertEqual(status, 400)
+                self.assertFalse(reply["ok"])
+                self.assertTrue(reply["message"])
 
 
 class MatchesTest(WebTestCase):
@@ -157,7 +304,7 @@ class MatchesTest(WebTestCase):
 class TasksTest(WebTestCase):
     def test_overdue_highlighted(self) -> None:
         _, _, body = self.get("/tasks")
-        self.assertIn('<span class="overdue">2026-01-19</span>', body)
+        self.assertIn('<span class="badge s4 overdue">2026-01-19</span>', body)
         self.assertIn("Write STAR story", body)  # recently done
 
     def test_add_and_done(self) -> None:
@@ -176,6 +323,11 @@ class TasksTest(WebTestCase):
             self.assertNotIn(task["id"], [t["id"] for t in db.list_tasks(conn)])
         self.assertIn("Task marked done", self.get(headers["Location"])[2])
 
+        status, headers, _ = self.post("/tasks/reopen", {"task_id": str(task["id"])})
+        self.assertEqual((status, headers["Location"]), (303, "/tasks?msg=task_reopened"))
+        with self.conn() as conn:
+            self.assertIn(task["id"], [t["id"] for t in db.list_tasks(conn)])
+
     def test_bad_task_input(self) -> None:
         for form in ({"title": ""}, {"title": "x", "kind": "nap"}, {"title": "x", "due_date": "monday"},
                      {"title": "x", "application_id": "999"}, {"title": "x", "application_id": "one"}):
@@ -183,6 +335,7 @@ class TasksTest(WebTestCase):
                 self.assertEqual(self.post("/tasks/add", form)[0], 400)
         self.assertEqual(self.post("/tasks/done", {"task_id": "999"})[0], 400)
         self.assertEqual(self.post("/tasks/done", {})[0], 400)
+        self.assertEqual(self.post("/tasks/reopen", {"task_id": "999"})[0], 400)
         self.assertEqual(self.post("/nope", {})[0], 404)
 
 

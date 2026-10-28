@@ -97,6 +97,8 @@ class StatsTest(unittest.TestCase):
         apps = stats.application_stages(self.conn)
         self.assertEqual(stats.counts_by_status(apps), [("applied", 2), ("rejected", 1)])
         self.assertEqual(stats.counts_by_tier(apps), [("A", 2), ("unset", 1)])
+        self.assertEqual(stats.counts_by_tier_status(apps),
+                         [("A", [("applied", 2)]), ("unset", [("rejected", 1)])])
 
     def test_per_week(self) -> None:
         for day in ("2026-03-09", "2026-03-11", "2026-03-02", "2026-01-01"):

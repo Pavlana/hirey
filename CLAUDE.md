@@ -59,8 +59,8 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
-             cli.py (commands used by skills), stats.py (dashboard numbers), web.py (dashboard server),
-             static/style.css, seed_example.py (example dbs), privacy.py (tracked-file check)
+             cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
+             static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, task/ — each SKILL.md calls python -m prep.cli <command>
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)

@@ -100,6 +100,12 @@ def counts_by_tier(apps: list[dict]) -> list[tuple[str, int]]:
     return [(t, n) for t, n in counts if n]
 
 
+def counts_by_tier_status(apps: list[dict]) -> list[tuple[str, list[tuple[str, int]]]]:
+    """For each tier that occurs (A, B, C, "unset"): its (status, count) pairs, as counts_by_status."""
+    tiers = [t for t, _ in counts_by_tier(apps)]
+    return [(t, counts_by_status([a for a in apps if (a["tier"] or "unset") == t])) for t in tiers]
+
+
 def conversion(apps: list[dict]) -> list[tuple[str, int, float | None]]:
     """(stage, reached, share of submitted) for each FUNNEL stage."""
     submitted = [a for a in apps if a["submitted"]]

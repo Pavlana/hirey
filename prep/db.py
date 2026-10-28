@@ -336,6 +336,22 @@ def complete_task(conn: sqlite3.Connection, task_id: int) -> None:
             raise LookupError(f"no task with id {task_id}")
 
 
+def reopen_task(conn: sqlite3.Connection, task_id: int) -> None:
+    """Undo complete_task: back to todo with no done_at. Reopening an open task is a no-op."""
+    cursor = conn.execute(
+        "UPDATE tasks SET status = 'todo', done_at = NULL WHERE id = ? AND status = 'done'", (task_id,)
+    )
+    conn.commit()
+    if cursor.rowcount == 0:
+        if conn.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+            raise LookupError(f"no task with id {task_id}")
+
+
+def get_task(conn: sqlite3.Connection, task_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    return dict(row) if row else None
+
+
 def list_tasks(conn: sqlite3.Connection, status: str | None = "todo") -> list[dict]:
     """Tasks with the given status (all when None), by due date then id; undated last."""
     _check("status", status, TASK_STATUSES)

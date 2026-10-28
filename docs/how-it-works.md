@@ -49,19 +49,36 @@
 
 `prep/web.py` uses the standard library's `ThreadingHTTPServer`. `handle()` routes a request
 and returns (status, headers, body) without touching a socket, which is what the tests call.
-Pages are built from plain strings; every database value is HTML-escaped and the `pay` column
-is never shown. One stylesheet is served from `prep/static/`; there is no JavaScript and no
-external request (system fonts, no CDN).
+Pages are built from plain strings by small helpers in `web.py` (app shell with a sidebar,
+cards, stat tiles, badges for status/tier/score/kind/due date, tables, buttons, empty states);
+every database value is HTML-escaped and the `pay` column is never shown. Two static files are
+served from `prep/static/`: `style.css` (design tokens; one dark grey theme where each page has
+its own muted hue: Dashboard sage (dark olive to pale lime), Matches dusty blue, Tasks terracotta;
+five more themes (eucalyptus, slate indigo, dusty violet, mauve rose, ochre) are ready for new pages,
+each as ten shades `s1`–`s10` set by a `theme-*` class on `<body>` and used by badges, charts,
+buttons and meters; installed Helvetica Neue-style fonts only; responsive down to phone
+width) and `app.js`. Charts come from `prep/charts.py`: server-rendered inline SVG (donut,
+treemap, funnel, columns, line) coloured by shade-step CSS classes, so they need no script and no inline
+style, and every label is escaped. The site is branded "getjo" in the page title and sidebar. The
+Content-Security-Policy allows only these same-origin files (`script-src 'self'`, no inline
+script or style), and nothing is fetched from another host (no CDN, fonts or chart libraries).
+
+`app.js` is an enhancement only: it makes table headers sortable, shows a filter box on the
+Matches and open-tasks tables, and sends forms marked `data-ajax` with `fetch` and
+`Accept: application/json`. For such requests the POST endpoints answer JSON
+(`{"ok": true, "message": …, "html": …}` or `{"ok": false, "message": …}` with status 400)
+instead of a redirect; `html` is a server-rendered, escaped table row (a newly added task).
+Results show as toasts; marking a task done offers Undo, which posts `/tasks/reopen`. Without
+JavaScript every form posts normally and redirects.
 
 | Page | Shows | Writes |
 |------|-------|--------|
-| Pipeline `/` | applied in the last 7 days vs `weekly_target`, total, reply rate (+ warning), overdue next actions, counts by status and tier | — |
-| Matches `/matches` | getjo jobs ≥7 not yet tracked; a message instead if getjo's database is missing or unreadable | POST `/matches/apply` |
-| Tasks `/tasks` | open tasks (overdue in red), add form, 10 most recently done | POST `/tasks/add`, `/tasks/done` |
-| Progress `/progress` | applications per week, stage conversion, tasks done per week (last 8 weeks) | — |
+| Dashboard `/` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), overdue next actions, a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line) and tasks done per week (line), last 8 weeks. `/progress` redirects here | — |
+| Matches `/matches` | getjo jobs ≥7 not yet tracked (sortable, filterable); a message instead if getjo's database is missing or unreadable | POST `/matches/apply` |
+| Tasks `/tasks` | add form, open tasks (overdue in red, due today in amber; filterable), 10 most recently done with Reopen | POST `/tasks/add`, `/tasks/done`, `/tasks/reopen` |
 
-Forms post and then redirect (303) back to the page, which shows a fixed confirmation; bad
-input gets a 400 page with the reason. Local hardening: the server binds to `127.0.0.1` and
+Without JavaScript, forms post and then redirect (303) back to the page, which shows a fixed
+confirmation (the script turns it into a toast); bad input gets a 400 page with the reason. Local hardening: the server binds to `127.0.0.1` and
 `serve()` refuses any other address; requests whose Host header is not `localhost` or
 `127.0.0.1` (with any port) are rejected, which blocks DNS rebinding; POSTs with a
 cross-origin `Origin` (including `null`) or `Sec-Fetch-Site` are rejected. Logs hold the
