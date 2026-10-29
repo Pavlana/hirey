@@ -48,7 +48,7 @@ def parse_day(value: str) -> str:
 # --- output helpers -----------------------------------------------------------
 
 def _app_line(app: dict) -> str:
-    line = f"#{app['id']} {app['company']} — {app['role']} [{app['status']}]"
+    line = f"#{app['id']} {app['company']} — {app['role']} [{db.status_label(app['status'])}]"
     if app.get("next_action"):
         line += f" next: {app['next_action']}"
         if app.get("next_action_date"):
@@ -148,10 +148,11 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         raise SystemExit("error: URL not found in getjo; pass --company and --role too")
 
     app_id, created = db.record_application(conn, company, role, status=args.status, date_applied=args.date, **fields)
-    if job:
-        db.record_decision(conn, job, "applied")
-    verb = "Recorded" if created else "Updated"
     app = db.get_application(conn, app_id)
+    if job:
+        db.record_decision(conn, job, "interested" if app["status"] == "to_apply" else "applied")
+    verb = "Recorded" if created else "Updated"
+    tasks = [t for t in db.list_tasks(conn, "todo") if t["application_id"] == app_id]
     log.info("application %s saved", app_id)
 
     print(f"{verb} application {_app_line(app)}")
@@ -159,9 +160,9 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print(f"  linked to getjo job {job['id']} (score {job['score']})")
     if notice:
         print(f"  {notice}")
-    if not app["next_action"]:
-        print("  no next action set — add one with: python -m prep.cli update "
-              f"{app_id} --next-action TEXT --next-date DATE")
+    if tasks:
+        print("  open tasks:")
+        print("\n".join(f"    {_task_line(t)}" for t in tasks))
     return 0
 
 
@@ -212,7 +213,7 @@ FEEDBACK_FIELDS = ("getjo_job_id", "decision", "reason", "comment", "decided_at"
 
 
 def cmd_feedback(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
-    """Write every applied/skipped decision as JSONL for getjo's scorer to read as examples."""
+    """Write every interested/applied/skipped decision as JSONL for getjo's scorer to read as examples."""
     if args.out:
         out = Path(args.out).expanduser()
     elif settings.private_dir:
@@ -274,7 +275,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--url")
     p.add_argument("--company")
     p.add_argument("--role")
-    p.add_argument("--status", choices=db.APPLICATION_STATUSES, help="default: applied (later stages are kept)")
+    p.add_argument("--status", choices=db.APPLICATION_STATUSES,
+                   help="default: applied (later stages are kept); to_apply records it as interested")
     p.add_argument("--date", type=parse_day, help="date applied (default today)")
     p.add_argument("--tier", choices=db.TIERS)
     p.add_argument("--type", choices=db.APPLICATION_TYPES)
@@ -320,7 +322,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("task_id", type=int)
     p.set_defaults(func=cmd_task)
 
-    p = sub.add_parser("feedback", help="export applied/skipped labels for getjo")
+    p = sub.add_parser("feedback", help="export interested/applied/skipped labels for getjo")
     fsub = p.add_subparsers(dest="feedback_cmd", required=True)
     f = fsub.add_parser("export", help="write private_dir/feedback/job_decisions.jsonl")
     f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")

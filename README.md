@@ -51,11 +51,11 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | Skill      | CLI                                                                 | What it does |
 |------------|---------------------------------------------------------------------|--------------|
 | `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Overdue next actions, tasks due, new getjo matches |
-| `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--next-action T --next-date D]` | Record an application, linked to getjo when it matches |
+| `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
 |            | `python -m prep.cli update ID [--status S] [--next-action T] [--next-date D]` | Update an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
-|            | `python -m prep.cli feedback export [--out PATH]`                    | Write applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
+|            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 
@@ -73,11 +73,16 @@ charts are server-rendered SVG):
   `/progress` redirects here.
 - **Job Offers** (`/offers`; `/matches` redirects): every getjo match, filtered by minimum
   score (New only), company, role, location (London / Remote / Other) and New / Interested
-  (tracked as to_apply) / Applied / Skipped / All;
-  filters live in the URL, so a view can be bookmarked. Each new job can be marked applied
-  (same logic as `/applied --job-id`) or skipped with a reason and an optional comment; a
-  skip can be undone. Skipped jobs also drop out of `/today`.
-- **Tasks** (`/tasks`): add tasks, tick them done, see recently done ones.
+  / Applied / Skipped / All;
+  filters live in the URL, so a view can be bookmarked. Each new job has three actions:
+  **Applied** (application recorded as applied today, same logic as `/applied --job-id`),
+  **Interested** (application recorded with status `to_apply`, shown as "Interested") and
+  **Skipped** (a pop-up with the skip reasons and an optional comment; without JavaScript a
+  plain form page). Applied and Interested open the Tasks page for that application with its
+  first tasks; an Interested job can later be marked Applied. A skip can be undone. Decided
+  jobs also drop out of `/today`.
+- **Tasks** (`/tasks`, or `/tasks?app=ID` for one application): add tasks, tick them done,
+  see recently done ones.
 
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
 other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never

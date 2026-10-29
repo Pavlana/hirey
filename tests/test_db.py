@@ -159,6 +159,38 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class StageTasksTest(DbTest):
+    def titles(self, app_id: int) -> list[tuple]:
+        return [(t["title"], t["kind"], t["due_date"], t["status"])
+                for t in db.list_tasks(self.conn, None) if t["application_id"] == app_id]
+
+    def test_stage_tasks(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer")
+        self.assertEqual(len(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-01")), 3)
+        self.assertEqual(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-02"), [])  # idempotent
+        self.assertEqual(db.stage_tasks(self.conn, app_id, "technical", "2026-03-02"), [])  # no tasks yet
+        db.stage_tasks(self.conn, app_id, "applied", "2026-03-02")
+        self.assertEqual(self.titles(app_id), [
+            ("Research the company", "prep", "2026-03-03", "todo"),
+            ("Check CV fit / tailor CV", "prep", "2026-03-03", "todo"),
+            ("Apply", "apply", "2026-03-04", "done"),
+            ("Chase if no reply", "admin", "2026-03-09", "todo"),
+        ])
+
+    def test_record_application_adds_tasks_on_stage_change_only(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", link="https://x/1", today="2026-03-01")
+        db.record_application(self.conn, "Acme", "Engineer", link="https://x/1", today="2026-03-05")
+        self.assertEqual(self.titles(app_id), [("Chase if no reply", "admin", "2026-03-08", "todo")])
+        db.update_application(self.conn, app_id, status="technical")
+        db.record_application(self.conn, "Acme", "Engineer", link="https://x/1", status="to_apply")
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "technical")
+        self.assertEqual(len(self.titles(app_id)), 1)
+
+    def test_status_label(self) -> None:
+        self.assertEqual(db.status_label("to_apply"), "interested")
+        self.assertEqual(db.status_label("recruiter_call"), "recruiter call")
+
+
 JOB = {"id": "gh:a:1", "company": "Acme", "title": "Engineer", "location": "London", "score": 8,
        "url": "https://example.com/1", "source": "gh"}
 
@@ -197,6 +229,14 @@ class JobDecisionsTest(DbTest):
         self.assertEqual((d["decision"], d["decided_at"], d["company"], d["title"]),
                          ("applied", "2026-03-01", "Globex", "SRE"))
         self.assertEqual(db.excluded_job_ids(self.conn), {"gh:g:2"})
+
+    def test_stored_interested_follows_the_application(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", getjo_job_id="gh:a:1", status="to_apply")
+        db.record_decision(self.conn, JOB, "interested")
+        self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "interested")
+        db.update_application(self.conn, app_id, status="applied")
+        self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "applied")
+        self.assertEqual(len(db.job_decisions(self.conn)), 1)
 
     def test_to_apply_reads_as_interested_until_applied(self) -> None:
         app_id = db.add_application(self.conn, "Acme", "Engineer", getjo_job_id="gh:a:1")  # to_apply

@@ -7,7 +7,7 @@ Dates are ISO strings: YYYY-MM-DD for days, YYYY-MM-DDTHH:MM:SSZ for timestamps.
 """
 
 import sqlite3
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 APPLICATION_STATUSES = (
@@ -21,10 +21,21 @@ PUZZLE_ROUND = ("yes", "no", "unknown")
 TASK_KINDS = ("apply", "prep", "drill", "admin")
 TASK_STATUSES = ("todo", "done")
 GAP_STATUSES = ("open", "closed")
-DECISIONS = ("applied", "skipped")
-# Labels read back by job_decisions(): an "applied" job whose application is still to_apply
-# reads as "interested". It is derived from the live status, never stored.
+DECISIONS = ("interested", "applied", "skipped")
+# Labels read back by job_decisions(): a tracked job reads as "interested" while its application
+# is to_apply and as "applied" once it moves on, whatever was stored.
 DECISION_LABELS = ("interested", "applied", "skipped")
+# How statuses are shown; anything not listed shows as its value with spaces.
+STATUS_LABELS = {"to_apply": "interested"}
+# First tasks for an application entering a stage: (title, kind, days until due, or None for undated).
+STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
+    "to_apply": (
+        ("Research the company", "prep", 2),
+        ("Check CV fit / tailor CV", "prep", 2),
+        ("Apply", "apply", 3),
+    ),
+    "applied": (("Chase if no reply", "admin", 7),),
+}
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -93,7 +104,7 @@ CREATE TABLE IF NOT EXISTS status_history (
 -- are copied at decision time, so the label still makes sense if getjo drops the job.
 CREATE TABLE IF NOT EXISTS job_decisions (
     getjo_job_id TEXT PRIMARY KEY,
-    decision     TEXT NOT NULL,         -- applied / skipped
+    decision     TEXT NOT NULL,         -- interested / applied / skipped
     reason       TEXT,                  -- SKIP_REASONS, for skips
     comment      TEXT,
     decided_at   TEXT NOT NULL,
@@ -126,6 +137,11 @@ def now_iso() -> str:
 
 def today_iso() -> str:
     return date.today().isoformat()
+
+
+def status_label(status: str) -> str:
+    """A status as shown to people: to_apply reads "interested"; the stored value is unchanged."""
+    return STATUS_LABELS.get(status, status.replace("_", " "))
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -233,38 +249,68 @@ def record_application(
     *,
     status: str | None = None,
     date_applied: str | None = None,
+    today: str | None = None,
     **fields: str | None,
 ) -> tuple[int, bool]:
-    """Record that an application was made (used by /applied and the dashboard).
+    """Record an application from a job (used by /applied and the dashboard).
 
     Reuses the application already linked to the same getjo job or link, if any, and
     returns (id, created). `status` defaults to applied, but never moves an existing
     application backwards: a later stage (technical, offer, ...) is kept unless `status`
-    is given. `date_applied` defaults to today when not already set.
+    is given, and an explicit to_apply never replaces a later status. `date_applied`
+    defaults to today when not already set. Entering to_apply or applied adds that
+    stage's first tasks (stage_tasks).
     """
+    today = today or today_iso()
     existing = None
     if fields.get("getjo_job_id"):
         existing = find_by_job(conn, fields["getjo_job_id"])
     if existing is None and fields.get("link"):
         existing = find_by_link(conn, fields["link"])
 
-    fields.update(_status_fields(existing, status, date_applied))
+    fields.update(_status_fields(existing, status, date_applied, today))
     if existing:
         update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
-        return existing["id"], False
-    return add_application(conn, company, role, **fields), True
+        app_id, created = existing["id"], False
+    else:
+        app_id, created = add_application(conn, company, role, **fields), True
+    if created or fields["status"] != existing["status"]:
+        stage_tasks(conn, app_id, fields["status"], today)
+    return app_id, created
 
 
-def _status_fields(existing: dict | None, status: str | None, date_applied: str | None) -> dict:
+def _status_fields(existing: dict | None, status: str | None, date_applied: str | None, today: str) -> dict:
     current = existing["status"] if existing else None
-    if status is None:
+    if status is None or (status == "to_apply" and current not in (None, "to_apply")):
         status = "applied" if current in (None, "to_apply") else current
     fields: dict = {"status": status}
     if status != "to_apply" and (date_applied or not (existing and existing["date_applied"])):
-        fields["date_applied"] = date_applied or today_iso()
+        fields["date_applied"] = date_applied or today
         if current in (None, "to_apply"):
             fields["last_contact"] = fields["date_applied"]
     return fields
+
+
+def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | None = None) -> list[int]:
+    """Create the first tasks for an application entering `stage` (STAGE_TASKS) and return
+    their ids. A title the application already has is not added again. Entering applied also
+    completes the open Apply task, since applying is done."""
+    today = today or today_iso()
+    have = {r[0] for r in conn.execute("SELECT title FROM tasks WHERE application_id = ?", (app_id,))}
+    ids = []
+    for title, kind, days in STAGE_TASKS.get(stage, ()):
+        if title in have:
+            continue
+        due = None if days is None else (date.fromisoformat(today) + timedelta(days=days)).isoformat()
+        ids.append(add_task(conn, title, kind, due, app_id))
+    if stage == "applied":
+        conn.execute(
+            "UPDATE tasks SET status = 'done', done_at = ? WHERE application_id = ? AND title = 'Apply' "
+            "AND kind = 'apply' AND status = 'todo'",
+            (now_iso(), app_id),
+        )
+        conn.commit()
+    return ids
 
 
 def get_application(conn: sqlite3.Connection, app_id: int) -> dict | None:
@@ -317,7 +363,7 @@ def overdue_actions(conn: sqlite3.Connection, today: str | None = None) -> list[
 
 
 def excluded_job_ids(conn: sqlite3.Connection) -> set[str]:
-    """getjo job ids that are no longer new: linked to an application, or decided (applied/skipped)."""
+    """getjo job ids that are no longer new: linked to an application, or decided."""
     rows = conn.execute("SELECT getjo_job_id FROM job_decisions")
     return linked_job_ids(conn) | {r[0] for r in rows}
 
@@ -333,7 +379,7 @@ def record_decision(
 ) -> None:
     """Store (or replace) the decision for a getjo job. `job` is a getjo row (id, company, ...).
 
-    A skip needs a reason from SKIP_REASONS; an applied decision takes none.
+    A skip needs a reason from SKIP_REASONS; interested and applied take none.
     """
     _check("decision", decision, DECISIONS)
     if decision == "skipped":
@@ -370,9 +416,9 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
 def job_decisions(conn: sqlite3.Connection) -> dict[str, dict]:
     """Every decision by getjo job id, labelled with DECISION_LABELS.
 
-    Applications linked to a getjo job without a decision row (recorded before the table
-    existed) count as applied on their date. An applied job whose application is still
-    to_apply reads as "interested", so it changes to applied when the application does.
+    A job with a linked application reads from its live status: interested while it is
+    to_apply, applied once it moves on (a skip stays a skip). Applications linked to a getjo
+    job without a decision row (recorded before the table existed) count on their date.
     """
     found = {r["getjo_job_id"]: dict(r) for r in conn.execute("SELECT * FROM job_decisions")}
     rows = conn.execute(
@@ -391,8 +437,8 @@ def job_decisions(conn: sqlite3.Connection) -> dict[str, dict]:
             "decided_at": r["date_applied"] or r["created_at"], "company": r["company"], "title": r["role"],
             "location": None, "score": None, "url": r["link"], "source": r["source"],
         })
-        if r["status"] == "to_apply" and d["decision"] == "applied":
-            d["decision"] = "interested"
+        if d["decision"] != "skipped":
+            d["decision"] = "interested" if r["status"] == "to_apply" else "applied"
     return found
 
 

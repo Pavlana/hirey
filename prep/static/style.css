@@ -244,7 +244,7 @@ tr.no-results td { text-align: center; color: var(--text-muted); padding: var(--
 .score .badge { min-width: 30px; justify-content: center; font-variant-numeric: tabular-nums; }
 
 /* --- buttons and forms -------------------------------------------------------- */
-input, select, button { font: inherit; color: var(--text); }
+input, select, textarea, button { font: inherit; color: var(--text); }
 option { background: var(--surface-solid); color: var(--text); }
 input, select {
   height: 34px; padding: 0 var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
@@ -271,14 +271,31 @@ input::placeholder { color: var(--text-faint); }
 form.inline .btn-sm, form.inline input, form.inline select { height: 30px; font-size: 13px; }
 
 form.inline { display: flex; gap: 6px; flex-wrap: nowrap; margin: 0; justify-content: flex-end; }
-form.inline input[name="next_action"] { width: 110px; }
 form.add { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0; }
 form.add input[name="title"] { flex: 1 1 280px; }
 form.add select[name="application_id"] { flex: 0 1 260px; }
 form.filters input[type="search"] { flex: 1 1 160px; }
 .checks { display: inline-flex; align-items: center; gap: var(--space-3); }
 .check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.offer-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.offer-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+a.btn:hover { text-decoration: none; }
+
+/* Skipped pop-up (Job Offers): a native <dialog>, opened by app.js. */
+.dialog {
+  width: min(460px, calc(100vw - 32px)); padding: var(--space-6); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg); background: var(--surface-solid); color: var(--text); box-shadow: var(--shadow-lg);
+}
+.dialog::backdrop { background: rgba(0, 0, 0, .55); }
+.dialog h2 { margin: 0 0 var(--space-1); font-size: 17px; }
+.skip-form { display: flex; flex-direction: column; gap: var(--space-3); }
+.skip-form p { margin: 0; }
+.skip-form textarea {
+  width: 100%; padding: var(--space-2) var(--space-3); resize: vertical; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.skip-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+.skip-form [data-close] { align-self: flex-end; }
 .filter { width: 220px; height: 32px; background: var(--surface-2); border-color: var(--border); }
 .filter:focus { background-color: var(--surface); }
 

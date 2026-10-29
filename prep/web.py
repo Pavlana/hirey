@@ -25,7 +25,7 @@ import sqlite3
 import sys
 from collections.abc import Callable, Mapping
 from contextlib import closing
-from datetime import date, timedelta
+from datetime import date
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
@@ -59,7 +59,8 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
-    "applied": "Recorded as applied. It no longer appears in new job offers.",
+    "applied": "Recorded as applied. Its first tasks are below.",
+    "interested": "Saved as interested. Its first tasks are below.",
     "skipped": "Skipped. It no longer appears in new job offers.",
     "unskipped": "Skip undone; the job is new again.",
     "task_added": "Task added.",
@@ -72,7 +73,9 @@ SECURITY_HEADERS = [
      "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; "
      "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
     ("X-Content-Type-Options", "nosniff"),
-    ("Referrer-Policy", "no-referrer"),
+    # same-origin, not no-referrer: under no-referrer browsers send "Origin: null" on plain form
+    # posts, which origin_allowed() refuses. External links carry rel="noreferrer" anyway.
+    ("Referrer-Policy", "same-origin"),
     ("Cache-Control", "no-store"),
 ]
 
@@ -163,7 +166,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
     pages = {
         "/": dashboard_page,
         "/offers": lambda s, c, t: offers_page(s, c, t, query),
-        "/tasks": tasks_page,
+        "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
+        "/tasks": lambda s, c, t: tasks_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
@@ -171,7 +175,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
     with closing(db.connect(settings.prep_db)) as conn:
         title, subtitle, content = pages[path](settings, conn, today)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, path)
+    return _page(200, title, subtitle, notice + content, "/offers" if path == "/offers/skip" else path)
 
 
 def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_json: bool) -> Response:
@@ -180,26 +184,26 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     action, page, msg = ACTIONS[path]
     with closing(db.connect(settings.prep_db)) as conn:
         try:
-            fragment = action(settings, conn, form, today)
+            extra = action(settings, conn, form, today) or {}
         except (ValueError, LookupError) as e:
             raise BadRequest(str(e)) from e
     if as_json:
-        payload = {"ok": True, "message": MESSAGES[msg]}
-        if fragment is not None:
-            payload["html"] = fragment
-        return _json(200, payload)
+        return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
+    if "redirect" in extra:  # built by the action from database ids, never from the form
+        return 303, [("Location", f"{extra['redirect']}&{urlencode([('msg', msg)])}")], b""
     return 303, [("Location", _return_to(form.get("return"), page, msg))], b""
 
 
-def _return_to(value: str | None, page: str, msg: str) -> str:
+def _return_to(value: str | None, page: str, msg: str = "") -> str:
     """Where a plain form post redirects: `page`, keeping the query of a `return` field that
-    points at the same page (so filters survive), plus the message key. The query is parsed and
-    re-encoded, so nothing raw from the form reaches the Location header."""
+    points at the same page (so filters survive), plus the message key if any. The query is
+    parsed and re-encoded, so nothing raw from the form reaches the Location header."""
     url = urlsplit(value or "")
     pairs = []
     if not url.scheme and not url.netloc and url.path == page:
         pairs = [(k, v) for k, v in parse_qsl(url.query) if k != "msg"]
-    return f"{page}?{urlencode([*pairs, ('msg', msg)])}"
+    query = urlencode([*pairs, *([("msg", msg)] if msg else [])])
+    return f"{page}?{query}" if query else page
 
 
 def _form(body: bytes) -> dict[str, str]:
@@ -226,7 +230,8 @@ def _int_field(form: dict[str, str], key: str) -> int | None:
 
 
 # --- actions (POST) -------------------------------------------------------------------
-# Each returns an HTML fragment for the page script (a new table row) or None.
+# Each returns None or a dict merged into the JSON reply: "html" (a new table row for the page
+# script) or "redirect" (a local URL with a query, where both kinds of request go next).
 
 def _getjo_job(settings: Settings, form: dict[str, str]) -> dict:
     """The getjo job named by the form's job_id, read from getjo's database (read-only)."""
@@ -243,18 +248,35 @@ def _getjo_job(settings: Settings, form: dict[str, str]) -> dict:
     return job
 
 
-def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
-    """Record a getjo job as applied (same logic as /applied --job-id)."""
+def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Applied: record the getjo job as applied today (same logic as /applied --job-id), then go
+    to its tasks."""
+    return _track_offer(settings, conn, form, today, "applied")
+
+
+def mark_interested(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Interested: track the getjo job as to_apply, then go to its tasks."""
+    return _track_offer(settings, conn, form, today, "interested")
+
+
+def _track_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str,
+                 decision: str) -> dict:
     job = _getjo_job(settings, form)
-    app_id, _ = db.record_application(
-        conn, job["company"], job["title"],
-        getjo_job_id=job["id"], link=job["url"], source=job["source"],
-        tier=_optional(form, "tier"),
-        next_action=_optional(form, "next_action"),
-        next_action_date=_optional(form, "next_date"),
-    )
-    db.record_decision(conn, job, "applied")
-    log.info("application %s recorded from the dashboard", app_id)
+    decided = db.job_decisions(conn).get(job["id"])
+    if decided and decided["decision"] == "skipped":
+        raise BadRequest("This job is skipped; undo the skip first.")
+    if decision == "applied":
+        app_id, _ = db.record_application(
+            conn, job["company"], job["title"], getjo_job_id=job["id"], link=job["url"], source=job["source"],
+            date_applied=None if decided and decided["decision"] == "applied" else today, today=today)
+    else:
+        app_id, _ = db.record_application(
+            conn, job["company"], job["title"], getjo_job_id=job["id"], link=job["url"], source=job["source"],
+            status="to_apply", today=today)
+    status = db.get_application(conn, app_id)["status"]
+    db.record_decision(conn, job, "interested" if status == "to_apply" else "applied")
+    log.info("application %s recorded from the dashboard as %s", app_id, decision)
+    return {"redirect": f"/tasks?app={app_id}"}
 
 
 def skip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -280,7 +302,7 @@ def unskip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     log.info("getjo job skip undone from the dashboard")
 
 
-def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> str:
+def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     title = form.get("title")
     if not title:
         raise BadRequest("A task needs a title.")
@@ -291,7 +313,7 @@ def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str],
     task_id = db.add_task(conn, title, form.get("kind") or "admin", _optional(form, "due_date"), app_id)
     log.info("task %s added from the dashboard", task_id)
     label = f'{app["company"]} — {app["role"]}' if app else None
-    return _open_task_row(db.get_task(conn, task_id), label, today)
+    return {"html": _open_task_row(db.get_task(conn, task_id), label, today)}
 
 
 def complete_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -311,8 +333,9 @@ def reopen_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, st
 
 
 # path -> (action, page to return to, MESSAGES key)
-ACTIONS: dict[str, tuple[Callable[..., str | None], str, str]] = {
+ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/offers/apply": (mark_applied, "/offers", "applied"),
+    "/offers/interested": (mark_interested, "/offers", "interested"),
     "/offers/skip": (skip_offer, "/offers", "skipped"),
     "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
     "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
@@ -465,7 +488,6 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
     here = "/offers?" + urlencode(
         [(k, v) for k, v in (("score", f["score"]), ("company", f["company"]), ("role", f["role"]),
                              *(("loc", loc) for loc in f["loc"]), ("show", f["show"])) if v != ""])
-    next_date = (date.fromisoformat(today) + timedelta(days=7)).isoformat()
     head: tuple = (("Score", "num"), "Company", "Role", "Location", ("Seen", "date"))
     if f["show"] != "new":
         head += ("Decision",)
@@ -479,19 +501,21 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
         )
         if f["show"] != "new":
             cells += (_decision_cell(decision),)
-        cells += (_offer_actions(job, decision, f["show"], here, next_date),)
+        cells += (_offer_actions(job, decision, f["show"], here),)
         rows.append(cells)
         attrs.append(f'data-company="{h((job["company"] or "").lower())}" '
                      f'data-role="{h((job["title"] or "").lower())}"')
     if f["company"] or f["role"] or f["loc"]:
         empty = "Nothing matches these filters."
     else:
-        empty = {"new": "No new job offers.", "interested": "No jobs waiting to apply.",
+        empty = {"new": "No new job offers.", "interested": "No jobs marked interested.",
                  "applied": "Nothing marked applied.",
                  "skipped": "Nothing skipped.", "all": "No job offers."}[f["show"]]
     table = _table(head, rows, empty, table_id="offers", hint="New getjo matches appear here after each poll.",
                    row_attrs=attrs)
     content = _offer_filter_form(f) + _card(SHOW[f["show"]], table, count=len(found), count_for="offers")
+    if any(d is None for _, d in found):  # some row has a Skipped link
+        content += _skip_dialog()
     return "Job Offers", f"{subtitle} · {SHOW[f['show']].lower()} ({len(found)})", content
 
 
@@ -528,30 +552,22 @@ def _decision_cell(decision: dict | None) -> str:
     return f'{badge} {h(reason)}{comment}'
 
 
-def _offer_actions(job: dict, decision: dict | None, show: str, here: str, next_date: str) -> str:
-    """Mark applied + Skip for a new job, Mark applied for an interested one, Undo for a skipped one. Forms are sent by the page
-    script on the New and Skipped views (the row leaves the list); elsewhere they post and reload."""
+def _offer_actions(job: dict, decision: dict | None, show: str, here: str) -> str:
+    """Applied · Interested · Skipped for a new job, Applied for an interested one, Undo for a
+    skipped one. Applied and Interested post and land on the job's tasks. Skipped links to the
+    skip form page; the page script opens the skip dialog instead and removes the row."""
     keep = f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-    if decision is None or decision["decision"] == "interested":
-        tiers = "".join(f'<option value="{h(t)}">{h(t)}</option>' for t in db.TIERS)
-        reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
-        ajax = (' data-ajax="remove-row"', ' data-ajax="skip"') if show in ("new", "interested") else ("", "")
-        apply = (
-            f'<form method="post" action="/offers/apply" class="inline"{ajax[0]}>{keep}'
-            f'<select name="tier" aria-label="Tier"><option value="">tier</option>{tiers}</select>'
-            '<input name="next_action" value="Follow up" aria-label="Next action">'
-            f'<input type="date" name="next_date" value="{next_date}" aria-label="Next action date">'
-            + _button("Mark applied", size="sm") + "</form>"
-        )
-        if decision is not None:  # interested: already tracked, so it can be applied for but not skipped
-            return apply
-        return (
-            f'<div class="offer-actions">{apply}'
-            f'<form method="post" action="/offers/skip" class="inline"{ajax[1]}>{keep}'
-            f'<select name="reason" required aria-label="Skip reason"><option value="">skip reason</option>{reasons}</select>'
-            f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="comment (optional)" aria-label="Comment">'
-            + _button("Skip", "secondary", "sm") + "</form></div>"
-        )
+    applied = (f'<form method="post" action="/offers/apply" class="inline">{keep}'
+               + _button("Applied", size="sm") + "</form>")
+    if decision is not None and decision["decision"] == "interested":
+        return applied  # already tracked: skipping it would mean withdrawing the application
+    if decision is None:
+        interested = (f'<form method="post" action="/offers/interested" class="inline">{keep}'
+                      + _button("Interested", "secondary", size="sm") + "</form>")
+        skip_url = "/offers/skip?" + urlencode([("job_id", job["id"]), ("return", here)])
+        skipped = (f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(job["id"])}"'
+                   f'{" data-remove" if show == "new" else ""}>Skipped</a>')
+        return f'<div class="offer-actions">{applied}{interested}{skipped}</div>'
     if decision["decision"] == "skipped":
         ajax = ' data-ajax="remove-row"' if show == "skipped" else ""
         return (f'<form method="post" action="/offers/unskip" class="inline"{ajax}>{keep}'
@@ -559,15 +575,58 @@ def _offer_actions(job: dict, decision: dict | None, show: str, here: str, next_
     return ""
 
 
-def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str) -> tuple[str, str, str]:
+def _skip_dialog() -> str:
+    """The Skipped pop-up: one button per reason and an optional comment. The page script fills
+    in job_id and return when a row's Skipped link is clicked; without the script it never opens."""
+    reasons = "".join(
+        f'<button class="btn btn-secondary btn-sm" name="reason" value="{k}">{h(v)}</button>'
+        for k, v in SKIP_REASON_LABELS.items())
+    return (
+        '<dialog id="skip-dialog" class="dialog" aria-labelledby="skip-title">'
+        '<form method="post" action="/offers/skip" class="skip-form">'
+        '<input type="hidden" name="job_id" value=""><input type="hidden" name="return" value="">'
+        '<h2 id="skip-title">Skip this job?</h2><p class="muted" data-skip-job></p>'
+        f'<textarea name="comment" maxlength="{MAX_COMMENT}" rows="2" placeholder="Comment (optional)" '
+        'aria-label="Comment"></textarea>'
+        f'<div class="reasons" role="group" aria-label="Reason">{reasons}</div>'
+        '<button type="button" class="btn btn-ghost btn-sm" data-close>Cancel</button>'
+        "</form></dialog>"
+    )
+
+
+def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
+              query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """The Skipped form without the page script: a reason select and a comment. Reading it
+    changes nothing; the form posts to /offers/skip."""
+    job_id = (query.get("job_id") or [""])[0]
+    back = (query.get("return") or [""])[0]
+    job = _getjo_job(settings, {"job_id": job_id})
+    reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
+    cancel = _return_to(back, "/offers")
+    form = (
+        '<form method="post" action="/offers/skip" class="add">'
+        f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(back)}">'
+        f'<select name="reason" required aria-label="Skip reason"><option value="">skip reason</option>{reasons}</select>'
+        f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="comment (optional)" aria-label="Comment">'
+        + _button("Skip") + f'<a class="btn btn-ghost" href="{h(cancel)}">Cancel</a></form>'
+    )
+    return "Skip a job", f'{job["company"]} — {job["title"]}', _card("Why skip it?", form, cls="card-form")
+
+
+def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str,
+               query: dict[str, list[str]] | None = None) -> tuple[str, str, str]:
+    """All tasks, or with ?app=ID only that application's (an unknown id shows all)."""
     all_apps = db.list_applications(conn)
     apps = {a["id"]: f'{a["company"]} — {a["role"]}' for a in all_apps}
     open_apps = [a for a in all_apps if a["status"] not in db.CLOSED_STATUSES]
+    app_param = ((query or {}).get("app") or [""])[0]
+    focus = int(app_param) if app_param.isdigit() and int(app_param) in apps else None
 
-    open_tasks = db.list_tasks(conn, "todo")
+    open_tasks = [t for t in db.list_tasks(conn, "todo") if focus is None or t["application_id"] == focus]
     kinds = "".join(f'<option value="{h(k)}">{h(k)}</option>' for k in db.TASK_KINDS)
     app_options = "".join(
-        f'<option value="{h(a["id"])}">{h(a["company"])} — {h(a["role"])}</option>' for a in open_apps
+        f'<option value="{h(a["id"])}"{" selected" if a["id"] == focus else ""}>{h(a["company"])} — {h(a["role"])}</option>'
+        for a in open_apps
     )
     add_form = (
         '<form method="post" action="/tasks/add" class="add" data-ajax="add-row" data-target="open-tasks">'
@@ -590,13 +649,19 @@ def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str) -> tupl
             + _button("Reopen", "ghost", "sm") + "</form>"
         )
         done_rows.append((_mono(h((t["done_at"] or "")[:10])), h(t["title"]), _kind_badge(t["kind"]), reopen))
+    shown = ""
+    if focus is not None:
+        shown = (f'<div class="notice" role="status">Showing the tasks for {h(apps[focus])}. '
+                 '<a href="/tasks">All tasks</a></div>')
     content = (
-        _card("Add a task", add_form, cls="card-form")
+        shown
+        + _card("Add a task", add_form, cls="card-form")
         + _card("Open", open_table, count=len(open_tasks), count_for="open-tasks",
                 action=_filter("open-tasks", "Filter tasks"))
         + _card("Recently done", _table((("Done", "date"), "Task", "Kind", ""), done_rows, "Nothing done yet."))
     )
-    return "Tasks", "Applications, prep, drills and admin", content
+    subtitle = apps[focus] if focus is not None else "Applications, prep, drills and admin"
+    return "Tasks", subtitle, content
 
 
 def _open_task_cells(task: dict, app_label: str | None, today: str) -> tuple[str, ...]:
@@ -716,7 +781,7 @@ def _badge(text: object, tone: str = "neutral") -> str:
 def _status_badge(status: str | None) -> str:
     if not status:
         return ""
-    return _badge(status.replace("_", " "), STATUS_SHADES.get(status, "neutral"))
+    return _badge(db.status_label(status), STATUS_SHADES.get(status, "neutral"))
 
 
 def _tier_badge(tier: str | None) -> str:
@@ -768,7 +833,7 @@ def _note(text: str) -> str:
 
 
 def _status_label(status: str) -> str:
-    return status.replace("_", " ").capitalize()
+    return db.status_label(status).capitalize()
 
 
 def _tier_label(tier: str) -> str:

@@ -229,11 +229,12 @@ class JsonActionsTest(WebTestCase):
             self.assertEqual(db.get_task(conn, task_id)["status"], "todo")
 
     def test_apply(self) -> None:
-        status, reply = self.post_json("/offers/apply", {"job_id": "lever:globex-labs:abc", "tier": "B"})
+        status, reply = self.post_json("/offers/apply", {"job_id": "lever:globex-labs:abc"})
         self.assertEqual((status, reply["ok"]), (200, True))
         self.assertNotIn("html", reply)
         with self.conn() as conn:
-            self.assertEqual(db.find_by_job(conn, "lever:globex-labs:abc")["tier"], "B")
+            app_id = db.find_by_job(conn, "lever:globex-labs:abc")["id"]
+        self.assertEqual(reply["redirect"], f"/tasks?app={app_id}")
 
     def test_errors_are_json(self) -> None:
         for path, form in (("/tasks/add", {"title": ""}), ("/tasks/done", {"task_id": "999"}),
@@ -255,19 +256,17 @@ class OffersTest(WebTestCase):
         self.assertIn("(2)", body)
 
     def test_mark_applied(self) -> None:
-        status, headers, _ = self.post("/offers/apply", {
-            "job_id": "lever:globex-labs:abc", "tier": "A", "next_action": "Follow up", "next_date": "2026-01-27",
-        })
-        self.assertEqual(status, 303)
-        self.assertEqual(headers["Location"], "/offers?msg=applied")
+        status, headers, _ = self.post("/offers/apply", {"job_id": "lever:globex-labs:abc", "return": "/offers?score=8"})
         with self.conn() as conn:
             app = db.find_by_job(conn, "lever:globex-labs:abc")
-        self.assertEqual((app["company"], app["status"], app["tier"]), ("Globex Labs", "applied", "A"))
-        self.assertEqual(app["next_action_date"], "2026-01-27")
+            tasks = [(t["title"], t["kind"], t["due_date"]) for t in db.list_tasks(conn) if t["application_id"] == app["id"]]
+        self.assertEqual((status, headers["Location"]), (303, f"/tasks?app={app['id']}&msg=applied"))
+        self.assertEqual((app["company"], app["status"], app["date_applied"]), ("Globex Labs", "applied", TODAY))
+        self.assertEqual(tasks, [("Chase if no reply", "admin", "2026-01-27")])
         _, _, body = self.get(headers["Location"])
         self.assertIn("Recorded as applied", body)
-        self.assertNotIn("Globex Labs", body)
-        self.assertIn("(1)", body)
+        self.assertIn("Chase if no reply", body)
+        self.assertNotIn("Globex Labs", self.get("/offers")[2])
 
     def test_mark_applied_twice_does_not_duplicate(self) -> None:
         for _ in range(2):
@@ -278,9 +277,7 @@ class OffersTest(WebTestCase):
     def test_mark_applied_bad_input(self) -> None:
         self.assertEqual(self.post("/offers/apply", {"job_id": "no:such:job"})[0], 400)
         self.assertEqual(self.post("/offers/apply", {})[0], 400)
-        status, _, body = self.post("/offers/apply", {"job_id": "lever:globex-labs:abc", "next_date": "soon"})
-        self.assertEqual(status, 400)
-        self.assertIn("next_action_date", body)
+        self.assertEqual(self.post("/offers/interested", {"job_id": "no:such:job"})[0], 400)
 
     def test_without_getjo_db(self) -> None:
         for value in (str(self.tmp / "missing.db"), ""):
@@ -345,7 +342,8 @@ class OfferFiltersTest(WebTestCase):
         status, headers, _ = self.get("/matches?score=8&loc=remote")
         self.assertEqual((status, headers["Location"]), (303, "/offers?score=8&loc=remote"))
         status, headers, _ = self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})
-        self.assertEqual((status, headers["Location"]), (303, "/offers?msg=applied"))
+        self.assertEqual(status, 303)
+        self.assertRegex(headers["Location"], r"^/tasks\?app=\d+&msg=applied$")
 
 
 class SkipTest(WebTestCase):
@@ -460,6 +458,7 @@ class SkipTest(WebTestCase):
         self.assertIn('<span class="badge s6">interested</span>', body)
         self.assertIn('action="/offers/apply"', body)
         self.assertNotIn('action="/offers/skip"', body)
+        self.assertNotIn('action="/offers/interested"', body)
         self.assertEqual(self.post("/offers/skip", {"job_id": initech, "reason": "pay"})[0], 400)
 
         self.post("/offers/apply", {"job_id": initech})
@@ -467,7 +466,135 @@ class SkipTest(WebTestCase):
         self.assertEqual(OfferFiltersTest.companies(self, "?show=interested"), set())
 
 
+class OfferActionsTest(WebTestCase):
+    """Each new Job Offers row: Applied · Interested · Skipped, and nothing else."""
+    GLOBEX = "lever:globex-labs:abc"
+
+    def app(self) -> dict:
+        with self.conn() as conn:
+            return db.find_by_job(conn, self.GLOBEX)
+
+    def tasks(self) -> list[tuple]:
+        app_id = self.app()["id"]
+        with self.conn() as conn:
+            return [(t["title"], t["kind"], t["due_date"], t["status"])
+                    for t in db.list_tasks(conn, None) if t["application_id"] == app_id]
+
+    def test_row_has_exactly_three_actions(self) -> None:
+        _, _, body = self.get("/offers")
+        for gone in ('name="tier"', 'name="next_action"', 'name="next_date"', 'type="date"', "Follow up"):
+            self.assertNotIn(gone, body)
+        row = body[body.index("Globex Labs"):]
+        row = row[:row.index("</tr>")]
+        self.assertIn('action="/offers/apply"', row)
+        self.assertIn('action="/offers/interested"', row)
+        self.assertIn('href="/offers/skip?job_id=lever%3Aglobex-labs%3Aabc&amp;return=', row)
+        self.assertIn(f'data-skip="{self.GLOBEX}" data-remove', row)
+        self.assertEqual([b for b in ("Applied", "Interested", "Skipped") if f">{b}<" in row],
+                         ["Applied", "Interested", "Skipped"])
+        self.assertEqual(row.count("<button"), 2)  # Skipped is a link, not a third form
+
+    def test_interested(self) -> None:
+        status, headers, _ = self.post("/offers/interested", {"job_id": self.GLOBEX})
+        app = self.app()
+        self.assertEqual((status, headers["Location"]), (303, f"/tasks?app={app['id']}&msg=interested"))
+        self.assertEqual((app["status"], app["date_applied"]), ("to_apply", None))
+        self.assertEqual(self.tasks(), [
+            ("Research the company", "prep", "2026-01-22", "todo"),
+            ("Check CV fit / tailor CV", "prep", "2026-01-22", "todo"),
+            ("Apply", "apply", "2026-01-23", "todo"),
+        ])
+        with self.conn() as conn:
+            self.assertEqual(conn.execute("SELECT decision FROM job_decisions WHERE getjo_job_id = ?",
+                                          (self.GLOBEX,)).fetchone()[0], "interested")
+        self.assertEqual(OfferFiltersTest.companies(self, "?show=interested"), {"Globex Labs"})
+        _, _, body = self.get(headers["Location"])
+        self.assertIn("Saved as interested", body)
+
+    def test_interested_then_applied(self) -> None:
+        self.post("/offers/interested", {"job_id": self.GLOBEX})
+        self.post("/offers/interested", {"job_id": self.GLOBEX})  # a repeat adds nothing
+        self.assertEqual(len(self.tasks()), 3)
+        self.post("/offers/apply", {"job_id": self.GLOBEX})
+        app = self.app()
+        self.assertEqual((app["status"], app["date_applied"]), ("applied", TODAY))
+        self.assertIn(("Apply", "apply", "2026-01-23", "done"), self.tasks())
+        self.assertIn(("Chase if no reply", "admin", "2026-01-27", "todo"), self.tasks())
+        self.assertIn(("Research the company", "prep", "2026-01-22", "todo"), self.tasks())
+        self.assertEqual(OfferFiltersTest.companies(self, "?show=applied"), {"Acme Rockets", "Globex Labs"})
+
+    def test_interested_never_moves_an_application_back(self) -> None:
+        self.post("/offers/apply", {"job_id": self.GLOBEX})
+        with self.conn() as conn:
+            db.update_application(conn, self.app()["id"], status="technical")
+        self.post("/offers/interested", {"job_id": self.GLOBEX})
+        self.assertEqual(self.app()["status"], "technical")
+        self.assertEqual([t[0] for t in self.tasks()], ["Chase if no reply"])
+
+    def test_skipped_job_cannot_be_tracked(self) -> None:
+        self.post("/offers/skip", {"job_id": self.GLOBEX, "reason": "pay"})
+        for path in ("/offers/apply", "/offers/interested"):
+            with self.subTest(path=path):
+                self.assertEqual(self.post(path, {"job_id": self.GLOBEX})[0], 400)
+        self.assertIsNone(self.app())
+
+    def test_skip_dialog(self) -> None:
+        _, _, body = self.get("/offers")
+        dialog = body[body.index('<dialog id="skip-dialog"'):body.index("</dialog>")]
+        self.assertIn('action="/offers/skip"', dialog)
+        for reason in db.SKIP_REASONS:
+            self.assertIn(f'name="reason" value="{reason}"', dialog)
+        self.assertIn('<textarea name="comment"', dialog)
+        self.assertNotIn("skip-dialog", self.get("/offers?show=applied")[2])  # no Skipped links there
+
+    def test_skip_page_without_js(self) -> None:
+        status, _, body = self.get("/offers/skip?job_id=lever%3Aglobex-labs%3Aabc&return=%2Foffers%3Fscore%3D8")
+        self.assertEqual(status, 200)
+        self.assertIn("Globex Labs", body)
+        self.assertIn('<select name="reason" required', body)
+        self.assertIn('name="comment"', body)
+        self.assertIn('name="return" value="/offers?score=8"', body)
+        self.assertIn('href="/offers?score=8"', body)  # Cancel keeps the filters
+        self.assertIn('aria-current="page"', body)
+        with self.conn() as conn:
+            self.assertNotIn(self.GLOBEX, db.job_decisions(conn))  # reading the form changes nothing
+        status, headers, _ = self.post("/offers/skip", {"job_id": self.GLOBEX, "reason": "location",
+                                                        "comment": "", "return": "/offers?score=8"})
+        self.assertEqual((status, headers["Location"]), (303, "/offers?score=8&msg=skipped"))
+        self.assertEqual(self.get("/offers/skip?job_id=no:such:job")[0], 400)
+        self.assertEqual(self.get("/offers/skip?return=http://evil.example.com/")[0], 400)
+        _, _, body = self.get(f"/offers/skip?job_id={self.GLOBEX}&return=http://evil.example.com/")
+        self.assertIn('href="/offers"', body)
+
+    def test_interested_label_everywhere(self) -> None:
+        self.post("/offers/interested", {"job_id": self.GLOBEX})
+        _, _, body = self.get("/")
+        self.assertNotIn("To apply", body)
+        self.assertNotIn("to apply", body)
+        self.assertIn("Interested", body)
+        _, out, _ = self.run_cli("apps", "--status", "to_apply")
+        self.assertIn("[interested]", out)
+
+
 class TasksTest(WebTestCase):
+    def test_tasks_for_one_application(self) -> None:
+        self.post("/offers/interested", {"job_id": "lever:globex-labs:abc"})
+        with self.conn() as conn:
+            app_id = db.find_by_job(conn, "lever:globex-labs:abc")["id"]
+            open_titles = {t["title"] for t in db.list_tasks(conn)}
+        _, _, body = self.get(f"/tasks?app={app_id}")
+        self.assertIn("Showing the tasks for Globex Labs", body)
+        self.assertIn(f'<option value="{app_id}" selected>', body)
+        others = open_titles - {"Apply", "Research the company", "Check CV fit / tailor CV"}
+        self.assertTrue(others)
+        for title in others:
+            self.assertNotIn(f"<td>{title}</td>", body)
+        for bad in ("abc", "99999", ""):
+            with self.subTest(app=bad):
+                status, _, body = self.get(f"/tasks?app={bad}")
+                self.assertEqual(status, 200)
+                self.assertNotIn("Showing the tasks for", body)
+
     def test_overdue_highlighted(self) -> None:
         _, _, body = self.get("/tasks")
         self.assertIn('<span class="badge s4 overdue">2026-01-19</span>', body)
@@ -545,6 +672,14 @@ class RequestChecksTest(WebTestCase):
             self.assertNotIn("Should not be added", [t["title"] for t in db.list_tasks(conn)])
         ok = {**HOST, "Origin": "http://localhost:8765", "Sec-Fetch-Site": "same-origin"}
         self.assertEqual(self.post("/tasks/add", form, ok)[0], 303)
+
+    def test_referrer_policy_keeps_same_origin_posts_working(self) -> None:
+        # no-referrer would make browsers send "Origin: null" on plain form posts (refused).
+        _, headers, _ = self.get("/offers")
+        self.assertEqual(headers["Referrer-Policy"], "same-origin")
+        status, _, _ = self.post("/offers/interested", {"job_id": "lever:globex-labs:abc"},
+                                 {**HOST, "Origin": "http://localhost:8765", "Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(status, 303)
 
     def test_non_loopback_bind_refused(self) -> None:
         for host in ("0.0.0.0", "192.168.1.10", "::", "::1", "example.com", ""):

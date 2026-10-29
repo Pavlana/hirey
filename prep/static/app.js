@@ -36,7 +36,9 @@
   if (flash) {
     toast(flash.textContent);
     flash.remove();
-    history.replaceState(null, "", location.pathname);
+    const url = new URL(location.href);
+    url.searchParams.delete("msg"); // keep the rest of the query (filters, ?app=)
+    history.replaceState(null, "", url);
   }
 
   // --- sortable tables ------------------------------------------------------------
@@ -231,6 +233,52 @@
       .catch((err) => toast(err.message, { error: true }));
   }
 
+  // --- Skipped pop-up ------------------------------------------------------------------
+  // A row's Skipped link opens the dialog instead of the skip page. Clicking a reason posts the
+  // skip; on the New and All views the row leaves with an Undo toast, elsewhere the page reloads.
+  const dialog = document.getElementById("skip-dialog");
+  if (dialog && dialog.showModal && window.fetch) {
+    const form = dialog.querySelector("form");
+    let opener = null;
+    document.addEventListener("click", (e) => {
+      const link = e.target.closest("a[data-skip]");
+      if (!link) return;
+      e.preventDefault();
+      opener = link;
+      const row = link.closest("tr");
+      form.reset();
+      form.elements.job_id.value = link.dataset.skip;
+      form.elements.return.value = location.pathname + location.search;
+      dialog.querySelector("[data-skip-job]").textContent =
+        row ? `${row.cells[1].textContent.trim()} — ${row.cells[2].textContent.trim()}` : "";
+      dialog.showModal();
+      form.elements.comment.focus();
+    });
+    dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+    form.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      if (!e.submitter || e.submitter.name !== "reason") return; // Enter in the comment: pick a reason
+      const data = new URLSearchParams(new FormData(form, e.submitter)); // includes the clicked reason
+      const link = opener;
+      const buttons = form.querySelectorAll("button");
+      buttons.forEach((b) => { b.disabled = true; });
+      try {
+        const reply = await post(form.action, data);
+        dialog.close();
+        const row = link && link.closest("tr");
+        if (!row || !("remove" in link.dataset)) { location.reload(); return; }
+        const tableId = row.closest("table").id;
+        const place = removeRow(row, tableId);
+        const params = { job_id: data.get("job_id") };
+        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/offers/unskip", params, tableId) } });
+      } catch (err) {
+        toast(err.message || "Not saved.", { error: true });
+      } finally {
+        buttons.forEach((b) => { b.disabled = false; });
+      }
+    });
+  }
+
   document.addEventListener("submit", async (e) => {
     const form = e.target.closest("form[data-ajax]");
     if (!form || !window.fetch) return;
@@ -249,11 +297,6 @@
         const place = removeRow(row, tableId);
         const params = { task_id: form.elements.task_id.value };
         toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/tasks/reopen", params, tableId) } });
-      } else if (mode === "skip" && row) {
-        const place = removeRow(row, tableId);
-        const params = { job_id: form.elements.job_id.value };
-        form.reset();
-        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/offers/unskip", params, tableId) } });
       } else if (mode === "add-row") {
         const table = document.getElementById(form.dataset.target);
         if (!table || !reply.html) { location.reload(); return; } // was an empty state

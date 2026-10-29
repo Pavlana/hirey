@@ -75,7 +75,8 @@ class AppliedTest(IsolatedTestCase):
         code, out, _ = self.run_cli("applied", "--url", "https://boards.example.com/acme-rockets/jobs/1001")
         self.assertEqual(code, 0)
         self.assertEqual(self.app()["getjo_job_id"], "greenhouse:acme-rockets:1001")
-        self.assertIn("no next action set", out)
+        self.assertNotIn("next action", out)
+        self.assertIn(f"Chase if no reply due {days(7)}", out)
 
     def test_unknown_url_needs_company_and_role(self) -> None:
         code, _, err = self.run_cli("applied", "--url", "https://other.example.com/1")
@@ -114,8 +115,14 @@ class AppliedTest(IsolatedTestCase):
         self.assertEqual(app["next_action"], "Thank-you note")
 
     def test_planned_application_has_no_date_applied(self) -> None:
-        self.run_cli("applied", "--job-id", "lever:globex-labs:abc", "--status", "to_apply")
+        _, out, _ = self.run_cli("applied", "--job-id", "lever:globex-labs:abc", "--status", "to_apply")
         self.assertIsNone(self.app()["date_applied"])
+        self.assertIn("[interested]", out)
+        self.assertIn(f"[apply] Apply due {days(3)}", out)
+        self.assertIn("Research the company", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            row = conn.execute("SELECT decision FROM job_decisions").fetchone()
+        self.assertEqual(row[0], "interested")
 
     def test_applied_job_leaves_today_matches(self) -> None:
         self.run_cli("applied", "--job-id", "lever:globex-labs:abc")
@@ -197,6 +204,18 @@ class FeedbackExportTest(IsolatedTestCase):
         self.run_cli("feedback", "export", "--out", str(out))
         (record,) = [json.loads(line) for line in out.read_text().splitlines()]
         self.assertEqual((record["getjo_job_id"], record["decision"]), ("ashby:initech-cloud:x1", "interested"))
+
+    def test_stored_interested_exported_once(self) -> None:
+        job = {"id": "ashby:initech-cloud:x1", "company": "Initech Cloud", "title": "DevOps Engineer",
+               "location": "Remote", "score": 7, "url": "https://example.com/x1", "source": "ashby"}
+        with closing(db.connect(self.prep_db)) as conn:
+            db.record_application(conn, job["company"], job["title"], getjo_job_id=job["id"], status="to_apply")
+            db.record_decision(conn, job, "interested")
+        out = self.tmp / "labels.jsonl"
+        self.run_cli("feedback", "export", "--out", str(out))
+        records = [json.loads(line) for line in out.read_text().splitlines()]
+        self.assertEqual([(r["getjo_job_id"], r["decision"], r["location"]) for r in records],
+                         [("ashby:initech-cloud:x1", "interested", "Remote")])
 
     def test_rewrites_and_out_flag(self) -> None:
         out = self.tmp / "elsewhere" / "labels.jsonl"
