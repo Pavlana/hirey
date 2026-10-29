@@ -1,3 +1,4 @@
+import json
 import os
 import unittest
 from contextlib import closing
@@ -17,7 +18,7 @@ class TodayTest(IsolatedTestCase):
         code, out, _ = self.run_cli("today")
         self.assertEqual(code, 0)
         self.assertIn("Next actions due (0)", out)
-        self.assertIn("matches ≥7 not yet in applications (3)", out)
+        self.assertIn("matches ≥7 not yet applied or skipped (3)", out)
         self.assertIn("Initech Cloud — DevOps Engineer", out)
         self.assertNotIn("Hooli Data", out)  # score 6
 
@@ -35,6 +36,13 @@ class TodayTest(IsolatedTestCase):
         self.assertIn("(2)", out)
         self.assertNotIn("greenhouse:acme-rockets:1001", out)
         self.assertIn("and 1 more", out)
+
+    def test_skipped_jobs_not_listed(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            db.record_decision(conn, {"id": "ashby:initech-cloud:x1", "company": "Initech Cloud"}, "skipped", "location")
+        _, out, _ = self.run_cli("today")
+        self.assertIn("(2)", out)
+        self.assertNotIn("Initech Cloud", out)
 
     def test_without_getjo(self) -> None:
         with mock.patch.dict(os.environ, {"PREP_GETJO_DB": str(self.tmp / "missing.db")}):
@@ -160,3 +168,47 @@ class ParseDayTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FeedbackExportTest(IsolatedTestCase):
+    def test_one_record_per_decision(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            db.add_application(conn, "Acme Rockets", "Platform Engineer", getjo_job_id="greenhouse:acme-rockets:1001",
+                               status="applied", date_applied="2026-01-05")
+            db.record_decision(conn, {"id": "lever:globex-labs:abc", "company": "Globex Labs",
+                                      "title": "Cloud Security Engineer", "location": "Remote", "score": 8},
+                               "skipped", "role_type", "Security, not platform")
+        code, out, _ = self.run_cli("feedback", "export")
+        self.assertEqual(code, 0)
+        path = self.tmp / "private" / "feedback" / "job_decisions.jsonl"
+        self.assertIn(f"Wrote 2 labelled decisions to {path}", out)
+        records = [json.loads(line) for line in path.read_text().splitlines()]
+        self.assertEqual([tuple(r) for r in records], [cli.FEEDBACK_FIELDS] * 2)
+        acme, globex = records  # oldest first
+        self.assertEqual((acme["decision"], acme["reason"], acme["location"], acme["score"]),
+                         ("applied", None, "London", 9))  # legacy row: location and score from getjo
+        self.assertEqual((globex["decision"], globex["reason"], globex["comment"]),
+                         ("skipped", "role_type", "Security, not platform"))
+        self.assertFalse(path.with_name(path.name + ".tmp").exists())
+
+    def test_to_apply_exported_as_interested(self) -> None:
+        self.run_cli("applied", "--job-id", "ashby:initech-cloud:x1", "--status", "to_apply")
+        out = self.tmp / "labels.jsonl"
+        self.run_cli("feedback", "export", "--out", str(out))
+        (record,) = [json.loads(line) for line in out.read_text().splitlines()]
+        self.assertEqual((record["getjo_job_id"], record["decision"]), ("ashby:initech-cloud:x1", "interested"))
+
+    def test_rewrites_and_out_flag(self) -> None:
+        out = self.tmp / "elsewhere" / "labels.jsonl"
+        out.parent.mkdir()
+        out.write_text("stale\n")
+        code, stdout, _ = self.run_cli("feedback", "export", "--out", str(out))
+        self.assertEqual(code, 0)
+        self.assertIn("Wrote 0", stdout)
+        self.assertEqual(out.read_text(), "")
+
+    def test_needs_private_dir(self) -> None:
+        with mock.patch.dict(os.environ, {"PREP_PRIVATE_DIR": ""}):
+            code, _, err = self.run_cli("feedback", "export")
+        self.assertNotEqual(code, 0)
+        self.assertIn("private_dir", err)

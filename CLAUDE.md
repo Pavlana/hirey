@@ -81,4 +81,5 @@ data/        local databases (gitignored)
 - Example data: `python -m prep.seed_example`, then
   `PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees)
+- Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

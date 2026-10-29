@@ -57,3 +57,27 @@ class GetjoReadOnlyTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LocationTagsTest(unittest.TestCase):
+    def test_rules(self) -> None:
+        cases = {
+            "London": {"london"},
+            "London, UK": {"london"},
+            "Hybrid - London": {"london"},
+            "central LONDON": {"london"},
+            "Remote": {"remote"},
+            "Remote (UK)": {"remote"},
+            "UK - remote first": {"remote"},
+            "Anywhere": {"remote"},
+            "London / Remote": {"london", "remote"},
+            "Remote or London": {"london", "remote"},
+            "Manchester": {"other"},
+            "Londonderry": {"other"},
+            "Remoteville": {"other"},
+            "": {"other"},
+            None: {"other"},
+        }
+        for location, tags in cases.items():
+            with self.subTest(location=location):
+                self.assertEqual(getjo.location_tags(location), tags)

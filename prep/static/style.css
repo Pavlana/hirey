@@ -275,6 +275,10 @@ form.inline input[name="next_action"] { width: 110px; }
 form.add { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0; }
 form.add input[name="title"] { flex: 1 1 280px; }
 form.add select[name="application_id"] { flex: 0 1 260px; }
+form.filters input[type="search"] { flex: 1 1 160px; }
+.checks { display: inline-flex; align-items: center; gap: var(--space-3); }
+.check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.offer-actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .filter { width: 220px; height: 32px; background: var(--surface-2); border-color: var(--border); }
 .filter:focus { background-color: var(--surface); }
 

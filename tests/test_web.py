@@ -12,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/matches", "/tasks")
+PAGES = ("/", "/offers", "/tasks")
 PAY = "PAY-MARKER-31337"
 
 
@@ -229,7 +229,7 @@ class JsonActionsTest(WebTestCase):
             self.assertEqual(db.get_task(conn, task_id)["status"], "todo")
 
     def test_apply(self) -> None:
-        status, reply = self.post_json("/matches/apply", {"job_id": "lever:globex-labs:abc", "tier": "B"})
+        status, reply = self.post_json("/offers/apply", {"job_id": "lever:globex-labs:abc", "tier": "B"})
         self.assertEqual((status, reply["ok"]), (200, True))
         self.assertNotIn("html", reply)
         with self.conn() as conn:
@@ -237,7 +237,7 @@ class JsonActionsTest(WebTestCase):
 
     def test_errors_are_json(self) -> None:
         for path, form in (("/tasks/add", {"title": ""}), ("/tasks/done", {"task_id": "999"}),
-                           ("/tasks/reopen", {}), ("/matches/apply", {"job_id": "no:such:job"})):
+                           ("/tasks/reopen", {}), ("/offers/apply", {"job_id": "no:such:job"})):
             with self.subTest(path=path):
                 status, reply = self.post_json(path, form)
                 self.assertEqual(status, 400)
@@ -245,9 +245,9 @@ class JsonActionsTest(WebTestCase):
                 self.assertTrue(reply["message"])
 
 
-class MatchesTest(WebTestCase):
+class OffersTest(WebTestCase):
     def test_lists_untracked_matches(self) -> None:
-        _, _, body = self.get("/matches")
+        _, _, body = self.get("/offers")
         self.assertIn("Globex Labs", body)
         self.assertIn("Initech Cloud", body)
         self.assertNotIn("Hooli Data", body)  # score 6
@@ -255,11 +255,11 @@ class MatchesTest(WebTestCase):
         self.assertIn("(2)", body)
 
     def test_mark_applied(self) -> None:
-        status, headers, _ = self.post("/matches/apply", {
+        status, headers, _ = self.post("/offers/apply", {
             "job_id": "lever:globex-labs:abc", "tier": "A", "next_action": "Follow up", "next_date": "2026-01-27",
         })
         self.assertEqual(status, 303)
-        self.assertEqual(headers["Location"], "/matches?msg=applied")
+        self.assertEqual(headers["Location"], "/offers?msg=applied")
         with self.conn() as conn:
             app = db.find_by_job(conn, "lever:globex-labs:abc")
         self.assertEqual((app["company"], app["status"], app["tier"]), ("Globex Labs", "applied", "A"))
@@ -271,14 +271,14 @@ class MatchesTest(WebTestCase):
 
     def test_mark_applied_twice_does_not_duplicate(self) -> None:
         for _ in range(2):
-            self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})
+            self.post("/offers/apply", {"job_id": "lever:globex-labs:abc"})
         with self.conn() as conn:
             self.assertEqual(sum(a["getjo_job_id"] == "lever:globex-labs:abc" for a in db.list_applications(conn)), 1)
 
     def test_mark_applied_bad_input(self) -> None:
-        self.assertEqual(self.post("/matches/apply", {"job_id": "no:such:job"})[0], 400)
-        self.assertEqual(self.post("/matches/apply", {})[0], 400)
-        status, _, body = self.post("/matches/apply", {"job_id": "lever:globex-labs:abc", "next_date": "soon"})
+        self.assertEqual(self.post("/offers/apply", {"job_id": "no:such:job"})[0], 400)
+        self.assertEqual(self.post("/offers/apply", {})[0], 400)
+        status, _, body = self.post("/offers/apply", {"job_id": "lever:globex-labs:abc", "next_date": "soon"})
         self.assertEqual(status, 400)
         self.assertIn("next_action_date", body)
 
@@ -286,19 +286,185 @@ class MatchesTest(WebTestCase):
         for value in (str(self.tmp / "missing.db"), ""):
             with self.subTest(getjo=value), mock.patch.dict(os.environ, {"PREP_GETJO_DB": value}):
                 self.settings = load_settings()
-                status, _, body = self.get("/matches")
+                status, _, body = self.get("/offers")
                 self.assertEqual(status, 200)
                 self.assertIn("not available", body)
-                self.assertEqual(self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})[0], 400)
+                self.assertEqual(self.post("/offers/apply", {"job_id": "lever:globex-labs:abc"})[0], 400)
 
     def test_getjo_file_that_is_not_a_jobs_db(self) -> None:
         broken = self.tmp / "broken.db"
         broken.write_bytes(b"not a database")
         with mock.patch.dict(os.environ, {"PREP_GETJO_DB": str(broken)}):
             self.settings = load_settings()
-            status, _, body = self.get("/matches")
+            status, _, body = self.get("/offers")
         self.assertEqual(status, 200)
         self.assertIn("Could not read", body)
+
+
+class OfferFiltersTest(WebTestCase):
+    def companies(self, query: str) -> set[str]:
+        status, _, body = self.get("/offers" + query)
+        self.assertEqual(status, 200)
+        names = ("Acme Rockets", "Globex Labs", "Initech Cloud", "Hooli Data", "Umbrella Ops")
+        return {n for n in names if f">{n}</a>" in body}
+
+    def test_filters(self) -> None:
+        cases = {
+            "": {"Globex Labs", "Initech Cloud"},  # new, score >= 7; Acme is applied
+            "?score=8": {"Globex Labs"},
+            "?score=6": {"Globex Labs", "Initech Cloud", "Hooli Data"},
+            "?show=all": {"Acme Rockets", "Globex Labs", "Initech Cloud"},
+            "?show=applied": {"Acme Rockets"},  # linked application, no decision row
+            "?show=skipped": set(),
+            "?company=GLOB": {"Globex Labs"},
+            "?role=devops": {"Initech Cloud"},
+            "?loc=london": set(),
+            "?loc=london&show=all": {"Acme Rockets"},
+            "?loc=remote": {"Globex Labs"},
+            "?loc=other": {"Initech Cloud"},
+            "?loc=london&loc=remote&show=all": {"Acme Rockets", "Globex Labs"},
+            "?score=abc&show=nope&loc=mars": {"Globex Labs", "Initech Cloud"},  # bad values: defaults
+            "?score=99": {"Globex Labs", "Initech Cloud"},
+        }
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                self.assertEqual(self.companies(query), expected)
+
+    def test_filter_form_keeps_values(self) -> None:
+        _, _, body = self.get("/offers?score=8&company=%3Cb%3E&loc=remote&show=all")
+        self.assertIn('<option value="8" selected>', body)
+        self.assertIn('name="company" value="&lt;b&gt;"', body)
+        self.assertIn('value="remote" checked', body)
+        self.assertIn('<option value="all" selected>', body)
+        _, _, body = self.get("/offers?score=8&company=ex+Labs&loc=remote")
+        self.assertIn('name="return" value="/offers?score=8&amp;company=ex+Labs&amp;loc=remote&amp;show=new"', body)
+
+    def test_matches_redirects(self) -> None:
+        status, headers, _ = self.get("/matches")
+        self.assertEqual((status, headers["Location"]), (303, "/offers"))
+        status, headers, _ = self.get("/matches?score=8&loc=remote")
+        self.assertEqual((status, headers["Location"]), (303, "/offers?score=8&loc=remote"))
+        status, headers, _ = self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})
+        self.assertEqual((status, headers["Location"]), (303, "/offers?msg=applied"))
+
+
+class SkipTest(WebTestCase):
+    GLOBEX = "lever:globex-labs:abc"
+
+    def test_skip_and_undo(self) -> None:
+        status, headers, _ = self.post("/offers/skip", {"job_id": self.GLOBEX, "reason": "stack",
+                                                        "comment": "<b>No Java</b>"})
+        self.assertEqual((status, headers["Location"]), (303, "/offers?msg=skipped"))
+        with self.conn() as conn:
+            d = db.job_decisions(conn)[self.GLOBEX]
+            self.assertIsNone(db.find_by_job(conn, self.GLOBEX))
+        self.assertEqual((d["decision"], d["reason"], d["comment"], d["score"]), ("skipped", "stack", "<b>No Java</b>", 8))
+
+        _, _, body = self.get(headers["Location"])
+        self.assertIn("Skipped. It no longer appears", body)
+        self.assertNotIn("Globex Labs", body)
+        _, out, _ = self.run_cli("today")
+        self.assertNotIn("Globex Labs", out)
+
+        _, _, body = self.get("/offers?show=skipped")
+        self.assertIn("Globex Labs", body)
+        self.assertIn("Stack", body)
+        self.assertIn("&lt;b&gt;No Java&lt;/b&gt;", body)
+        self.assertNotIn("<b>No Java", body)
+        self.assertIn('action="/offers/unskip"', body)
+
+        status, headers, _ = self.post("/offers/unskip", {"job_id": self.GLOBEX})
+        self.assertEqual((status, headers["Location"]), (303, "/offers?msg=unskipped"))
+        self.assertIn("Globex Labs", self.get("/offers")[2])
+
+    def test_mark_applied_records_decision(self) -> None:
+        self.post("/offers/apply", {"job_id": self.GLOBEX})
+        with self.conn() as conn:
+            self.assertEqual(db.job_decisions(conn)[self.GLOBEX]["decision"], "applied")
+        self.assertIn("Globex Labs", self.get("/offers?show=applied")[2])
+        self.assertNotIn("Globex Labs", self.get("/offers")[2])
+
+    def test_cli_applied_records_decision(self) -> None:
+        self.run_cli("applied", "--job-id", "ashby:initech-cloud:x1")
+        with self.conn() as conn:
+            self.assertEqual(db.job_decisions(conn)["ashby:initech-cloud:x1"]["decision"], "applied")
+        self.assertIn("Initech Cloud", self.get("/offers?show=applied")[2])
+
+    def test_bad_skips(self) -> None:
+        for form in ({"job_id": self.GLOBEX}, {"job_id": self.GLOBEX, "reason": "boring"},
+                     {"job_id": "no:such:job", "reason": "stack"}, {"reason": "stack"},
+                     {"job_id": "greenhouse:acme-rockets:1001", "reason": "pay"},  # already applied
+                     {"job_id": self.GLOBEX, "reason": "other", "comment": "x" * (web.MAX_COMMENT + 1)}):
+            with self.subTest(form=form):
+                self.assertEqual(self.post("/offers/skip", form)[0], 400)
+        for job_id in (self.GLOBEX, "greenhouse:acme-rockets:1001", ""):  # not skipped / applied / missing
+            with self.subTest(unskip=job_id):
+                self.assertEqual(self.post("/offers/unskip", {"job_id": job_id})[0], 400)
+        with self.conn() as conn:
+            self.assertNotIn(self.GLOBEX, db.job_decisions(conn))
+
+    def test_return_keeps_filters_only_for_offers(self) -> None:
+        cases = {
+            "/offers?score=8&loc=remote&msg=applied": "/offers?score=8&loc=remote&msg=skipped",
+            "/offers?company=a%0d%0aSet-Cookie:x": "/offers?company=a%0D%0ASet-Cookie%3Ax&msg=skipped",
+            "http://evil.example.com/offers?score=8": "/offers?msg=skipped",
+            "//evil.example.com/offers": "/offers?msg=skipped",
+            "/tasks?x=1": "/offers?msg=skipped",
+        }
+        for value, location in cases.items():
+            with self.subTest(value=value):
+                self.post("/offers/unskip", {"job_id": self.GLOBEX}) if self.GLOBEX in self.decided() else None
+                status, headers, _ = self.post("/offers/skip", {"job_id": self.GLOBEX, "reason": "pay", "return": value})
+                self.assertEqual((status, headers["Location"]), (303, location))
+
+    def decided(self) -> dict:
+        with self.conn() as conn:
+            return db.job_decisions(conn)
+
+    def test_skip_json(self) -> None:
+        body = urlencode({"job_id": self.GLOBEX, "reason": "seniority"}).encode()
+        status, _, out = web.handle(self.settings, "POST", "/offers/skip",
+                                    {**HOST, "Accept": "application/json"}, body, today=TODAY)
+        self.assertEqual((status, json.loads(out)["ok"]), (200, True))
+
+    def test_snapshot_shown_after_getjo_drops_the_job(self) -> None:
+        gone = {"id": "greenhouse:gone:9", "company": "Vanished Co", "title": "SRE", "location": "Remote",
+                "score": 9, "url": "https://example.com/gone", "source": "greenhouse"}
+        with self.conn() as conn:
+            db.record_decision(conn, gone, "skipped", "company")
+        _, _, body = self.get("/offers?show=skipped")
+        self.assertIn("Vanished Co", body)
+        self.assertIn("Vanished Co", self.get("/offers?show=skipped&score=10")[2])  # score filters New only
+
+    def test_score_filter_applies_to_new_only(self) -> None:
+        hooli = "workable:hooli-data:77"  # score 6
+        self.post("/offers/skip", {"job_id": hooli, "reason": "company"})
+        cases = {
+            "?show=skipped": {"Hooli Data"},
+            "?show=skipped&score=10": {"Hooli Data"},
+            "?show=applied&score=10": {"Acme Rockets"},
+            "?show=all&score=9": {"Acme Rockets", "Hooli Data"},  # Globex (8) is new, below 9
+            "?score=6": {"Globex Labs", "Initech Cloud"},  # Hooli is skipped, not new
+        }
+        for query, expected in cases.items():
+            with self.subTest(query=query):
+                self.assertEqual(OfferFiltersTest.companies(self, query), expected)
+
+    def test_to_apply_shows_as_interested(self) -> None:
+        initech = "ashby:initech-cloud:x1"
+        self.run_cli("applied", "--job-id", initech, "--status", "to_apply")
+        self.assertEqual(OfferFiltersTest.companies(self, "?show=interested"), {"Initech Cloud"})
+        self.assertNotIn("Initech Cloud", OfferFiltersTest.companies(self, "?show=applied"))
+        self.assertNotIn("Initech Cloud", OfferFiltersTest.companies(self, ""))
+        _, _, body = self.get("/offers?show=interested")
+        self.assertIn('<span class="badge s6">interested</span>', body)
+        self.assertIn('action="/offers/apply"', body)
+        self.assertNotIn('action="/offers/skip"', body)
+        self.assertEqual(self.post("/offers/skip", {"job_id": initech, "reason": "pay"})[0], 400)
+
+        self.post("/offers/apply", {"job_id": initech})
+        self.assertEqual(OfferFiltersTest.companies(self, "?show=applied"), {"Acme Rockets", "Initech Cloud"})
+        self.assertEqual(OfferFiltersTest.companies(self, "?show=interested"), set())
 
 
 class TasksTest(WebTestCase):
@@ -348,13 +514,13 @@ class SharedDatabaseTest(WebTestCase):
 
         code, _, _ = self.run_cli("applied", "--job-id", "ashby:initech-cloud:x1")
         self.assertEqual(code, 0)
-        self.assertNotIn("Initech Cloud", self.get("/matches")[2])
+        self.assertNotIn("Initech Cloud", self.get("/offers")[2])
 
     def test_web_write_visible_to_cli(self) -> None:
         self.post("/tasks/add", {"title": "Added in the browser"})
         _, out, _ = self.run_cli("task", "list")
         self.assertIn("Added in the browser", out)
-        self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})
+        self.post("/offers/apply", {"job_id": "lever:globex-labs:abc"})
         _, out, _ = self.run_cli("today")
         self.assertNotIn("Globex Labs", out)
 

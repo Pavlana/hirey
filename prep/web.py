@@ -1,4 +1,4 @@
-"""Local dashboard over prep.db: Dashboard, Matches and Tasks pages.
+"""Local dashboard over prep.db: Dashboard, Job Offers and Tasks pages.
 
     python -m prep.web [--port 8765]
 
@@ -28,7 +28,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from prep import charts, db, getjo, stats
 from prep.config import ConfigError, Settings, load_settings
@@ -43,6 +43,7 @@ STATIC_FILES = {
 LOOPBACK_NAMES = ("localhost", "127.0.0.1")
 MAX_BODY = 64 * 1024
 RECENT_DONE = 10
+MAX_COMMENT = 1000
 
 Response = tuple[int, list[tuple[str, str]], bytes]
 
@@ -50,7 +51,7 @@ Response = tuple[int, list[tuple[str, str]], bytes]
 PAGES = (
     ("/", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
                        '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
-    ("/matches", "Matches", '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
+    ("/offers", "Job Offers", '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
     ("/tasks", "Tasks", '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
@@ -58,7 +59,9 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
-    "applied": "Recorded as applied. It no longer appears in the match list.",
+    "applied": "Recorded as applied. It no longer appears in new job offers.",
+    "skipped": "Skipped. It no longer appears in new job offers.",
+    "unskipped": "Skip undone; the job is new again.",
     "task_added": "Task added.",
     "task_done": "Task marked done.",
     "task_reopened": "Task reopened.",
@@ -78,7 +81,7 @@ SECURITY_HEADERS = [
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: eucalyptus,
 # slate-indigo, dusty-violet, mauve-rose, ochre.
-PAGE_THEMES = {"/": "sage", "/matches": "dusty-blue", "/tasks": "terracotta"}
+PAGE_THEMES = {"/": "sage", "/offers": "dusty-blue", "/tasks": "terracotta"}
 # Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -154,7 +157,14 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return 200, [("Content-Type", content_type), *SECURITY_HEADERS], (STATIC_DIR / name).read_bytes()
     if path == "/progress":  # merged into the dashboard; keeps old bookmarks working
         return 303, [("Location", "/")], b""
-    pages = {"/": dashboard_page, "/matches": matches_page, "/tasks": tasks_page}
+    if path == "/matches":  # renamed to Job Offers; keeps old bookmarks (and their filters) working
+        target = "/offers" + (f"?{urlencode(query, doseq=True)}" if query else "")
+        return 303, [("Location", target)], b""
+    pages = {
+        "/": dashboard_page,
+        "/offers": lambda s, c, t: offers_page(s, c, t, query),
+        "/tasks": tasks_page,
+    }
     if path not in pages:
         return _text(404, "Not found.")
     message = MESSAGES.get((query.get("msg") or [""])[0])
@@ -178,7 +188,18 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
         if fragment is not None:
             payload["html"] = fragment
         return _json(200, payload)
-    return 303, [("Location", f"{page}?msg={msg}")], b""
+    return 303, [("Location", _return_to(form.get("return"), page, msg))], b""
+
+
+def _return_to(value: str | None, page: str, msg: str) -> str:
+    """Where a plain form post redirects: `page`, keeping the query of a `return` field that
+    points at the same page (so filters survive), plus the message key. The query is parsed and
+    re-encoded, so nothing raw from the form reaches the Location header."""
+    url = urlsplit(value or "")
+    pairs = []
+    if not url.scheme and not url.netloc and url.path == page:
+        pairs = [(k, v) for k, v in parse_qsl(url.query) if k != "msg"]
+    return f"{page}?{urlencode([*pairs, ('msg', msg)])}"
 
 
 def _form(body: bytes) -> dict[str, str]:
@@ -207,8 +228,8 @@ def _int_field(form: dict[str, str], key: str) -> int | None:
 # --- actions (POST) -------------------------------------------------------------------
 # Each returns an HTML fragment for the page script (a new table row) or None.
 
-def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
-    """Record a getjo match as applied (same logic as /applied --job-id)."""
+def _getjo_job(settings: Settings, form: dict[str, str]) -> dict:
+    """The getjo job named by the form's job_id, read from getjo's database (read-only)."""
     job_id = form.get("job_id")
     if not job_id:
         raise BadRequest("job_id is missing.")
@@ -219,6 +240,12 @@ def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
         raise BadRequest(f"getjo database unavailable: {e}") from e
     if job is None:
         raise BadRequest("That getjo job no longer exists.")
+    return job
+
+
+def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
+    """Record a getjo job as applied (same logic as /applied --job-id)."""
+    job = _getjo_job(settings, form)
     app_id, _ = db.record_application(
         conn, job["company"], job["title"],
         getjo_job_id=job["id"], link=job["url"], source=job["source"],
@@ -226,7 +253,31 @@ def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
         next_action=_optional(form, "next_action"),
         next_action_date=_optional(form, "next_date"),
     )
+    db.record_decision(conn, job, "applied")
     log.info("application %s recorded from the dashboard", app_id)
+
+
+def skip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
+    """Skip a getjo job with a reason and an optional comment (kept as a label for search)."""
+    job = _getjo_job(settings, form)
+    reason = form.get("reason")
+    if not reason:
+        raise BadRequest("Pick a reason for skipping.")
+    if len(form.get("comment", "")) > MAX_COMMENT:
+        raise BadRequest(f"The comment is longer than {MAX_COMMENT} characters.")
+    decided = db.job_decisions(conn).get(job["id"])
+    if decided and decided["decision"] != "skipped":
+        raise BadRequest(f"This job is already tracked as {decided['decision']}.")
+    db.record_decision(conn, job, "skipped", reason, _optional(form, "comment"))
+    log.info("getjo job skipped from the dashboard (reason %s)", reason)  # never the comment
+
+
+def unskip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
+    job_id = form.get("job_id")
+    if not job_id:
+        raise BadRequest("job_id is missing.")
+    db.undo_skip(conn, job_id)
+    log.info("getjo job skip undone from the dashboard")
 
 
 def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> str:
@@ -261,7 +312,10 @@ def reopen_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, st
 
 # path -> (action, page to return to, MESSAGES key)
 ACTIONS: dict[str, tuple[Callable[..., str | None], str, str]] = {
-    "/matches/apply": (mark_applied, "/matches", "applied"),
+    "/offers/apply": (mark_applied, "/offers", "applied"),
+    "/offers/skip": (skip_offer, "/offers", "skipped"),
+    "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
+    "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
     "/tasks/add": (add_task, "/tasks", "task_added"),
     "/tasks/done": (complete_task, "/tasks", "task_done"),
     "/tasks/reopen": (reopen_task, "/tasks", "task_reopened"),
@@ -334,39 +388,175 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
     return "Dashboard", f"Pipeline and progress · {today}", content
 
 
-def matches_page(settings: Settings, conn: sqlite3.Connection, today: str) -> tuple[str, str, str]:
-    threshold = getjo.DEFAULT_THRESHOLD
-    subtitle = f"getjo jobs scored {threshold} or more that are not yet tracked"
+SHOW = {"new": "New", "interested": "Interested", "applied": "Applied", "skipped": "Skipped", "all": "All"}
+LOCATION_LABELS = {"london": "London", "remote": "Remote", "other": "Other"}
+SKIP_REASON_LABELS = {
+    "location": "Wrong location", "seniority": "Seniority", "role_type": "Role type", "stack": "Stack", "company": "Company",
+    "pay": "Pay", "contract_type": "Contract type", "other": "Other",
+}
+DECISION_SHADES = {"interested": "s6", "applied": "s8", "skipped": "s3"}
+
+
+def offer_filters(query: dict[str, list[str]]) -> dict:
+    """Job Offers filters from the query string. Unknown or bad values fall back to the defaults,
+    so an old bookmark never fails."""
+    def first(key: str) -> str:
+        return (query.get(key) or [""])[0].strip()
+
+    score = first("score")
+    show = first("show")
+    return {
+        "score": int(score) if score.isdigit() and 1 <= int(score) <= 10 else getjo.DEFAULT_THRESHOLD,
+        "company": first("company"),
+        "role": first("role"),
+        "loc": tuple(loc for loc in getjo.LOCATIONS if loc in query.get("loc", [])),
+        "show": show if show in SHOW else "new",
+    }
+
+
+def filter_offers(new_jobs: list[dict], decided_jobs: dict[str, dict], decisions: dict[str, dict],
+                  filters: dict) -> list[tuple[dict, dict | None]]:
+    """(job, decision or None) pairs that pass the filters, newest first.
+
+    `new_jobs` are getjo jobs at the minimum score (the score filter applies to New only);
+    `decided_jobs` are the getjo rows of decided jobs, whatever their score. A decided job
+    that getjo has dropped comes from its snapshot.
+    """
+    pairs = [(job, None) for job in new_jobs if job["id"] not in decisions]
+    for job_id, d in decisions.items():
+        job = decided_jobs.get(job_id)
+        if job is None:
+            snapshot = {k: d[k] for k in ("company", "title", "location", "score", "url", "source")}
+            job = {"id": job_id, "first_seen": None, **snapshot}
+        pairs.append((job, d))
+
+    def keep(job: dict, decision: dict | None) -> bool:
+        state = decision["decision"] if decision else "new"
+        if filters["show"] != "all" and state != filters["show"]:
+            return False
+        if filters["company"].lower() not in (job["company"] or "").lower():
+            return False
+        if filters["role"].lower() not in (job["title"] or "").lower():
+            return False
+        return not filters["loc"] or bool(getjo.location_tags(job["location"]) & set(filters["loc"]))
+
+    def newest(pair: tuple[dict, dict | None]) -> str:
+        job, decision = pair
+        return job["first_seen"] or (decision["decided_at"] if decision else "") or ""
+
+    return sorted(((job, d) for job, d in pairs if keep(job, d)), key=newest, reverse=True)
+
+
+def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                query: dict[str, list[str]]) -> tuple[str, str, str]:
+    f = offer_filters(query)
+    subtitle = f"New: getjo jobs scored {f['score']} or more; decided jobs at any score"
+    decisions = db.job_decisions(conn)
     try:
         with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
-            found = getjo.matches(gconn, db.linked_job_ids(conn), threshold)
+            new_jobs = getjo.matches(gconn, threshold=f["score"]) if f["show"] in ("new", "all") else []
+            decided_jobs = getjo.jobs_by_id(gconn, set(decisions))
     except getjo.GetjoUnavailable as e:
-        return "Matches", subtitle, _banner(f"getjo matches are not available: {e}.", "warning")
+        return "Job Offers", subtitle, _banner(f"getjo jobs are not available: {e}.", "warning")
     except sqlite3.Error as e:
-        return "Matches", subtitle, _banner(f"Could not read the getjo database: {e}.", "warning")
+        return "Job Offers", subtitle, _banner(f"Could not read the getjo database: {e}.", "warning")
 
+    found = filter_offers(new_jobs, decided_jobs, decisions, f)
+    here = "/offers?" + urlencode(
+        [(k, v) for k, v in (("score", f["score"]), ("company", f["company"]), ("role", f["role"]),
+                             *(("loc", loc) for loc in f["loc"]), ("show", f["show"])) if v != ""])
     next_date = (date.fromisoformat(today) + timedelta(days=7)).isoformat()
-    tiers = "".join(f'<option value="{h(t)}">{h(t)}</option>' for t in db.TIERS)
-    rows = []
-    for job in found:
-        form = (
-            '<form method="post" action="/matches/apply" class="inline" data-ajax="remove-row">'
-            f'<input type="hidden" name="job_id" value="{h(job["id"])}">'
+    head: tuple = (("Score", "num"), "Company", "Role", "Location", ("Seen", "date"))
+    if f["show"] != "new":
+        head += ("Decision",)
+    head += ("",)
+    rows, attrs = [], []
+    for job, decision in found:
+        cells = (
+            _score_badge(job["score"]),
+            _link(job["url"], job["company"]),
+            h(job["title"]), h(job["location"]), _mono(h((job["first_seen"] or "")[:10])),
+        )
+        if f["show"] != "new":
+            cells += (_decision_cell(decision),)
+        cells += (_offer_actions(job, decision, f["show"], here, next_date),)
+        rows.append(cells)
+        attrs.append(f'data-company="{h((job["company"] or "").lower())}" '
+                     f'data-role="{h((job["title"] or "").lower())}"')
+    if f["company"] or f["role"] or f["loc"]:
+        empty = "Nothing matches these filters."
+    else:
+        empty = {"new": "No new job offers.", "interested": "No jobs waiting to apply.",
+                 "applied": "Nothing marked applied.",
+                 "skipped": "Nothing skipped.", "all": "No job offers."}[f["show"]]
+    table = _table(head, rows, empty, table_id="offers", hint="New getjo matches appear here after each poll.",
+                   row_attrs=attrs)
+    content = _offer_filter_form(f) + _card(SHOW[f["show"]], table, count=len(found), count_for="offers")
+    return "Job Offers", f"{subtitle} · {SHOW[f['show']].lower()} ({len(found)})", content
+
+
+def _offer_filter_form(f: dict) -> str:
+    """The filter bar: a GET form, so a filtered view is a bookmarkable URL. The page script
+    submits it on change and filters company/role as you type."""
+    scores = "".join(f'<option value="{n}"{" selected" if n == f["score"] else ""}>score ≥ {n}</option>'
+                     for n in range(10, 0, -1))
+    locs = "".join(
+        f'<label class="check"><input type="checkbox" name="loc" value="{loc}"'
+        f'{" checked" if loc in f["loc"] else ""}> {label}</label>'
+        for loc, label in LOCATION_LABELS.items()
+    )
+    show = "".join(f'<option value="{k}"{" selected" if k == f["show"] else ""}>{label}</option>'
+                   for k, label in SHOW.items())
+    form = (
+        '<form method="get" action="/offers" class="add filters" data-live-filters>'
+        f'<select name="score" aria-label="Minimum score">{scores}</select>'
+        f'<input type="search" name="company" value="{h(f["company"])}" placeholder="Company…" aria-label="Company">'
+        f'<input type="search" name="role" value="{h(f["role"])}" placeholder="Role…" aria-label="Role">'
+        f'<span class="checks" role="group" aria-label="Location">{locs}</span>'
+        f'<select name="show" aria-label="Show">{show}</select>'
+        + _button("Filter", "secondary") + "</form>"
+    )
+    return _card("Filters", form, cls="card-form")
+
+
+def _decision_cell(decision: dict | None) -> str:
+    if not decision:
+        return _badge("new", "s6")
+    badge = _badge(decision["decision"], DECISION_SHADES.get(decision["decision"], "neutral"))
+    reason = SKIP_REASON_LABELS.get(decision["reason"] or "", "")
+    comment = f' <span class="muted">— {h(decision["comment"])}</span>' if decision["comment"] else ""
+    return f'{badge} {h(reason)}{comment}'
+
+
+def _offer_actions(job: dict, decision: dict | None, show: str, here: str, next_date: str) -> str:
+    """Mark applied + Skip for a new job, Mark applied for an interested one, Undo for a skipped one. Forms are sent by the page
+    script on the New and Skipped views (the row leaves the list); elsewhere they post and reload."""
+    keep = f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+    if decision is None or decision["decision"] == "interested":
+        tiers = "".join(f'<option value="{h(t)}">{h(t)}</option>' for t in db.TIERS)
+        reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
+        ajax = (' data-ajax="remove-row"', ' data-ajax="skip"') if show in ("new", "interested") else ("", "")
+        apply = (
+            f'<form method="post" action="/offers/apply" class="inline"{ajax[0]}>{keep}'
             f'<select name="tier" aria-label="Tier"><option value="">tier</option>{tiers}</select>'
             '<input name="next_action" value="Follow up" aria-label="Next action">'
             f'<input type="date" name="next_date" value="{next_date}" aria-label="Next action date">'
             + _button("Mark applied", size="sm") + "</form>"
         )
-        rows.append((
-            _score_badge(job["score"]),
-            _link(job["url"], job["company"]),
-            h(job["title"]), h(job["location"]), _mono(h((job["first_seen"] or "")[:10])), form,
-        ))
-    table = _table((("Score", "num"), "Company", "Role", "Location", ("Seen", "date"), ""), rows,
-                   "No new matches.", table_id="matches", hint="New getjo matches appear here after each poll.")
-    content = _card("New matches", table, count=len(found), count_for="matches",
-                    action=_filter("matches", "Filter matches"))
-    return "Matches", f"{subtitle} ({len(found)})", content
+        if decision is not None:  # interested: already tracked, so it can be applied for but not skipped
+            return apply
+        return (
+            f'<div class="offer-actions">{apply}'
+            f'<form method="post" action="/offers/skip" class="inline"{ajax[1]}>{keep}'
+            f'<select name="reason" required aria-label="Skip reason"><option value="">skip reason</option>{reasons}</select>'
+            f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="comment (optional)" aria-label="Comment">'
+            + _button("Skip", "secondary", "sm") + "</form></div>"
+        )
+    if decision["decision"] == "skipped":
+        ajax = ' data-ajax="remove-row"' if show == "skipped" else ""
+        return (f'<form method="post" action="/offers/unskip" class="inline"{ajax}>{keep}'
+                + _button("Undo skip", "ghost", "sm") + "</form>")
+    return ""
 
 
 def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str) -> tuple[str, str, str]:
@@ -468,12 +658,13 @@ def _icon(paths: str) -> str:
             f'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">{paths}</svg>')
 
 
-def _row(cells: tuple[str, ...]) -> str:
-    return "<tr>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
+def _row(cells: tuple[str, ...], attrs: str = "") -> str:
+    """A table row; `attrs` is trusted, already-escaped attribute text."""
+    return f"<tr{' ' + attrs if attrs else ''}>" + "".join(f"<td>{c}</td>" for c in cells) + "</tr>"
 
 
 def _table(head: tuple[str | tuple[str, str], ...], rows: list[tuple[str, ...]], empty: str,
-           table_id: str = "", hint: str = "") -> str:
+           table_id: str = "", hint: str = "", row_attrs: list[str] | None = None) -> str:
     """A table from already-escaped cells, or an empty state when there are no rows.
 
     A head item is a label (sorted as text) or (label, "text" | "num" | "date"); an empty label
@@ -487,7 +678,8 @@ def _table(head: tuple[str | tuple[str, str], ...], rows: list[tuple[str, ...]],
         sort = f' data-sort="{h(kind)}"' if label else ""
         th += f'<th scope="col"{sort}>{h(label)}</th>'
     ident = f' id="{h(table_id)}"' if table_id else ""
-    trs = "".join(_row(row) for row in rows)
+    attrs = row_attrs or [""] * len(rows)
+    trs = "".join(_row(row, a) for row, a in zip(rows, attrs))
     return f'<div class="table-wrap"><table{ident}><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table></div>'
 
 

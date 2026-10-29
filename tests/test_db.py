@@ -157,3 +157,51 @@ class DbTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+JOB = {"id": "gh:a:1", "company": "Acme", "title": "Engineer", "location": "London", "score": 8,
+       "url": "https://example.com/1", "source": "gh"}
+
+
+class JobDecisionsTest(DbTest):
+    def test_skip_needs_known_reason(self) -> None:
+        for reason in (None, "", "boring"):
+            with self.subTest(reason=reason), self.assertRaises(ValueError):
+                db.record_decision(self.conn, JOB, "skipped", reason)
+        with self.assertRaises(ValueError):
+            db.record_decision(self.conn, JOB, "maybe")
+
+    def test_skip_snapshot_and_undo(self) -> None:
+        db.record_decision(self.conn, JOB, "skipped", "stack", "No Go jobs")
+        d = db.job_decisions(self.conn)["gh:a:1"]
+        self.assertEqual((d["decision"], d["reason"], d["comment"]), ("skipped", "stack", "No Go jobs"))
+        self.assertEqual((d["company"], d["title"], d["location"], d["score"]), ("Acme", "Engineer", "London", 8))
+        self.assertEqual(db.excluded_job_ids(self.conn), {"gh:a:1"})
+        db.undo_skip(self.conn, "gh:a:1")
+        self.assertEqual(db.job_decisions(self.conn), {})
+        with self.assertRaises(LookupError):
+            db.undo_skip(self.conn, "gh:a:1")
+
+    def test_applied_replaces_skip_and_cannot_be_undone(self) -> None:
+        db.record_decision(self.conn, JOB, "skipped", "pay")
+        db.record_decision(self.conn, JOB, "applied", "pay")
+        d = db.job_decisions(self.conn)["gh:a:1"]
+        self.assertEqual((d["decision"], d["reason"]), ("applied", None))
+        with self.assertRaises(ValueError):
+            db.undo_skip(self.conn, "gh:a:1")
+
+    def test_linked_application_without_a_row_counts_as_applied(self) -> None:
+        db.add_application(self.conn, "Globex", "SRE", getjo_job_id="gh:g:2", status="applied",
+                           date_applied="2026-03-01")
+        d = db.job_decisions(self.conn)["gh:g:2"]
+        self.assertEqual((d["decision"], d["decided_at"], d["company"], d["title"]),
+                         ("applied", "2026-03-01", "Globex", "SRE"))
+        self.assertEqual(db.excluded_job_ids(self.conn), {"gh:g:2"})
+
+    def test_to_apply_reads_as_interested_until_applied(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", getjo_job_id="gh:a:1")  # to_apply
+        self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "interested")
+        db.record_decision(self.conn, JOB, "applied")
+        self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "interested")
+        db.update_application(self.conn, app_id, status="applied")
+        self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "applied")

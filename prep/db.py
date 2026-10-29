@@ -1,4 +1,5 @@
-"""SQLite storage for applications, their status history, interviews, tasks and gaps (prep.db).
+"""SQLite storage for applications, their status history, interviews, tasks, gaps and job
+decisions (prep.db).
 
 Allowed values for enum-like columns are checked in Python, not with CHECK
 constraints: later phases may add values, and SQLite cannot alter a CHECK in place.
@@ -20,6 +21,11 @@ PUZZLE_ROUND = ("yes", "no", "unknown")
 TASK_KINDS = ("apply", "prep", "drill", "admin")
 TASK_STATUSES = ("todo", "done")
 GAP_STATUSES = ("open", "closed")
+DECISIONS = ("applied", "skipped")
+# Labels read back by job_decisions(): an "applied" job whose application is still to_apply
+# reads as "interested". It is derived from the live status, never stored.
+DECISION_LABELS = ("interested", "applied", "skipped")
+SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS applications (
@@ -81,6 +87,22 @@ CREATE TABLE IF NOT EXISTS status_history (
     application_id INTEGER NOT NULL REFERENCES applications(id),
     status         TEXT NOT NULL,
     changed_at     TEXT NOT NULL
+);
+
+-- One triage decision per getjo job (Job Offers page). The job's company/title/location/score
+-- are copied at decision time, so the label still makes sense if getjo drops the job.
+CREATE TABLE IF NOT EXISTS job_decisions (
+    getjo_job_id TEXT PRIMARY KEY,
+    decision     TEXT NOT NULL,         -- applied / skipped
+    reason       TEXT,                  -- SKIP_REASONS, for skips
+    comment      TEXT,
+    decided_at   TEXT NOT NULL,
+    company      TEXT,
+    title        TEXT,
+    location     TEXT,
+    score        INTEGER,
+    url          TEXT,
+    source       TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
@@ -292,6 +314,86 @@ def overdue_actions(conn: sqlite3.Connection, today: str | None = None) -> list[
         (today, *CLOSED_STATUSES),
     )
     return [dict(r) for r in rows]
+
+
+def excluded_job_ids(conn: sqlite3.Connection) -> set[str]:
+    """getjo job ids that are no longer new: linked to an application, or decided (applied/skipped)."""
+    rows = conn.execute("SELECT getjo_job_id FROM job_decisions")
+    return linked_job_ids(conn) | {r[0] for r in rows}
+
+
+# --- job decisions ------------------------------------------------------------
+
+def record_decision(
+    conn: sqlite3.Connection,
+    job: dict,
+    decision: str,
+    reason: str | None = None,
+    comment: str | None = None,
+) -> None:
+    """Store (or replace) the decision for a getjo job. `job` is a getjo row (id, company, ...).
+
+    A skip needs a reason from SKIP_REASONS; an applied decision takes none.
+    """
+    _check("decision", decision, DECISIONS)
+    if decision == "skipped":
+        if not reason:
+            raise ValueError("a skip needs a reason")
+        _check("reason", reason, SKIP_REASONS)
+    else:
+        reason = None
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO job_decisions
+            (getjo_job_id, decision, reason, comment, decided_at, company, title, location, score, url, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (job["id"], decision, reason, comment or None, now_iso(), job.get("company"), job.get("title"),
+         job.get("location"), job.get("score"), job.get("url"), job.get("source")),
+    )
+    conn.commit()
+
+
+def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
+    """Remove a skip so the job is new again. Applied decisions are not undone here."""
+    row = conn.execute(
+        "SELECT decision FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,)
+    ).fetchone()
+    if row is None:
+        raise LookupError(f"no decision for job {getjo_job_id}")
+    if row["decision"] != "skipped":
+        raise ValueError("only a skip can be undone")
+    conn.execute("DELETE FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,))
+    conn.commit()
+
+
+def job_decisions(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Every decision by getjo job id, labelled with DECISION_LABELS.
+
+    Applications linked to a getjo job without a decision row (recorded before the table
+    existed) count as applied on their date. An applied job whose application is still
+    to_apply reads as "interested", so it changes to applied when the application does.
+    """
+    found = {r["getjo_job_id"]: dict(r) for r in conn.execute("SELECT * FROM job_decisions")}
+    rows = conn.execute(
+        """
+        SELECT getjo_job_id, company, role, link, source, status, date_applied, created_at FROM applications
+        WHERE getjo_job_id IS NOT NULL ORDER BY id
+        """
+    )
+    linked = set()
+    for r in rows:
+        if r["getjo_job_id"] in linked:
+            continue  # the oldest application for a job is the one find_by_job uses
+        linked.add(r["getjo_job_id"])
+        d = found.setdefault(r["getjo_job_id"], {
+            "getjo_job_id": r["getjo_job_id"], "decision": "applied", "reason": None, "comment": None,
+            "decided_at": r["date_applied"] or r["created_at"], "company": r["company"], "title": r["role"],
+            "location": None, "score": None, "url": r["link"], "source": r["source"],
+        })
+        if r["status"] == "to_apply" and d["decision"] == "applied":
+            d["decision"] = "interested"
+    return found
 
 
 # --- tasks ------------------------------------------------------------------

@@ -55,6 +55,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
 |            | `python -m prep.cli update ID [--status S] [--next-action T] [--next-date D]` | Update an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
+|            | `python -m prep.cli feedback export [--out PATH]`                    | Write applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 
@@ -70,8 +71,12 @@ charts are server-rendered SVG):
   applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
   applications per week (columns with the target) and tasks done per week (line).
   `/progress` redirects here.
-- **Matches** (`/matches`): getjo jobs scored 7 or more not yet tracked, each with a
-  "Mark applied" form (same logic as `/applied --job-id`).
+- **Job Offers** (`/offers`; `/matches` redirects): every getjo match, filtered by minimum
+  score (New only), company, role, location (London / Remote / Other) and New / Interested
+  (tracked as to_apply) / Applied / Skipped / All;
+  filters live in the URL, so a view can be bookmarked. Each new job can be marked applied
+  (same logic as `/applied --job-id`) or skipped with a reason and an optional comment; a
+  skip can be undone. Skipped jobs also drop out of `/today`.
 - **Tasks** (`/tasks`): add tasks, tick them done, see recently done ones.
 
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header

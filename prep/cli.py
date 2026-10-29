@@ -7,17 +7,21 @@
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
+    python -m prep.cli feedback export [--out PATH]
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 Dates accept YYYY-MM-DD, "today", "tomorrow" or "+N" (N days from today).
 """
 
 import argparse
+import json
 import logging
+import os
 import sqlite3
 import sys
 from contextlib import closing
 from datetime import date, timedelta
+from pathlib import Path
 
 from prep import db, getjo
 from prep.config import ConfigError, Settings, load_settings
@@ -80,12 +84,12 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
 
     try:
         with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
-            found = getjo.matches(gconn, db.linked_job_ids(conn), args.threshold)
+            found = getjo.matches(gconn, db.excluded_job_ids(conn), args.threshold)
     except getjo.GetjoUnavailable as e:
         print(f"\nNew getjo matches: skipped ({e})")
         return 0
     shown = found[: args.limit]
-    print(f"\nNew getjo matches ≥{args.threshold} not yet in applications ({len(found)}):")
+    print(f"\nNew getjo matches ≥{args.threshold} not yet applied or skipped ({len(found)}):")
     print("\n".join(f"  {_job_line(j)}" for j in shown) or "  none")
     if len(found) > len(shown):
         print(f"  … and {len(found) - len(shown)} more (use --limit)")
@@ -144,6 +148,8 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         raise SystemExit("error: URL not found in getjo; pass --company and --role too")
 
     app_id, created = db.record_application(conn, company, role, status=args.status, date_applied=args.date, **fields)
+    if job:
+        db.record_decision(conn, job, "applied")
     verb = "Recorded" if created else "Updated"
     app = db.get_application(conn, app_id)
     log.info("application %s saved", app_id)
@@ -199,6 +205,52 @@ def cmd_task(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
         db.complete_task(conn, args.task_id)
         print(f"Done: {_task_line(_get_task(conn, args.task_id))}")
     return 0
+
+
+FEEDBACK_FIELDS = ("getjo_job_id", "decision", "reason", "comment", "decided_at", "company", "title",
+                   "location", "score", "url", "source")
+
+
+def cmd_feedback(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Write every applied/skipped decision as JSONL for getjo's scorer to read as examples."""
+    if args.out:
+        out = Path(args.out).expanduser()
+    elif settings.private_dir:
+        out = settings.private_dir / "feedback" / "job_decisions.jsonl"
+    else:
+        raise SystemExit("error: private_dir is not set (settings or PREP_PRIVATE_DIR); pass --out")
+    records = feedback_records(conn, settings)
+    write_jsonl(out, records)
+    log.info("feedback export written")
+    print(f"Wrote {len(records)} labelled decisions to {out}")
+    return 0
+
+
+def feedback_records(conn: sqlite3.Connection, settings: Settings) -> list[dict]:
+    """One record per decision, oldest first. Rows without a location or score (applications
+    recorded before job_decisions existed) take them from getjo when it still has the job."""
+    decisions = sorted(db.job_decisions(conn).values(), key=lambda d: (d["decided_at"] or "", d["getjo_job_id"]))
+    missing = [d for d in decisions if d["location"] is None or d["score"] is None]
+    if missing:
+        try:
+            with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+                for d in missing:
+                    job = getjo.get_job(gconn, d["getjo_job_id"]) or {}
+                    d["location"] = d["location"] if d["location"] is not None else job.get("location")
+                    d["score"] = d["score"] if d["score"] is not None else job.get("score")
+        except (getjo.GetjoUnavailable, sqlite3.Error) as e:
+            print(f"  note: getjo not read ({e}); some records have no location or score")
+    return [{k: d.get(k) for k in FEEDBACK_FIELDS} for d in decisions]
+
+
+def write_jsonl(path: Path, records: list[dict]) -> None:
+    """Replace `path` in one step (temp file + rename), so a reader never sees half a file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
 
 
 def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
@@ -267,6 +319,12 @@ def build_parser() -> argparse.ArgumentParser:
     t = tsub.add_parser("done")
     t.add_argument("task_id", type=int)
     p.set_defaults(func=cmd_task)
+
+    p = sub.add_parser("feedback", help="export applied/skipped labels for getjo")
+    fsub = p.add_subparsers(dest="feedback_cmd", required=True)
+    f = fsub.add_parser("export", help="write private_dir/feedback/job_decisions.jsonl")
+    f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")
+    p.set_defaults(func=cmd_feedback)
     return parser
 
 

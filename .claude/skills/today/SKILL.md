@@ -15,7 +15,8 @@ description: Daily job-search brief from inter_prep — overdue next actions on 
 
 2. Reply in short, plain English, in this order:
    - **Due now**: overdue next actions and tasks, oldest first. One line each.
-   - **New matches**: company, role, score, link. Keep the getjo id visible: it is what
+   - **New matches** (jobs already applied for or skipped on the Job Offers page are left out):
+     company, role, score, link. Keep the getjo id visible: it is what
      `/applied` needs.
    - One suggested first step for the day.
 

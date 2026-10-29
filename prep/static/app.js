@@ -131,12 +131,66 @@
     if (input) { e.preventDefault(); input.focus(); }
   });
 
+  // --- Job Offers filters -----------------------------------------------------------
+  // The filter bar is a GET form, so every view has a URL. Selects and checkboxes reload
+  // with the new query; company and role narrow the loaded rows as you type and keep the
+  // URL (and the forms' return fields) in step. Widening a search needs rows that were not
+  // loaded, so it reloads after a pause and puts the cursor back in the box.
+  const live = document.querySelector("form[data-live-filters]");
+  if (live) {
+    const FOCUS_KEY = "offers-focus";
+    const table = document.getElementById("offers");
+    const value = (name) => live.elements[name].value.trim().toLowerCase();
+    const loaded = { company: value("company"), role: value("role") };
+    let timer = null;
+
+    const submit = () => (live.requestSubmit ? live.requestSubmit() : live.submit());
+    live.querySelector("button")?.setAttribute("hidden", "");
+    live.addEventListener("change", (e) => { if (e.target.type !== "search") submit(); });
+
+    function narrow(name) {
+      const company = value("company");
+      const role = value("role");
+      clearTimeout(timer);
+      if (!company.includes(loaded.company) || !role.includes(loaded.role)) {
+        timer = setTimeout(() => {
+          try { sessionStorage.setItem(FOCUS_KEY, name); } catch { /* storage blocked: lose focus only */ }
+          submit();
+        }, 500);
+        return;
+      }
+      if (table) {
+        for (const row of table.tBodies[0].rows) {
+          if (row.classList.contains("no-results")) continue;
+          row.hidden = !(row.dataset.company || "").includes(company) || !(row.dataset.role || "").includes(role);
+        }
+        refreshCount("offers");
+      }
+      const url = new URL(location.href);
+      url.searchParams.delete("msg");
+      for (const key of ["company", "role"]) {
+        const v = live.elements[key].value.trim();
+        if (v) url.searchParams.set(key, v); else url.searchParams.delete(key);
+      }
+      history.replaceState(null, "", url);
+      document.querySelectorAll('input[name="return"]').forEach((i) => { i.value = url.pathname + url.search; });
+    }
+
+    for (const name of ["company", "role"]) {
+      live.elements[name].addEventListener("input", () => narrow(name));
+    }
+    let refocus = null;
+    try { refocus = sessionStorage.getItem(FOCUS_KEY); sessionStorage.removeItem(FOCUS_KEY); } catch { /* none */ }
+    const box = refocus && live.elements[refocus];
+    if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+  }
+
   // --- forms without a reload --------------------------------------------------------
   function refreshCount(tableId) {
     const table = document.getElementById(tableId);
     const chip = document.querySelector(`[data-count-for="${CSS.escape(tableId)}"]`);
     if (table && chip) {
-      chip.textContent = Array.from(table.tBodies[0].rows).filter((r) => !r.classList.contains("no-results")).length;
+      chip.textContent = Array.from(table.tBodies[0].rows).filter((r) => !r.classList.contains("no-results") && !r.hidden).length;
     }
   }
 
@@ -163,8 +217,9 @@
     return place;
   }
 
-  function undoDone(row, place, taskId, tableId) {
-    post("/tasks/reopen", new URLSearchParams({ task_id: taskId }))
+  // Undo a removal: post `url` with `params`, then put the row back where it was.
+  function undo(row, place, url, params, tableId) {
+    post(url, new URLSearchParams(params))
       .then((reply) => {
         clearTimeout(place.timer); // a fast undo can land before the fade-out removes the row
         row.classList.remove("is-leaving");
@@ -192,8 +247,13 @@
         toast(reply.message);
       } else if (mode === "done" && row) {
         const place = removeRow(row, tableId);
-        const taskId = form.elements.task_id.value;
-        toast(reply.message, { action: { label: "Undo", run: () => undoDone(row, place, taskId, tableId) } });
+        const params = { task_id: form.elements.task_id.value };
+        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/tasks/reopen", params, tableId) } });
+      } else if (mode === "skip" && row) {
+        const place = removeRow(row, tableId);
+        const params = { job_id: form.elements.job_id.value };
+        form.reset();
+        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/offers/unskip", params, tableId) } });
       } else if (mode === "add-row") {
         const table = document.getElementById(form.dataset.target);
         if (!table || !reply.html) { location.reload(); return; } // was an empty state
