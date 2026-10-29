@@ -101,9 +101,32 @@ open http://localhost:8765
 (`cp` the template and edit the two placeholders by hand if preferred.) The interpreter must
 be a real Python 3.11+ binary such as `/opt/homebrew/bin/python3`: if `command -v python3`
 prints a pyenv or asdf shim, put the real path in instead, because a shim depends on shell
-state that launchd does not have. Status and logs: `launchctl print gui/$(id -u)/uk.inter-prep.dashboard`
-and `data/dashboard.log`. After a code update, restart it with
-`launchctl kickstart -k gui/$(id -u)/uk.inter-prep.dashboard`.
+state that launchd does not have.
+
+Everyday commands (run from anywhere):
+
+```bash
+# Is it running? (look for "state = running" and the pid)
+launchctl print gui/$(id -u)/uk.inter-prep.dashboard | grep -E "state =|pid =|last exit"
+
+# Update to the latest main and restart, so the new code is served
+git -C /path/to/inter_prep pull --ff-only
+launchctl kickstart -k gui/$(id -u)/uk.inter-prep.dashboard
+
+# Follow the log (request lines and errors; never request bodies)
+tail -f /path/to/inter_prep/data/dashboard.log
+
+# Stop until the next login, then start again
+launchctl bootout gui/$(id -u)/uk.inter-prep.dashboard
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
+
+# Something else holds port 8765?
+lsof -nP -iTCP:8765 -sTCP:LISTEN
+```
+
+`/path/to/inter_prep` is the main checkout. `kickstart -k` restarts a running job; after
+`bootout` the job is unloaded, so use `bootstrap` to start it again (it also starts at the
+next login on its own).
 
 Uninstall:
 
