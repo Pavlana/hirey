@@ -97,6 +97,7 @@ def build_prep_db(path: Path, data: dict) -> None:
             app_id = db.add_application(conn, fields.pop("company"), fields.pop("role"), status=statuses[0], **fields)
             for status in statuses[1:]:
                 db.update_application(conn, app_id, status=status)
+        db.next_actions_to_tasks(conn)  # next actions are tasks now, as the migration does for older databases
         for gap in data.get("gaps", []):
             db.add_gap(conn, gap["gap"], gap.get("date"), gap.get("session"))
         for task in data.get("tasks", []):

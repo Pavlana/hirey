@@ -5,7 +5,8 @@
 # Lookup order: $INTERPREP_SETTINGS, then config/settings.toml in the checkout (gitignored;
 # a per-checkout override), then ~/.config/inter_prep/settings.toml.
 # Each key can also be set with an environment variable, which wins over the file:
-#   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET
+#   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET,
+#   PREP_NO_RESPONSE_DAYS
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
 # "../getjo" would point somewhere different in every worktree.
@@ -26,3 +27,7 @@ private_dir = "/absolute/path/to/inter_prep"
 
 # Optional. Applications per week the dashboard's Pipeline page measures against.
 # weekly_target = 10
+
+# Optional. Days an application can sit in Applied with no stage change before it moves to
+# No response automatically (checked on each dashboard request and by /today).
+# no_response_days = 14

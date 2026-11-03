@@ -187,6 +187,20 @@
     if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
 
+  // --- Applications board ---------------------------------------------------------------
+  // ?app=ID (e.g. from Job Offers) renders that card open and highlighted; bring it into view.
+  const focusCard = document.querySelector(".app-card.is-focus");
+  if (focusCard) focusCard.scrollIntoView({ block: "center", inline: "center" });
+
+  // Move to…: the interview date only matters for interview stages, so show it only then.
+  document.querySelectorAll("form.move[data-interview-stages]").forEach((form) => {
+    const stages = form.dataset.interviewStages.split(" ");
+    const field = form.querySelector(".interview-date");
+    const sync = () => { field.hidden = !stages.includes(form.elements.status.value); };
+    form.elements.status.addEventListener("change", sync);
+    sync();
+  });
+
   // --- forms without a reload --------------------------------------------------------
   function refreshCount(tableId) {
     const table = document.getElementById(tableId);

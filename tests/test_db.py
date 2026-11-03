@@ -58,12 +58,15 @@ class DbTest(unittest.TestCase):
         with self.assertRaises(LookupError):
             db.update_application(self.conn, 999, status="applied")
 
-    def test_overdue_actions(self) -> None:
-        due = db.add_application(self.conn, "A", "r", next_action="x", next_action_date="2026-03-01")
-        db.add_application(self.conn, "B", "r", next_action="x", next_action_date="2026-03-11")
-        db.add_application(self.conn, "C", "r", status="rejected", next_action="x", next_action_date="2026-03-01")
-        today = db.add_application(self.conn, "D", "r", next_action="x", next_action_date=TODAY)
-        self.assertEqual([a["id"] for a in db.overdue_actions(self.conn, TODAY)], [due, today])
+    def test_tasks_due_include_application_and_offers(self) -> None:
+        offer = db.add_application(self.conn, "A", "r", status="offer")
+        old = db.add_task(self.conn, "Review the offer", "admin", "2026-03-01", offer)
+        db.add_task(self.conn, "Later", "admin", "2026-03-11")
+        general = db.add_task(self.conn, "General", "drill", TODAY)
+        due = db.tasks_due(self.conn, TODAY)
+        self.assertEqual([t["id"] for t in due], [old, general])
+        self.assertEqual((due[0]["company"], due[0]["app_status"]), ("A", "offer"))
+        self.assertIsNone(due[1]["company"])
 
     def test_linked_job_ids(self) -> None:
         db.add_application(self.conn, "A", "r", getjo_job_id="gh:a:1")
@@ -166,16 +169,104 @@ class StageTasksTest(DbTest):
 
     def test_stage_tasks(self) -> None:
         app_id = db.add_application(self.conn, "Acme", "Engineer")
-        self.assertEqual(len(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-01")), 3)
+        self.assertEqual(len(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-01")), 1)
         self.assertEqual(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-02"), [])  # idempotent
-        self.assertEqual(db.stage_tasks(self.conn, app_id, "technical", "2026-03-02"), [])  # no tasks yet
         db.stage_tasks(self.conn, app_id, "applied", "2026-03-02")
         self.assertEqual(self.titles(app_id), [
-            ("Research the company", "prep", "2026-03-03", "todo"),
-            ("Check CV fit / tailor CV", "prep", "2026-03-03", "todo"),
             ("Apply", "apply", "2026-03-04", "done"),
             ("Chase if no reply", "admin", "2026-03-09", "todo"),
         ])
+
+    def test_every_stage(self) -> None:
+        expected = {
+            "recruiter_call": [("Prepare for the call (questions, pitch, availability)", "prep", "2026-03-12")],
+            "technical": [("Coding practice", "drill", "2026-03-12"), ("Review the role's tech stack", "prep", "2026-03-12")],
+            "system_design": [("System design practice", "drill", "2026-03-12")],
+            "final": [("Prepare stories, company values, questions to ask", "prep", "2026-03-12")],
+            "offer": [("Review the offer", "admin", "2026-03-12")],
+            "rejected": [("Debrief — what to improve", "prep", "2026-03-13")],
+            "no_response": [("Debrief — what to improve", "prep", "2026-03-13")],
+            "withdrawn": [],
+        }
+        for stage, tasks in expected.items():
+            with self.subTest(stage=stage):
+                app_id, _ = db.record_application(self.conn, stage, "r", today=TODAY)
+                self.assertTrue(db.move_application(self.conn, app_id, stage, TODAY))
+                open_ = [t for t in self.titles(app_id) if t[3] == "todo"]
+                self.assertEqual([t[:3] for t in open_], tasks)
+                self.assertEqual([t[3] for t in self.titles(app_id) if t[0] == "Chase if no reply"], ["closed"])
+
+    def test_move_with_interview_date(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        db.move_application(self.conn, app_id, "final", TODAY, "Onsite", "2026-03-20")
+        self.assertIn(("Prepare stories, company values, questions to ask", "prep", "2026-03-19", "todo"),
+                      self.titles(app_id))
+        row = self.conn.execute("SELECT date, stage FROM interviews WHERE application_id = ?", (app_id,)).fetchone()
+        self.assertEqual(tuple(row), ("2026-03-20", "final"))
+        self.assertEqual(db.timeline(self.conn, app_id)[-1]["comment"], "Onsite")
+        # an interview that is today or past: prep is due today, never in the past
+        db.move_application(self.conn, app_id, "recruiter_call", TODAY, interview_date="2026-03-05")
+        self.assertIn(("Prepare for the call (questions, pitch, availability)", "prep", TODAY, "todo"),
+                      self.titles(app_id))
+        with self.assertRaises(ValueError):
+            db.move_application(self.conn, app_id, "technical", TODAY, interview_date="soon")
+
+    def test_move_to_same_status_is_a_no_op(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        self.assertFalse(db.move_application(self.conn, app_id, "applied", TODAY))
+        self.assertEqual(db.status_history(self.conn, app_id), ["applied"])
+        with self.assertRaises(LookupError):
+            db.move_application(self.conn, 999, "offer", TODAY)
+
+    def test_move_back_creates_fresh_tasks(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today="2026-03-01")
+        db.move_application(self.conn, app_id, "no_response", "2026-03-05")
+        db.move_application(self.conn, app_id, "applied", TODAY)
+        chase = [t for t in self.titles(app_id) if t[0] == "Chase if no reply"]
+        self.assertEqual(chase, [("Chase if no reply", "admin", "2026-03-08", "closed"),
+                                 ("Chase if no reply", "admin", "2026-03-17", "todo")])
+        self.assertIn(("Debrief — what to improve", "prep", "2026-03-08", "closed"), self.titles(app_id))
+
+    def test_board_move_from_interested_sets_date_applied(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", status="to_apply", today=TODAY)
+        db.move_application(self.conn, app_id, "recruiter_call", "2026-03-11")
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual(app["date_applied"], "2026-03-11")
+        self.assertEqual({t[0]: t[3] for t in self.titles(app_id)}["Apply"], "closed")
+        withdrawn, _ = db.record_application(self.conn, "B", "r", status="to_apply", today=TODAY)
+        db.move_application(self.conn, withdrawn, "withdrawn", TODAY)
+        self.assertIsNone(db.get_application(self.conn, withdrawn)["date_applied"])
+
+    def test_hand_made_tasks_stay_open(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        mine = db.add_task(self.conn, "Ask a friend there", "admin", None, app_id)
+        db.move_application(self.conn, app_id, "technical", TODAY)
+        self.assertEqual(db.get_task(self.conn, mine)["status"], "todo")
+
+    def test_next_action_follows_tasks(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual((app["next_action"], app["next_action_date"]), ("Chase if no reply", "2026-03-17"))
+        sooner = db.add_task(self.conn, "Send portfolio", "admin", "2026-03-12", app_id)
+        self.assertEqual(db.get_application(self.conn, app_id)["next_action"], "Send portfolio")
+        db.complete_task(self.conn, sooner)
+        self.assertEqual(db.get_application(self.conn, app_id)["next_action"], "Chase if no reply")
+        db.reopen_task(self.conn, sooner)
+        self.assertEqual(db.get_application(self.conn, app_id)["next_action"], "Send portfolio")
+        db.move_application(self.conn, app_id, "withdrawn", TODAY)
+        db.complete_task(self.conn, sooner)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual((app["next_action"], app["next_action_date"]), (None, None))
+
+    def test_closed_tasks_are_not_done(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        db.move_application(self.conn, app_id, "recruiter_call", TODAY)
+        self.assertEqual(db.recent_done_tasks(self.conn), [])
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tasks WHERE status = 'done'").fetchone()[0], 0)
+        closed = next(t for t in db.list_tasks(self.conn, "closed"))
+        db.reopen_task(self.conn, closed["id"])
+        self.assertEqual(db.get_task(self.conn, closed["id"])["status"], "todo")
+
 
     def test_record_application_adds_tasks_on_stage_change_only(self) -> None:
         app_id, _ = db.record_application(self.conn, "Acme", "Engineer", link="https://x/1", today="2026-03-01")
@@ -184,7 +275,7 @@ class StageTasksTest(DbTest):
         db.update_application(self.conn, app_id, status="technical")
         db.record_application(self.conn, "Acme", "Engineer", link="https://x/1", status="to_apply")
         self.assertEqual(db.get_application(self.conn, app_id)["status"], "technical")
-        self.assertEqual(len(self.titles(app_id)), 1)
+        self.assertEqual(len(self.titles(app_id)), 1)  # update_application alone runs no stage tasks
 
     def test_status_label(self) -> None:
         self.assertEqual(db.status_label("to_apply"), "interested")
@@ -193,6 +284,124 @@ class StageTasksTest(DbTest):
 
 JOB = {"id": "gh:a:1", "company": "Acme", "title": "Engineer", "location": "London", "score": 8,
        "url": "https://example.com/1", "source": "gh"}
+
+
+class NoResponseTest(DbTest):
+    def applied_on(self, day: str, company: str = "Acme") -> int:
+        app_id, _ = db.record_application(self.conn, company, "Engineer", date_applied=day, today=day)
+        self.conn.execute("UPDATE status_history SET changed_at = ? WHERE application_id = ?",
+                          (f"{day}T09:00:00Z", app_id))
+        self.conn.commit()
+        return app_id
+
+    def test_moves_after_14_days(self) -> None:
+        app_id = self.applied_on("2026-02-24")
+        self.assertEqual(db.auto_no_response(self.conn, 14, "2026-03-09"), [])  # day 13
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "applied")
+        moved = db.auto_no_response(self.conn, 14, TODAY)  # day 14
+        self.assertEqual(moved, [{"id": app_id, "company": "Acme", "role": "Engineer"}])
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "no_response")
+        self.assertEqual(db.timeline(self.conn, app_id)[-1]["comment"], "auto: no reply in 14 days")
+        tasks = {t["title"]: t["status"] for t in db.list_tasks(self.conn, None)}
+        self.assertEqual(tasks, {"Chase if no reply": "closed", "Debrief — what to improve": "todo"})
+        self.assertEqual(db.auto_no_response(self.conn, 14, TODAY), [])  # a second run is a no-op
+        self.assertEqual(db.status_history(self.conn, app_id), ["applied", "no_response"])
+
+    def test_counts_from_last_stage_change(self) -> None:
+        app_id = self.applied_on("2026-01-01")
+        db.move_application(self.conn, app_id, "recruiter_call", "2026-03-01")
+        db.move_application(self.conn, app_id, "applied", "2026-03-01")  # moved back by hand
+        self.conn.execute("UPDATE status_history SET changed_at = '2026-03-01T09:00:00Z' WHERE application_id = ? "
+                          "AND changed_at > '2026-01-02'", (app_id,))
+        self.conn.commit()
+        self.assertEqual(db.auto_no_response(self.conn, 14, TODAY), [])
+        self.assertEqual(len(db.auto_no_response(self.conn, 14, "2026-03-15")), 1)
+
+    def test_rows_without_history_use_date_applied(self) -> None:
+        app_id = db.add_application(self.conn, "Old", "r", status="applied", date_applied="2026-02-01")
+        self.conn.execute("DELETE FROM status_history")
+        self.conn.commit()
+        self.assertEqual(db.last_change_day(self.conn, app_id), "2026-02-01")
+        self.assertEqual([m["id"] for m in db.auto_no_response(self.conn, 14, TODAY)], [app_id])
+
+    def test_only_applied_moves(self) -> None:
+        for status in ("to_apply", "recruiter_call", "offer", "rejected"):
+            db.add_application(self.conn, status, "r", status=status, date_applied="2026-01-01")
+        self.conn.execute("UPDATE status_history SET changed_at = '2026-01-01T09:00:00Z'")
+        self.conn.commit()
+        self.assertEqual(db.auto_no_response(self.conn, 14, TODAY), [])
+
+    def test_custom_days_and_recent_moves(self) -> None:
+        app_id = self.applied_on("2026-03-03")
+        self.assertEqual(db.auto_no_response(self.conn, 14, TODAY), [])
+        self.assertEqual(len(db.auto_no_response(self.conn, 7, TODAY)), 1)
+        self.assertEqual(db.timeline(self.conn, app_id)[-1]["comment"], "auto: no reply in 7 days")
+        recent = db.recent_auto_moves(self.conn, db.today_iso())
+        self.assertEqual([(r["id"], r["company"]) for r in recent], [(app_id, "Acme")])
+        far = (date.today() + timedelta(days=30)).isoformat()
+        self.assertEqual(db.recent_auto_moves(self.conn, far), [])
+
+    def test_move_by_another_request_wins(self) -> None:
+        """The check reads applied, then another request moves the card before the check moves it."""
+        app_id = self.applied_on("2026-01-01")
+        other = db.connect(self.path)
+        self.addCleanup(other.close)
+        real = db.last_change_day
+
+        def moved_meanwhile(conn, i):
+            day = real(conn, i)
+            db.move_application(other, i, "recruiter_call", TODAY)
+            return day
+
+        with mock.patch.object(db, "last_change_day", moved_meanwhile):
+            self.assertEqual(db.auto_no_response(self.conn, 14, TODAY), [])
+        self.assertEqual(db.status_history(self.conn, app_id), ["applied", "recruiter_call"])
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "recruiter_call")
+
+    def test_conditional_update_refuses_a_stale_read(self) -> None:
+        """Another request moves the row between move_application's SELECT and its UPDATE."""
+        app_id = self.applied_on("2026-01-01")
+        other = db.connect(self.path)
+        self.addCleanup(other.close)
+        conn = self.conn
+
+        class Interleaved:
+            def __getattr__(self, name):
+                return getattr(conn, name)
+
+            def execute(self, sql, *args):
+                cursor = conn.execute(sql, *args)
+                if sql.startswith("SELECT status, date_applied"):
+                    row = cursor.fetchone()
+                    db.move_application(other, app_id, "rejected", TODAY)
+                    return mock.Mock(fetchone=lambda: row)
+                return cursor
+
+        self.assertFalse(db.move_application(Interleaved(), app_id, "no_response", TODAY))
+        self.assertEqual(db.status_history(self.conn, app_id), ["applied", "rejected"])
+
+
+class CommentsTest(DbTest):
+    def test_timeline_and_counts(self) -> None:
+        stamps = iter(f"2026-03-10T09:00:0{n}Z" for n in range(9))  # one second apart, in order
+        with mock.patch.object(db, "now_iso", lambda: next(stamps)):
+            self._events()
+        app_id = 1
+        events = db.timeline(self.conn, app_id)
+        self.assertEqual([(e["status"], e["comment"]) for e in events], [
+            ("applied", None), (None, "Second interview booked"), ("technical", "Take-home first"),
+            ("system_design", None)])
+        self.assertEqual(db.comment_counts(self.conn), {app_id: 2})
+        with self.assertRaises(ValueError):
+            db.add_comment(self.conn, app_id, "   ")
+        with self.assertRaises(LookupError):
+            db.add_comment(self.conn, 999, "x")
+
+    def _events(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        db.add_comment(self.conn, app_id, "  Second interview booked  ")
+        db.move_application(self.conn, app_id, "technical", TODAY, "Take-home first")
+        db.move_application(self.conn, app_id, "system_design", TODAY)
 
 
 class JobDecisionsTest(DbTest):
@@ -245,3 +454,48 @@ class JobDecisionsTest(DbTest):
         self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "interested")
         db.update_application(self.conn, app_id, status="applied")
         self.assertEqual(db.job_decisions(self.conn)["gh:a:1"]["decision"], "applied")
+
+
+class MigrationTest(unittest.TestCase):
+    def test_adds_columns_and_backfills_stages(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "prep.db"
+            old = sqlite3.connect(path)
+            old.executescript("""
+                CREATE TABLE applications (id INTEGER PRIMARY KEY AUTOINCREMENT, getjo_job_id TEXT, company TEXT NOT NULL,
+                    role TEXT NOT NULL, link TEXT, tier TEXT, type TEXT, source TEXT, date_applied TEXT,
+                    status TEXT NOT NULL DEFAULT 'to_apply', last_contact TEXT, next_action TEXT, next_action_date TEXT,
+                    puzzle_round TEXT NOT NULL DEFAULT 'unknown', pay TEXT, contact TEXT, notes TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+                CREATE TABLE tasks (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'admin',
+                    due_date TEXT, status TEXT NOT NULL DEFAULT 'todo', done_at TEXT, application_id INTEGER,
+                    gap_id INTEGER, created_at TEXT NOT NULL);
+                CREATE TABLE status_history (id INTEGER PRIMARY KEY AUTOINCREMENT, application_id INTEGER NOT NULL,
+                    status TEXT NOT NULL, changed_at TEXT NOT NULL);
+                INSERT INTO applications (company, role, status, next_action, next_action_date, created_at, updated_at)
+                    VALUES ('Acme', 'r', 'applied', 'Email the hiring manager', '2026-03-12',
+                            '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z');
+                INSERT INTO applications (company, role, status, next_action, created_at, updated_at)
+                    VALUES ('Gone', 'r', 'rejected', 'Ask for feedback', '2026-03-01T00:00:00Z', '2026-03-01T00:00:00Z');
+                INSERT INTO status_history (application_id, status, changed_at) VALUES (1, 'applied', '2026-03-01T00:00:00Z');
+                INSERT INTO tasks (title, kind, application_id, created_at) VALUES ('Chase if no reply', 'admin', 1, 'x');
+                INSERT INTO tasks (title, kind, application_id, created_at) VALUES ('My own task', 'admin', 1, 'x');
+                INSERT INTO tasks (title, kind, application_id, created_at) VALUES ('Research the company', 'prep', 1, 'x');
+                INSERT INTO tasks (title, kind, created_at) VALUES ('Chase if no reply', 'admin', 'x');
+            """)
+            old.close()
+            conn = db.connect(path)
+            self.addCleanup(conn.close)
+            rows = [tuple(r) for r in conn.execute("SELECT title, stage, due_date, application_id FROM tasks ORDER BY id")]
+            self.assertEqual(rows, [("Chase if no reply", "applied", None, 1), ("My own task", None, None, 1),
+                                    ("Research the company", "to_apply", None, 1),  # retired auto task
+                                    ("Chase if no reply", None, None, None),
+                                    ("Email the hiring manager", None, "2026-03-12", 1)])  # typed next action
+            self.assertEqual(db.get_application(conn, 1)["next_action"], "Email the hiring manager")
+            again = db.connect(path)  # runs once: nothing added on the next connect
+            again.close()
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0], 5)
+            self.assertIsNone(conn.execute("SELECT comment FROM status_history").fetchone()[0])
+            db.move_application(conn, 1, "recruiter_call", TODAY)
+            status = [r[0] for r in conn.execute("SELECT status FROM tasks ORDER BY id")]
+            self.assertEqual(status[:4], ["closed", "todo", "closed", "todo"])

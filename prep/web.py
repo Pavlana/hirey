@@ -1,4 +1,4 @@
-"""Local dashboard over prep.db: Dashboard, Job Offers and Tasks pages.
+"""Local dashboard over prep.db: Dashboard, Job Offers and Applications pages.
 
     python -m prep.web [--port 8765]
 
@@ -44,6 +44,9 @@ LOOPBACK_NAMES = ("localhost", "127.0.0.1")
 MAX_BODY = 64 * 1024
 RECENT_DONE = 10
 MAX_COMMENT = 1000
+# Applications board: one column per open stage, then a collapsed lane for the closed ones.
+BOARD_STAGES = ("to_apply", "applied", "recruiter_call", "technical", "system_design", "final", "offer")
+CLOSED_LANE = ("rejected", "no_response", "withdrawn")
 
 Response = tuple[int, list[tuple[str, str]], bytes]
 
@@ -52,15 +55,18 @@ PAGES = (
     ("/", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
                        '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
     ("/offers", "Job Offers", '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
-    ("/tasks", "Tasks", '<rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 3 3 5-6"/>'),
+    ("/applications", "Applications", '<rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/>'
+                                      '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
               'l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>')
 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
-    "applied": "Recorded as applied. Its first tasks are below.",
-    "interested": "Saved as interested. Its first tasks are below.",
+    "applied": "Recorded as applied. Its card and first tasks are highlighted.",
+    "interested": "Saved as interested. Its card and first tasks are highlighted.",
+    "moved": "Moved. The stage's tasks are on the card.",
+    "commented": "Comment added.",
     "skipped": "Skipped. It no longer appears in new job offers.",
     "unskipped": "Skip undone; the job is new again.",
     "task_added": "Task added.",
@@ -79,12 +85,14 @@ SECURITY_HEADERS = [
     ("Cache-Control", "no-store"),
 ]
 
+COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z"/>'
+
 # Badge tones: a few semantic ones plus the shade steps of the page's hue (charts.SHADES,
 # s1 dark to s10 light); anything else falls back to "neutral". Each page has one hue.
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: eucalyptus,
-# slate-indigo, dusty-violet, mauve-rose, ochre.
-PAGE_THEMES = {"/": "sage", "/offers": "dusty-blue", "/tasks": "terracotta"}
+# slate-indigo, dusty-violet, mauve-rose, terracotta.
+PAGE_THEMES = {"/": "sage", "/offers": "dusty-blue", "/applications": "ochre"}
 # Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -160,19 +168,20 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return 200, [("Content-Type", content_type), *SECURITY_HEADERS], (STATIC_DIR / name).read_bytes()
     if path == "/progress":  # merged into the dashboard; keeps old bookmarks working
         return 303, [("Location", "/")], b""
-    if path == "/matches":  # renamed to Job Offers; keeps old bookmarks (and their filters) working
-        target = "/offers" + (f"?{urlencode(query, doseq=True)}" if query else "")
+    renamed = {"/matches": "/offers", "/tasks": "/applications"}  # old bookmarks (and their query) keep working
+    if path in renamed:
+        target = renamed[path] + (f"?{urlencode(query, doseq=True)}" if query else "")
         return 303, [("Location", target)], b""
     pages = {
         "/": dashboard_page,
         "/offers": lambda s, c, t: offers_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
-        "/tasks": lambda s, c, t: tasks_page(s, c, t, query),
+        "/applications": lambda s, c, t: applications_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
     message = MESSAGES.get((query.get("msg") or [""])[0])
-    with closing(db.connect(settings.prep_db)) as conn:
+    with closing(_connect(settings, today)) as conn:
         title, subtitle, content = pages[path](settings, conn, today)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
     return _page(200, title, subtitle, notice + content, "/offers" if path == "/offers/skip" else path)
@@ -182,7 +191,7 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     if path not in ACTIONS:
         return _text(404, "Not found.")
     action, page, msg = ACTIONS[path]
-    with closing(db.connect(settings.prep_db)) as conn:
+    with closing(_connect(settings, today)) as conn:
         try:
             extra = action(settings, conn, form, today) or {}
         except (ValueError, LookupError) as e:
@@ -190,8 +199,18 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     if as_json:
         return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
     if "redirect" in extra:  # built by the action from database ids, never from the form
-        return 303, [("Location", f"{extra['redirect']}&{urlencode([('msg', msg)])}")], b""
+        sep = "&" if "?" in extra["redirect"] else "?"
+        return 303, [("Location", f"{extra['redirect']}{sep}{urlencode([('msg', msg)])}")], b""
     return 303, [("Location", _return_to(form.get("return"), page, msg))], b""
+
+
+def _connect(settings: Settings, today: str) -> sqlite3.Connection:
+    """Open prep.db for one request, after moving silent applications to No response."""
+    conn = db.connect(settings.prep_db)
+    moved = db.auto_no_response(conn, settings.no_response_days, today)
+    if moved:
+        log.info("%d application(s) moved to no_response (no reply in %d days)", len(moved), settings.no_response_days)
+    return conn
 
 
 def _return_to(value: str | None, page: str, msg: str = "") -> str:
@@ -250,12 +269,12 @@ def _getjo_job(settings: Settings, form: dict[str, str]) -> dict:
 
 def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """Applied: record the getjo job as applied today (same logic as /applied --job-id), then go
-    to its tasks."""
+    to its card on the Applications board."""
     return _track_offer(settings, conn, form, today, "applied")
 
 
 def mark_interested(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Interested: track the getjo job as to_apply, then go to its tasks."""
+    """Interested: track the getjo job as to_apply, then go to its card."""
     return _track_offer(settings, conn, form, today, "interested")
 
 
@@ -276,7 +295,7 @@ def _track_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     status = db.get_application(conn, app_id)["status"]
     db.record_decision(conn, job, "interested" if status == "to_apply" else "applied")
     log.info("application %s recorded from the dashboard as %s", app_id, decision)
-    return {"redirect": f"/tasks?app={app_id}"}
+    return {"redirect": f"/applications?app={app_id}"}
 
 
 def skip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -312,8 +331,48 @@ def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str],
         raise BadRequest(f"No application with id {app_id}.")
     task_id = db.add_task(conn, title, form.get("kind") or "admin", _optional(form, "due_date"), app_id)
     log.info("task %s added from the dashboard", task_id)
-    label = f'{app["company"]} — {app["role"]}' if app else None
-    return {"html": _open_task_row(db.get_task(conn, task_id), label, today)}
+    return {"html": _task_row(db.get_task(conn, task_id), today, _here(app_id))}
+
+
+def _app_id(conn: sqlite3.Connection, form: dict[str, str]) -> int:
+    app_id = _int_field(form, "app_id")
+    if app_id is None:
+        raise BadRequest("app_id is missing.")
+    if db.get_application(conn, app_id) is None:
+        raise BadRequest(f"No application with id {app_id}.")
+    return app_id
+
+
+def move_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Move to…: any stage, forward or back, with an optional comment and interview date."""
+    app_id = _app_id(conn, form)
+    status = form.get("status") or ""
+    if status not in db.APPLICATION_STATUSES:
+        raise BadRequest("Pick a stage to move to.")
+    comment = _optional(form, "comment")
+    if comment and len(comment) > MAX_COMMENT:
+        raise BadRequest(f"The comment is longer than {MAX_COMMENT} characters.")
+    interview = _optional(form, "interview_date") if status in db.INTERVIEW_STAGES else None
+    db.move_application(conn, app_id, status, today, comment, interview)
+    log.info("application %s moved to %s from the dashboard", app_id, status)  # never the comment
+    return {"redirect": _here(app_id)}
+
+
+def comment_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    app_id = _app_id(conn, form)
+    body = form.get("body", "")
+    if not body:
+        raise BadRequest("A comment needs some text.")
+    if len(body) > MAX_COMMENT:
+        raise BadRequest(f"The comment is longer than {MAX_COMMENT} characters.")
+    db.add_comment(conn, app_id, body)
+    log.info("comment added to application %s from the dashboard", app_id)  # never the text
+    return {"redirect": _here(app_id)}
+
+
+def _here(app_id: int | None) -> str:
+    """The Applications page with a card open (redirect target built from a database id)."""
+    return f"/applications?app={app_id}" if app_id is not None else "/applications"
 
 
 def complete_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -339,9 +398,11 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/offers/skip": (skip_offer, "/offers", "skipped"),
     "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
     "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
-    "/tasks/add": (add_task, "/tasks", "task_added"),
-    "/tasks/done": (complete_task, "/tasks", "task_done"),
-    "/tasks/reopen": (reopen_task, "/tasks", "task_reopened"),
+    "/applications/move": (move_application, "/applications", "moved"),
+    "/applications/comment": (comment_application, "/applications", "commented"),
+    "/tasks/add": (add_task, "/applications", "task_added"),
+    "/tasks/done": (complete_task, "/applications", "task_done"),
+    "/tasks/reopen": (reopen_task, "/applications", "task_reopened"),
 }
 
 
@@ -368,12 +429,6 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
         warning = (f'<div class="warning" role="alert">Reply rate is below {stats.REPLY_WARNING_RATE:.0%} after '
                    f'{reply["submitted"]} applications. Review the CV, targeting or tiers.</div>')
 
-    overdue = db.overdue_actions(conn, today)
-    overdue_rows = [
-        (_due(a["next_action_date"], today), h(a["company"]), h(a["role"]),
-         _status_badge(a["status"]), h(a["next_action"]))
-        for a in overdue
-    ]
     no_apps = "No applications yet."
     status_chart = charts.donut(
         [(_status_label(s), n, STATUS_SHADES.get(s, "s5")) for s, n in stats.counts_by_status(apps)],
@@ -388,12 +443,8 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
         for stage, n, share in stats.conversion(apps)
     ])
     per_week = charts.columns(_weeks(stats.applications_per_week(conn, today)), target)
-    tasks_week = charts.line(_weeks(stats.tasks_done_per_week(conn, today)))
     content = (
         f'<div class="tiles">{tiles}</div>{warning}'
-        + _card("Overdue next actions", _table(
-            (("Due", "date"), "Company", "Role", "Status", "Next action"), overdue_rows,
-            "Nothing overdue.", hint="Next actions past their date show up here."), count=len(overdue))
         + '<div class="columns">'
         + _card("Applications by status", status_chart or _empty(no_apps), count=len(apps))
         + _card("Tiers by status", (tier_chart + _note("Column width: applications per tier. "
@@ -403,10 +454,8 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
         + _card("Stage conversion", (funnel + _note("Sent applications that reached each stage or a later "
                                                     "one, with their share.")) if funnel else _empty(no_apps),
                 cls="card-funnel")
-        + '<div class="columns">'
-        + _card("Applications per week", per_week + _note(f"Week starting Monday. Target {target} per week."))
-        + _card("Tasks done per week", tasks_week + _note("Week starting Monday."))
-        + "</div>"
+        + _card("Applications per week", per_week + _note(f"Week starting Monday. Target {target} per week."),
+                cls="card-weeks")
     )
     return "Dashboard", f"Pipeline and progress · {today}", content
 
@@ -613,34 +662,138 @@ def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return "Skip a job", f'{job["company"]} — {job["title"]}', _card("Why skip it?", form, cls="card-form")
 
 
-def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str,
-               query: dict[str, list[str]] | None = None) -> tuple[str, str, str]:
-    """All tasks, or with ?app=ID only that application's (an unknown id shows all)."""
-    all_apps = db.list_applications(conn)
-    apps = {a["id"]: f'{a["company"]} — {a["role"]}' for a in all_apps}
-    open_apps = [a for a in all_apps if a["status"] not in db.CLOSED_STATUSES]
-    app_param = ((query or {}).get("app") or [""])[0]
-    focus = int(app_param) if app_param.isdigit() and int(app_param) in apps else None
+def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                      query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """The board: a column per open stage, a collapsed lane for closed ones, general tasks.
+    ?app=ID opens and highlights that card (an unknown id is ignored)."""
+    apps = db.board_applications(conn)
+    app_param = (query.get("app") or [""])[0]
+    focus = int(app_param) if app_param.isdigit() else None
+    tasks = db.app_tasks(conn)
+    counts = db.comment_counts(conn)
 
-    open_tasks = [t for t in db.list_tasks(conn, "todo") if focus is None or t["application_id"] == focus]
-    kinds = "".join(f'<option value="{h(k)}">{h(k)}</option>' for k in db.TASK_KINDS)
-    app_options = "".join(
-        f'<option value="{h(a["id"])}"{" selected" if a["id"] == focus else ""}>{h(a["company"])} — {h(a["role"])}</option>'
-        for a in open_apps
+    def lane(stage: str) -> str:
+        cards = [_app_card(conn, a, tasks.get(a["id"], []), counts.get(a["id"], 0), today, a["id"] == focus)
+                 for a in apps if a["status"] == stage]
+        body = "".join(cards) or '<p class="lane-empty">–</p>'
+        return (f'<section class="lane" aria-label="{h(_status_label(stage))}"><h2>{h(_status_label(stage))}'
+                f'<span class="count">{len(cards)}</span></h2>{body}</section>')
+
+    closed = [a for a in apps if a["status"] in CLOSED_LANE]
+    summary = " · ".join(f"{_status_label(s)} {n}" for s in CLOSED_LANE
+                         if (n := sum(1 for a in closed if a["status"] == s)))
+    open_closed = " open" if any(a["id"] == focus for a in closed) else ""
+    board = (
+        f'<div class="board">{"".join(lane(s) for s in BOARD_STAGES)}</div>'
+        f'<details class="closed-lane"{open_closed}><summary>Closed <span class="count">{len(closed)}</span>'
+        f'<span class="muted">{h(summary)}</span></summary>'
+        f'<div class="board board-closed">{"".join(lane(s) for s in CLOSED_LANE)}</div></details>'
     )
-    add_form = (
-        '<form method="post" action="/tasks/add" class="add" data-ajax="add-row" data-target="open-tasks">'
+    if not apps:
+        board = _empty("No applications yet.", "Mark a job Applied or Interested on Job Offers, or use /applied.")
+    open_count = len(apps) - len(closed)
+    content = _card("Pipeline", board, count=open_count, cls="card-board") + _general_tasks(conn, tasks.get(None, []), today)
+    return "Applications", f"{open_count} open · {len(closed)} closed · {today}", content
+
+
+def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: int, today: str,
+              focus: bool) -> str:
+    """One application: a <details> whose summary shows company, role, days in stage, next task
+    and comment count; opened, it holds the tasks, Move to…, a comment box and the history."""
+    days = (date.fromisoformat(today) - date.fromisoformat(app["since"])).days
+    age = "new today" if days <= 0 else f"{days} day{'s' if days != 1 else ''} in stage"
+    nxt = tasks[0] if tasks else None
+    next_line = (f'<span class="app-next">{_due(nxt["due_date"], today)}'
+                 f'<span class="app-next-title" title="{h(nxt["title"])}">{h(nxt["title"])}</span></span>' if nxt
+                 else '<span class="app-next muted">No open tasks</span>')
+    chip = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{comments}</span>'
+            if comments else "")
+    tier = f'<span class="app-tier">Tier {h(app["tier"])}</span> · ' if app["tier"] else ""
+    summary = (
+        f'<summary><strong class="app-head" title="{h(app["company"])}">{h(app["company"])}</strong>'
+        f'<span class="app-role" title="{h(app["role"])}">{h(app["role"])}</span>'
+        f'<span class="app-meta"><span>{tier}{h(age)}</span>{chip}</span>{next_line}</summary>'
+    )
+    here = _here(app["id"])
+    keep = f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
+    rows = "".join(_task_row(t, today, here, kind=False) for t in tasks)
+    task_list = (f'<table class="mini" id="tasks-{h(app["id"])}"><tbody>{rows}</tbody></table>' if rows
+                 else '<p class="muted">No open tasks.</p>')
+    add = (
+        '<form method="post" action="/tasks/add" class="add add-sm">'
+        f'<input type="hidden" name="application_id" value="{h(app["id"])}">'
+        f'<input type="hidden" name="return" value="{h(here)}">'
+        '<input name="title" placeholder="New task…" required aria-label="New task">'
+        '<input type="date" name="due_date" aria-label="Due date">'
+        + _button("Add", "secondary", "sm") + "</form>"
+    )
+    stages = "".join(
+        f'<option value="{s}"{" disabled" if s == app["status"] else ""}>{h(_status_label(s))}</option>'
+        for s in (*BOARD_STAGES, *CLOSED_LANE))
+    move = (
+        f'<form method="post" action="/applications/move" class="move" '
+        f'data-interview-stages="{" ".join(db.INTERVIEW_STAGES)}">{keep}'
+        f'<select name="status" required aria-label="Move to"><option value="">Move to…</option>{stages}</select>'
+        '<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
+        f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="Comment (optional)" aria-label="Comment with the move">'
+        + _button("Move", size="sm") + "</form>"
+    )
+    comment = (
+        f'<form method="post" action="/applications/comment" class="add add-sm">{keep}'
+        f'<input name="body" maxlength="{MAX_COMMENT}" required placeholder="Comment, e.g. take-home test sent" '
+        'aria-label="Comment">' + _button("Add comment", "secondary", "sm") + "</form>"
+    )
+    history = "".join(
+        f'<li><span class="mono">{h(e["at"][:10])}</span> '
+        + (_status_badge(e["status"]) if e["status"] else "")
+        + (f' <span class="{"muted" if e["status"] else ""}">{h(e["comment"])}</span>' if e["comment"] else "")
+        + "</li>"
+        for e in reversed(db.timeline(conn, app["id"]))
+    )
+    link = (f'<p class="app-link">{_link(app["link"], "Job posting ↗")}</p>'
+            if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
+    body = (
+        f'<div class="app-body">{link}<h3>Tasks</h3>{task_list}{add}<h3>Move</h3>{move}'
+        f'<h3>Comments and history</h3>{comment}'
+        + (f'<ul class="timeline">{history}</ul>' if history else "")
+        + "</div>"
+    )
+    css = "app-card is-focus" if focus else "app-card"
+    return (f'<article class="{css}" id="app-{h(app["id"])}"><details{" open" if focus else ""}>'
+            f"{summary}{body}</details></article>")
+
+
+def _task_row(task: dict, today: str, here: str, kind: bool = True) -> str:
+    """An open task in General tasks (due, title, kind, Done) or on a card (no kind, to fit).
+    A plain post returns to `here` (a URL built from database ids)."""
+    done = (
+        '<form method="post" action="/tasks/done" class="inline" data-ajax="done">'
+        f'<input type="hidden" name="task_id" value="{h(task["id"])}">'
+        f'<input type="hidden" name="return" value="{h(here)}">'
+        + _button("Done", "secondary", "sm") + "</form>"
+    )
+    cells = (_due(task["due_date"], today), h(task["title"]), _kind_badge(task["kind"]), done)
+    return _row(cells if kind else cells[:2] + cells[3:])
+
+
+def _general_tasks(conn: sqlite3.Connection, tasks: list[dict], today: str) -> str:
+    """Tasks with no application: add form, open list, and the recently done (all tasks) with Reopen."""
+    kinds = "".join(f'<option value="{h(k)}"{" selected" if k == "admin" else ""}>{h(k)}</option>'
+                    for k in db.TASK_KINDS)
+    add = (
+        '<form method="post" action="/tasks/add" class="add" data-ajax="add-row" data-target="general-tasks">'
         '<input name="title" placeholder="New task…" required aria-label="Title">'
         f'<select name="kind" aria-label="Kind">{kinds}</select>'
         '<input type="date" name="due_date" aria-label="Due date">'
-        f'<select name="application_id" aria-label="Application"><option value="">no application</option>{app_options}</select>'
         + _button("Add task") + "</form>"
     )
-    open_table = _table(
-        (("Due", "date"), "Task", "Kind", "Application", ""),
-        [_open_task_cells(t, apps.get(t["application_id"]), today) for t in open_tasks],
-        "No open tasks.", table_id="open-tasks", hint="Add one above, or with /task in Claude Code.",
-    )
+    table = _table((("Due", "date"), "Task", "Kind", ""), [], "No general tasks.",
+                   hint="Tasks that belong to no application, e.g. drills or admin.")
+    if tasks:
+        rows = "".join(_task_row(t, today, "/applications") for t in tasks)
+        table = (f'<div class="table-wrap"><table id="general-tasks"><thead><tr><th scope="col" data-sort="date">Due</th>'
+                 f'<th scope="col" data-sort="text">Task</th><th scope="col" data-sort="text">Kind</th><th scope="col"></th>'
+                 f'</tr></thead><tbody>{rows}</tbody></table></div>')
     done_rows = []
     for t in db.recent_done_tasks(conn, RECENT_DONE):
         reopen = (
@@ -649,34 +802,11 @@ def tasks_page(settings: Settings, conn: sqlite3.Connection, today: str,
             + _button("Reopen", "ghost", "sm") + "</form>"
         )
         done_rows.append((_mono(h((t["done_at"] or "")[:10])), h(t["title"]), _kind_badge(t["kind"]), reopen))
-    shown = ""
-    if focus is not None:
-        shown = (f'<div class="notice" role="status">Showing the tasks for {h(apps[focus])}. '
-                 '<a href="/tasks">All tasks</a></div>')
-    content = (
-        shown
-        + _card("Add a task", add_form, cls="card-form")
-        + _card("Open", open_table, count=len(open_tasks), count_for="open-tasks",
-                action=_filter("open-tasks", "Filter tasks"))
-        + _card("Recently done", _table((("Done", "date"), "Task", "Kind", ""), done_rows, "Nothing done yet."))
-    )
-    subtitle = apps[focus] if focus is not None else "Applications, prep, drills and admin"
-    return "Tasks", subtitle, content
-
-
-def _open_task_cells(task: dict, app_label: str | None, today: str) -> tuple[str, ...]:
-    done = (
-        '<form method="post" action="/tasks/done" class="inline" data-ajax="done">'
-        f'<input type="hidden" name="task_id" value="{h(task["id"])}">'
-        + _button("Done", "secondary", "sm") + "</form>"
-    )
-    return (_due(task["due_date"], today), h(task["title"]), _kind_badge(task["kind"]),
-            f'<span class="muted">{h(app_label)}</span>' if app_label else "", done)
-
-
-def _open_task_row(task: dict, app_label: str | None, today: str) -> str:
-    """One <tr> for the open-tasks table, sent to the page script after an add."""
-    return _row(_open_task_cells(task, app_label, today))
+    recent = ""
+    if done_rows:
+        recent = (f'<details class="recent"><summary>Recently done <span class="count">{len(done_rows)}</span></summary>'
+                  + _table((("Done", "date"), "Task", "Kind", ""), done_rows, "") + "</details>")
+    return _card("General tasks", add + table + recent, count=len(tasks), count_for="general-tasks", cls="card-general")
 
 
 # --- HTML helpers ---------------------------------------------------------------------

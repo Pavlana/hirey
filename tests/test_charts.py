@@ -8,7 +8,6 @@ ALL = (
     lambda: charts.treemap([(EVIL, EVIL, [(EVIL, 5, "s2"), ("b", 2, "s9")]), ("g2", "s8", [("c", 3, "s4")])]),
     lambda: charts.funnel([(EVIL, 4, 1.0, "s5"), ("b", 1, .25, "s7"), ("c", 0, 0.0, "s9")]),
     lambda: charts.columns([(EVIL, 2), ("b", 5)], target=4),
-    lambda: charts.line([(EVIL, 2), ("b", 0), ("c", 3)]),
 )
 
 
@@ -37,7 +36,6 @@ class ChartsTest(unittest.TestCase):
         self.assertEqual(charts.treemap([("A", "s9", [("a", 0, "s5")])]), "")
         self.assertEqual(charts.funnel([("a", 0, None, "s5")]), "")
         self.assertEqual(charts.columns([]), "")
-        self.assertEqual(charts.line([]), "")
 
     def test_donut_segments_and_legend(self) -> None:
         out = charts.donut([("Applied", 3, "s5"), ("Offer", 1, "s10"), ("None", 0, "s1")], "applications")

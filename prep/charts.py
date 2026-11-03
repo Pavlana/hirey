@@ -191,36 +191,3 @@ def columns(points: list[tuple[str, int]], target: int | None = None, color: str
         )
     return (f'<svg class="chart columns" viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Column chart of {len(points)} periods">{"".join(parts)}</svg>')
-
-
-def line(points: list[tuple[str, int]], color: str = "s8", width: int = 440, height: int = 210) -> str:
-    """A line with a soft area underneath, a dot and value label per point."""
-    if not points:
-        return ""
-    left, right, bottom, top_pad = 26, 22, 22, 18
-    top = max([n for _, n in points] + [1])
-    plot_h = height - bottom - top_pad
-    y_of = lambda v: top_pad + plot_h * (1 - v / top)  # noqa: E731
-    step = (width - left - right) / max(len(points) - 1, 1)
-    xy = [(left + i * step, y_of(n)) for i, (_, n) in enumerate(points)]
-    path = " ".join(f"{_n(x)},{_n(y)}" for x, y in xy)
-    base = _n(y_of(0))
-    area = f"{_n(xy[0][0])},{base} {path} {_n(xy[-1][0])},{base}"
-    parts = [
-        _axis(top, left, width - right, y_of),
-        f'<g class="{_c(color)}"><polygon class="line-area" fill="currentColor" points="{area}"/>'
-        f'<polyline fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round" '
-        f'stroke-linecap="round" points="{path}"/>',
-    ]
-    for (label, n), (x, y) in zip(points, xy):
-        parts.append(
-            f'<circle cx="{_n(x)}" cy="{_n(y)}" r="4" fill="currentColor" class="line-dot">'
-            f"<title>{_e(label)}: {n}</title></circle>"
-        )
-    parts.append("</g>")
-    for (label, n), (x, y) in zip(points, xy):
-        parts.append(f'<text class="axis" x="{_n(x)}" y="{height - 4}" text-anchor="middle">{_e(label)}</text>')
-        if n:
-            parts.append(f'<text class="chart-value" x="{_n(x)}" y="{_n(y - 9)}" text-anchor="middle">{n}</text>')
-    return (f'<svg class="chart line" viewBox="0 0 {width} {height}" role="img" '
-            f'aria-label="Line chart of {len(points)} periods">{"".join(parts)}</svg>')

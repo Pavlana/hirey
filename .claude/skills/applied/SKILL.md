@@ -30,12 +30,24 @@ Interested buttons on the dashboard's Job Offers page.
    Dates take `YYYY-MM-DD`, `today`, `tomorrow` or `+N` days. Running it again for the same
    job updates the existing row and never moves it back to an earlier stage.
    The first tasks are created automatically:
-   - Interested: Research the company and Check CV fit / tailor CV (due in 2 days); Apply (due in 3 days).
+   - Interested: Apply (due in 3 days).
    - Applied: Chase if no reply (due in 7 days); an open Apply task is marked done.
 
 4. Report the printed line in one or two sentences: what was recorded, whether it was linked
    to a getjo job, and the tasks created. If the output says several getjo jobs matched, show
    the ids and ask which one, then re-run with `--job-id`.
 
-Later changes: `python -m prep.cli update <id> --status technical --next-action "..." --next-date ...`
-(`--clear-next` removes the next action). List: `python -m prep.cli apps [--status S]`.
+Later changes go through the stage, which creates and closes tasks the same way as Move to… on
+the dashboard's Applications board:
+
+```bash
+python -m prep.cli update <id> --status technical --interview-date 2026-02-03 --comment "two rounds"
+python -m prep.cli comment <id> "take-home test sent"
+```
+
+Stages: to_apply (Interested), applied, recruiter_call, technical (Coding interview),
+system_design, final (Company interview), offer, rejected, no_response, withdrawn. For the
+four interview stages, pass `--interview-date` when the user gave one: the prep tasks are due
+the day before. A take-home test or a second interview is a comment, not a stage.
+`--next-action "..." [--next-date D]` adds a task to the application. List:
+`python -m prep.cli apps [--status S]`.

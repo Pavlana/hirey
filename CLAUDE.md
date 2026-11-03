@@ -75,7 +75,8 @@ data/        local databases (gitignored)
 - Tests: `python -m unittest`
 - Daily brief: `python -m prep.cli today`
 - Record an application: `python -m prep.cli applied --job-id ID --next-action "..." --next-date +7`
-- Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ...`
+- Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ... [--comment ...]`,
+  `python -m prep.cli comment ID "..."`
 - Tasks: `python -m prep.cli task add|list|done`
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then

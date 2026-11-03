@@ -17,7 +17,9 @@ class SeedTest(unittest.TestCase):
             build_getjo_db(getjo_path, data["getjo_jobs"])
             with closing(db.connect(prep_path)) as conn:
                 self.assertEqual(len(db.list_applications(conn)), len(data["applications"]))
-                self.assertEqual(len(db.list_tasks(conn, None)), len(data["tasks"]))
+                next_actions = [a for a in data["applications"] if a.get("next_action")
+                                and a["status"] not in ("rejected", "withdrawn", "no_response")]
+                self.assertEqual(len(db.list_tasks(conn, None)), len(data["tasks"]) + len(next_actions))
             with closing(getjo.connect_ro(getjo_path)) as gconn:
                 self.assertEqual(len(getjo.matches(gconn)), 3)
 

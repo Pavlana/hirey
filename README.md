@@ -30,8 +30,8 @@ The settings file is looked up in this order:
 
 The per-user file is the normal place: every checkout and git worktree, a launchd job and
 the Claude app all find it without environment variables. Single keys can be overridden with
-`PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT` and
-`PREP_WEEKLY_TARGET`. Use absolute paths, with `prep_db`
+`PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
+`PREP_WEEKLY_TARGET` and `PREP_NO_RESPONSE_DAYS`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree.
 
 ## Try it with example data
@@ -50,10 +50,11 @@ The seed shifts the example dates so the most recent ones fall around today. The
 
 | Skill      | CLI                                                                 | What it does |
 |------------|---------------------------------------------------------------------|--------------|
-| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Overdue next actions, tasks due, new getjo matches |
+| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, tasks due or overdue, new getjo matches |
 | `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
-|            | `python -m prep.cli update ID [--status S] [--next-action T] [--next-date D]` | Update an application |
+|            | `python -m prep.cli update ID [--status S [--comment T] [--interview-date D]] [--next-action T [--next-date D]]` | Move an application to a stage (closes the old stage's tasks, adds the new ones); `--next-action` adds a task |
+|            | `python -m prep.cli comment ID "text"`                               | Comment on an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
@@ -67,9 +68,10 @@ filtering and saving without a reload (no build step, no external requests; one 
 charts are server-rendered SVG):
 
 - **Dashboard** (`/`): applied in the last 7 days against `weekly_target`, total applications,
-  reply rate (with a warning below 10% after 25 applications), overdue next actions, and charts:
+  reply rate (with a warning below 10% after 25 applications), and charts:
   applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
-  applications per week (columns with the target) and tasks done per week (line).
+  applications per week (columns with the target). It counts applications only; tasks are a
+  to-do list on the Applications page.
   `/progress` redirects here.
 - **Job Offers** (`/offers`; `/matches` redirects): every getjo match, filtered by minimum
   score (New only), company, role, location (London / Remote / Other) and New / Interested
@@ -78,17 +80,25 @@ charts are server-rendered SVG):
   **Applied** (application recorded as applied today, same logic as `/applied --job-id`),
   **Interested** (application recorded with status `to_apply`, shown as "Interested") and
   **Skipped** (a pop-up with the skip reasons and an optional comment; without JavaScript a
-  plain form page). Applied and Interested open the Tasks page for that application with its
-  first tasks; an Interested job can later be marked Applied. A skip can be undone. Decided
-  jobs also drop out of `/today`.
-- **Tasks** (`/tasks`, or `/tasks?app=ID` for one application): add tasks, tick them done,
-  see recently done ones.
+  plain form page). Applied and Interested open the Applications board with that card
+  open and highlighted; an Interested job can later be marked Applied. A skip can be undone.
+  Decided jobs also drop out of `/today`.
+- **Applications** (`/applications`; `/tasks` redirects): a board with one column per stage
+  (Interested, Applied, Recruiter call, Coding interview, System design, Company interview,
+  Offer) and a collapsed Closed lane (Rejected, No response, Withdrawn). Each card shows
+  days in stage, its next task and a comment count; opened, it lists the tasks (tick done,
+  add one), **Move to…** any stage (with an interview date for interview stages and an
+  optional comment), a comment box and the history. Moving creates the new stage's tasks and
+  closes the old stage's open ones. General tasks (no application) and recently done tasks
+  sit below the board.
 
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
 other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never
 shown. Each request opens the database afresh, so changes made through the skills appear on
-the next page load. Optional settings: `dashboard_port` (default 8765) and `weekly_target`
-(applications per week, default 10).
+the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
+(applications per week, default 10) and `no_response_days` (default 14: an application
+still in Applied with no stage change for that long moves to No response; checked on every
+dashboard request and by `/today`).
 
 ### Keep it running with launchd (macOS)
 

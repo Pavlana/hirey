@@ -16,7 +16,6 @@ Definitions (used everywhere, documented in docs/how-it-works.md):
 - Conversion: for each FUNNEL stage, how many submitted applications reached it or a later
   stage (cumulative, so skipped stages still count) and their share of submitted.
 - Weeks start on Monday. "Last 7 days" is today and the 6 days before it, by date_applied.
-  Tasks count by the UTC day of done_at.
 """
 
 import sqlite3
@@ -138,10 +137,4 @@ def _per_week(days: list[str], today: str | None, weeks: int) -> list[tuple[str,
 def applications_per_week(conn: sqlite3.Connection, today: str | None = None,
                           weeks: int = WEEKS_SHOWN) -> list[tuple[str, int]]:
     rows = conn.execute("SELECT date_applied FROM applications WHERE date_applied IS NOT NULL")
-    return _per_week([r[0] for r in rows], today, weeks)
-
-
-def tasks_done_per_week(conn: sqlite3.Connection, today: str | None = None,
-                        weeks: int = WEEKS_SHOWN) -> list[tuple[str, int]]:
-    rows = conn.execute("SELECT done_at FROM tasks WHERE status = 'done' AND done_at IS NOT NULL")
     return _per_week([r[0] for r in rows], today, weeks)

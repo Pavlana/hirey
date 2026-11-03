@@ -337,10 +337,9 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 .treemap .tm-text { font-size: 12px; font-weight: 600; }
 .treemap rect { fill-opacity: .9; }
 .funnel { max-width: 620px; margin: 0 auto; }
+.card-weeks svg.chart { max-width: 620px; margin: 0 auto; }
 .funnel .funnel-empty { fill: var(--border-strong); }
 .funnel .funnel-band { opacity: .16; }
-.line .line-area { opacity: .14; }
-.line .line-dot { stroke: var(--surface); stroke-width: 2; }
 
 /* --- banners, empty state, toasts --------------------------------------------- */
 .notice, .warning {
@@ -371,6 +370,61 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 .toast.is-leaving { opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
+/* --- applications board ------------------------------------------------------------
+   One lane per stage in a horizontal scroll; a lane widens while one of its cards is open.
+   Cards and the Closed lane are <details>, so they open without the script. */
+.card-board > .card-body { padding: var(--space-4); }
+.board { display: flex; gap: var(--space-3); overflow-x: auto; padding-bottom: var(--space-2); align-items: flex-start; }
+.lane {
+  flex: 1 0 150px; display: flex; flex-direction: column; gap: var(--space-2); min-width: 0;
+  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2);
+  transition: flex-basis .15s;
+}
+.lane:has(details[open]) { flex: 0 0 300px; }
+.lane h2 { font-size: 13px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em;
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 4px 6px; margin: 0;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lane-empty { margin: 0; padding: var(--space-3); text-align: center; color: var(--text-faint); }
+.app-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm); scroll-margin: var(--space-8); }
+.app-card:hover { border-color: var(--border-strong); }
+.app-card.is-focus { border-color: var(--accent); box-shadow: var(--ring); animation: focus-in 2.4s ease-out; }
+@keyframes focus-in { from { background: var(--accent-soft); } to { background: var(--surface); } }
+.app-card summary { list-style: none; cursor: pointer; display: grid; gap: 3px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); }
+.app-card summary::-webkit-details-marker { display: none; }
+.app-card summary:focus-visible { outline: none; box-shadow: var(--ring); }
+.app-head { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-tier { color: var(--accent-text); font-weight: 600; }
+.app-role { color: var(--text-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-meta { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); color: var(--text-faint); font-size: 12px; }
+.app-comments { display: inline-flex; align-items: center; gap: 3px; color: var(--text-muted); }
+.app-comments .icon { width: 13px; height: 13px; }
+.app-next { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12.5px; min-width: 0; }
+.app-next-title { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.app-body { display: grid; gap: var(--space-2); padding: var(--space-2) var(--space-3) var(--space-3); border-top: 1px solid var(--border); font-size: 13px; }
+.app-body h3 { margin: var(--space-2) 0 0; font-size: 11.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.app-body p { margin: 0; }
+table.mini td, table.mini td:first-child, table.mini td:last-child { padding: 5px 4px; font-size: 12.5px; }
+table.mini td:first-child:empty { display: none; }
+table.mini td:first-child { white-space: nowrap; width: 1%; }
+table.mini td:nth-child(2) { width: 100%; }
+form.add-sm > * { height: 30px; font-size: 13px; }
+form.add-sm input[name="title"], form.add-sm input[name="body"] { flex: 1 1 140px; }
+form.move { display: grid; gap: 6px; margin: 0; }
+form.move > *, form.move input { height: 30px; font-size: 13px; }
+.interview-date { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
+.interview-date input { flex: 1; }
+.interview-date[hidden] { display: none; }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.timeline li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.closed-lane { margin-top: var(--space-3); }
+.closed-lane > summary, .recent > summary { cursor: pointer; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; color: var(--text-muted); font-weight: 500; }
+.closed-lane > summary .muted { font-size: 12.5px; }
+.closed-lane .board { margin-top: var(--space-2); }
+.card-general > .card-body, .card-general > .card-body:has(> .table-wrap) { padding: var(--space-4) var(--space-5); }
+.card-general .card-body > form.add { margin-bottom: var(--space-3); }
+.card-general .table-wrap { margin: 0 calc(-1 * var(--space-5)); }
+.recent { margin-top: var(--space-3); }
+
 /* --- responsive ---------------------------------------------------------------- */
 @media (max-width: 800px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
@@ -391,6 +445,9 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
   .columns { grid-template-columns: 1fr; }
   .card-head, .card-body { padding-left: var(--space-4); padding-right: var(--space-4); }
   .filter { width: 100%; }
+  .lane, .lane:has(details[open]) { flex: 0 0 82vw; }
+  .card-general > .card-body, .card-general > .card-body:has(> .table-wrap) { padding: var(--space-4); }
+  .card-general .table-wrap { margin: 0 calc(-1 * var(--space-4)); }
   .toasts { left: var(--space-3); right: var(--space-3); bottom: var(--space-3); align-items: stretch; }
   .toast { max-width: none; }
 }
@@ -408,6 +465,9 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
   form.inline { flex-wrap: wrap; justify-content: flex-start; }
   form.inline input[name="next_action"] { flex: 1 1 120px; }
   tr.no-results td { flex: 1; padding: var(--space-3); }
+  table.mini tbody tr { flex-wrap: nowrap; padding: 6px 0; }
+  table.mini td:first-child { flex: none; width: auto; }
+  table.mini td:nth-child(2) { flex: 1; width: auto; }
 }
 @media (max-width: 480px) {
   .sidebar nav a .icon { display: none; }

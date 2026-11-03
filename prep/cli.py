@@ -3,13 +3,17 @@
     python -m prep.cli today [--threshold 7] [--limit 15]
     python -m prep.cli applied (--job-id ID | --url URL | --company C --role R) [options]
     python -m prep.cli apps [--status STATUS]
-    python -m prep.cli update APP_ID [--status S] [--next-action TEXT] [--next-date DATE] ...
+    python -m prep.cli update APP_ID [--status S [--comment TEXT] [--interview-date DATE]]
+                                     [--next-action TEXT [--next-date DATE]] ...
+    python -m prep.cli comment APP_ID TEXT
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
     python -m prep.cli feedback export [--out PATH]
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
+A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
+the application's next action always shows its next open task.
 Dates accept YYYY-MM-DD, "today", "tomorrow" or "+N" (N days from today).
 """
 
@@ -58,8 +62,9 @@ def _app_line(app: dict) -> str:
 
 def _task_line(task: dict) -> str:
     due = f" due {task['due_date']}" if task.get("due_date") else ""
-    done = " ✓" if task["status"] == "done" else ""
-    return f"#{task['id']} [{task['kind']}] {task['title']}{due}{done}"
+    done = {"done": " ✓", "closed": " (closed)"}.get(task["status"], "")
+    app = f" — {task['company']}" if task.get("company") else ""
+    return f"#{task['id']} [{task['kind']}] {task['title']}{due}{done}{app}"
 
 
 def _job_line(job: dict) -> str:
@@ -74,12 +79,15 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     today = db.today_iso()
     print(f"Today: {today}\n")
 
-    overdue = db.overdue_actions(conn, today)
-    print(f"Next actions due ({len(overdue)}):")
-    print("\n".join(f"  {_app_line(a)}" for a in overdue) or "  none")
+    db.auto_no_response(conn, settings.no_response_days, today)
+    moved = db.recent_auto_moves(conn, today)
+    if moved:
+        print(f"Moved to No response (no reply in {settings.no_response_days} days), last 7 days ({len(moved)}):")
+        print("\n".join(f"  #{m['id']} {m['company']} — {m['role']} ({m['changed_at'][:10]})" for m in moved))
+        print()
 
     due = db.tasks_due(conn, today)
-    print(f"\nTasks due today or overdue ({len(due)}):")
+    print(f"Tasks due today or overdue ({len(due)}):")
     print("\n".join(f"  {_task_line(t)}" for t in due) or "  none")
 
     try:
@@ -135,19 +143,19 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         "tier": args.tier,
         "type": args.type,
         "source": args.source or (job["source"] if job else None),
-        "next_action": args.next_action,
-        "next_action_date": args.next_date,
         "puzzle_round": args.puzzle_round,
         "pay": args.pay,
         "contact": args.contact,
         "notes": args.notes,
     }
+    _check_next(args)
     company = args.company or (job["company"] if job else None)
     role = args.role or (job["title"] if job else None)
     if not (company and role):
         raise SystemExit("error: URL not found in getjo; pass --company and --role too")
 
     app_id, created = db.record_application(conn, company, role, status=args.status, date_applied=args.date, **fields)
+    _add_next_task(conn, args, app_id)
     app = db.get_application(conn, app_id)
     if job:
         db.record_decision(conn, job, "interested" if app["status"] == "to_apply" else "applied")
@@ -172,11 +180,22 @@ def cmd_apps(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
     return 0
 
 
+def _check_next(args: argparse.Namespace) -> None:
+    if args.next_date and not args.next_action:
+        raise SystemExit("error: --next-date needs --next-action")
+
+
+def _add_next_task(conn: sqlite3.Connection, args: argparse.Namespace, app_id: int) -> None:
+    """--next-action becomes a task on the application, due --next-date."""
+    if args.next_action:
+        db.add_task(conn, args.next_action, "admin", args.next_date, app_id)
+
+
 def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    _check_next(args)
+    if (args.comment or args.interview_date) and not args.status:
+        raise SystemExit("error: --comment and --interview-date go with --status")
     fields = {
-        "status": args.status,
-        "next_action": args.next_action,
-        "next_action_date": args.next_date,
         "last_contact": args.last_contact,
         "tier": args.tier,
         "puzzle_round": args.puzzle_round,
@@ -185,12 +204,28 @@ def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         "pay": args.pay,
     }
     fields = {k: v for k, v in fields.items() if v is not None}
-    if args.clear_next:
-        fields.update(next_action=None, next_action_date=None)
-    if not fields:
+    if not (fields or args.status or args.next_action):
         raise SystemExit("error: nothing to update")
+    if db.get_application(conn, args.app_id) is None:
+        raise LookupError(f"no application with id {args.app_id}")
     db.update_application(conn, args.app_id, **fields)
+    if args.status and not db.move_application(conn, args.app_id, args.status, comment=args.comment,
+                                                interview_date=args.interview_date):
+        print(f"Already {db.status_label(args.status)}: nothing moved"
+              + ("; --comment and --interview-date were not saved" if args.comment or args.interview_date else ""))
+    _add_next_task(conn, args, args.app_id)
     print(f"Updated {_app_line(db.get_application(conn, args.app_id))}")
+    tasks = db.app_tasks(conn).get(args.app_id, [])
+    if args.status and tasks:
+        print("  open tasks:")
+        print("\n".join(f"    {_task_line(t)}" for t in tasks))
+    return 0
+
+
+def cmd_comment(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    db.add_comment(conn, args.app_id, args.text)
+    log.info("comment added to application %s", args.app_id)  # never the text
+    print(f"Comment added to {_app_line(db.get_application(conn, args.app_id))}")
     return 0
 
 
@@ -265,7 +300,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("-v", "--verbose", action="store_true", help="log progress to stdout")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("today", help="overdue actions, tasks due, new getjo matches")
+    p = sub.add_parser("today", help="auto no-response moves, tasks due, new getjo matches")
     p.add_argument("--threshold", type=int, default=getjo.DEFAULT_THRESHOLD)
     p.add_argument("--limit", type=int, default=15, help="max matches to show")
     p.set_defaults(func=cmd_today)
@@ -281,8 +316,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--tier", choices=db.TIERS)
     p.add_argument("--type", choices=db.APPLICATION_TYPES)
     p.add_argument("--source")
-    p.add_argument("--next-action")
-    p.add_argument("--next-date", type=parse_day)
+    p.add_argument("--next-action", help="adds a task on the application")
+    p.add_argument("--next-date", type=parse_day, help="due date of the --next-action task")
     p.add_argument("--puzzle-round", choices=db.PUZZLE_ROUND)
     p.add_argument("--pay", help="free text; stored only in the local database")
     p.add_argument("--contact")
@@ -295,10 +330,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("update", help="update an application")
     p.add_argument("app_id", type=int)
-    p.add_argument("--status", choices=db.APPLICATION_STATUSES)
-    p.add_argument("--next-action")
-    p.add_argument("--next-date", type=parse_day)
-    p.add_argument("--clear-next", action="store_true", help="clear next action and date")
+    p.add_argument("--status", choices=db.APPLICATION_STATUSES,
+                   help="move to this stage: closes the previous stage's auto tasks, adds the new ones")
+    p.add_argument("--comment", help="comment stored with the stage change")
+    p.add_argument("--interview-date", type=parse_day,
+                   help="for interview stages: stored in interviews; prep tasks are due the day before")
+    p.add_argument("--next-action", help="adds a task on the application")
+    p.add_argument("--next-date", type=parse_day, help="due date of the --next-action task")
     p.add_argument("--last-contact", type=parse_day)
     p.add_argument("--tier", choices=db.TIERS)
     p.add_argument("--puzzle-round", choices=db.PUZZLE_ROUND)
@@ -306,6 +344,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--notes")
     p.add_argument("--pay", help="free text; stored only in the local database")
     p.set_defaults(func=cmd_update)
+
+    p = sub.add_parser("comment", help="add a comment to an application")
+    p.add_argument("app_id", type=int)
+    p.add_argument("text")
+    p.set_defaults(func=cmd_comment)
 
     p = sub.add_parser("task", help="add, list, complete tasks")
     tsub = p.add_subparsers(dest="task_cmd", required=True)

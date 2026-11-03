@@ -14,6 +14,8 @@ Keys:
     private_dir  absolute path to the folder holding cv.md, notes/, sessions/
     dashboard_port  port for the local dashboard (default 8765)
     weekly_target   applications per week shown on the dashboard (default 10)
+    no_response_days  days in Applied with no stage change before an application moves to
+                      No response automatically (default 14)
 
 Relative paths are resolved against the repo root, never the current directory,
 because the code also runs from dev3 worktrees.
@@ -30,6 +32,7 @@ USER_SETTINGS_PATH = Path.home() / ".config" / "inter_prep" / "settings.toml"
 DEFAULT_PREP_DB = "data/prep.db"
 DEFAULT_DASHBOARD_PORT = 8765
 DEFAULT_WEEKLY_TARGET = 10
+DEFAULT_NO_RESPONSE_DAYS = 14
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -39,6 +42,7 @@ ENV_KEYS = {
     "private_dir": "PREP_PRIVATE_DIR",
     "dashboard_port": "PREP_DASHBOARD_PORT",
     "weekly_target": "PREP_WEEKLY_TARGET",
+    "no_response_days": "PREP_NO_RESPONSE_DAYS",
 }
 
 
@@ -53,6 +57,7 @@ class Settings:
     private_dir: Path | None
     dashboard_port: int = DEFAULT_DASHBOARD_PORT
     weekly_target: int = DEFAULT_WEEKLY_TARGET
+    no_response_days: int = DEFAULT_NO_RESPONSE_DAYS
 
 
 def _resolve(value: str) -> Path:
@@ -114,4 +119,5 @@ def load_settings(path: Path | None = None) -> Settings:
         private_dir=_resolve(data["private_dir"]) if data.get("private_dir") else None,
         dashboard_port=_int(data, "dashboard_port", DEFAULT_DASHBOARD_PORT, 1, 65535),
         weekly_target=_int(data, "weekly_target", DEFAULT_WEEKLY_TARGET, 1, 1000),
+        no_response_days=_int(data, "no_response_days", DEFAULT_NO_RESPONSE_DAYS, 1, 365),
     )

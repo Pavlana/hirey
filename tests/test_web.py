@@ -12,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/offers", "/tasks")
+PAGES = ("/", "/offers", "/applications")
 PAY = "PAY-MARKER-31337"
 
 
@@ -48,7 +48,6 @@ class PagesTest(WebTestCase):
     def test_pipeline_numbers(self) -> None:
         _, _, body = self.get("/")
         self.assertIn("2 / 10", body)  # applied 2026-01-14 and 2026-01-16 in the last 7 days
-        self.assertIn("Follow up by email", body)  # overdue next action
         self.assertIn("43%", body)  # 3 of 7 replied
         self.assertNotIn('class="warning"', body)
 
@@ -99,7 +98,7 @@ class PagesTest(WebTestCase):
 
     def test_dashboard_charts(self) -> None:
         body = self.get("/")[2]
-        for chart in ("donut", "treemap", "funnel", "columns", "line"):
+        for chart in ("donut", "treemap", "funnel", "columns"):
             self.assertIn(f'class="chart {chart}"', body)
         self.assertIn("target 10", body)
         self.assertNotIn(" style=", body)
@@ -124,29 +123,32 @@ class PagesTest(WebTestCase):
 
     def test_values_are_escaped(self) -> None:
         with self.conn() as conn:
-            db.add_application(conn, "<script>alert(1)</script>", "Engineer", status="applied",
-                               next_action="<b>x</b>", next_action_date="2026-01-01")
+            app_id = db.add_application(conn, "<script>alert(1)</script>", "Engineer", status="applied")
+            db.add_task(conn, "<b>x</b>", due_date="2026-01-01", application_id=app_id)
+            db.add_comment(conn, app_id, "<img src=x onerror=alert(2)>")
             db.add_task(conn, "<img src=x onerror=alert(1)>")
         for path in PAGES:
             with self.subTest(path=path):
                 body = self.get(path)[2]
                 self.assertNotIn("<script>alert", body)
                 self.assertNotIn("<img src=x", body)
-        self.assertIn("&lt;script&gt;", self.get("/")[2])
+        self.assertIn("&lt;script&gt;", self.get("/applications")[2])
+        self.assertIn("&lt;img src=x onerror=alert(2)&gt;", self.get("/applications")[2])
 
     def test_pay_never_rendered(self) -> None:
         with self.conn() as conn:
-            app_id = db.add_application(conn, "Paycorp", "Engineer", status="applied", pay=PAY,
-                                        next_action="Chase", next_action_date="2026-01-01")
-            db.add_task(conn, "Pay-linked task", application_id=app_id)
+            app_id = db.add_application(conn, "Paycorp", "Engineer", status="applied", pay=PAY)
+            db.add_task(conn, "Pay-linked task", due_date="2026-01-01", application_id=app_id)
         for path in PAGES:
             with self.subTest(path=path):
                 body = self.get(path)[2]
-                if path in ("/", "/tasks"):
+                if path == "/applications":
                     self.assertIn("Paycorp", body)
                 self.assertNotIn(PAY, body)
         status, headers, body = self.post("/tasks/add", {"title": "Another", "kind": "prep"})
         self.assertNotIn(PAY, headers["Location"] + body)
+        status, headers, body = self.post("/applications/move", {"app_id": str(app_id), "status": "technical"})
+        self.assertNotIn(PAY, headers["Location"] + self.get(headers["Location"])[2])
 
     def test_unsafe_job_url_not_linked(self) -> None:
         self.assertEqual(web._link("javascript:alert(1)", "X"), "X")
@@ -214,7 +216,6 @@ class JsonActionsTest(WebTestCase):
         self.assertTrue(row.startswith("<tr>"))
         self.assertIn("&lt;b&gt;Mock&lt;/b&gt; &amp; drill", row)
         self.assertIn("overdue", row)
-        self.assertIn("Acme Rockets", row)
         self.assertIn('data-ajax="done"', row)
         self.assertNotIn(PAY, row)
 
@@ -234,7 +235,7 @@ class JsonActionsTest(WebTestCase):
         self.assertNotIn("html", reply)
         with self.conn() as conn:
             app_id = db.find_by_job(conn, "lever:globex-labs:abc")["id"]
-        self.assertEqual(reply["redirect"], f"/tasks?app={app_id}")
+        self.assertEqual(reply["redirect"], f"/applications?app={app_id}")
 
     def test_errors_are_json(self) -> None:
         for path, form in (("/tasks/add", {"title": ""}), ("/tasks/done", {"task_id": "999"}),
@@ -260,12 +261,13 @@ class OffersTest(WebTestCase):
         with self.conn() as conn:
             app = db.find_by_job(conn, "lever:globex-labs:abc")
             tasks = [(t["title"], t["kind"], t["due_date"]) for t in db.list_tasks(conn) if t["application_id"] == app["id"]]
-        self.assertEqual((status, headers["Location"]), (303, f"/tasks?app={app['id']}&msg=applied"))
+        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={app['id']}&msg=applied"))
         self.assertEqual((app["company"], app["status"], app["date_applied"]), ("Globex Labs", "applied", TODAY))
         self.assertEqual(tasks, [("Chase if no reply", "admin", "2026-01-27")])
         _, _, body = self.get(headers["Location"])
         self.assertIn("Recorded as applied", body)
         self.assertIn("Chase if no reply", body)
+        self.assertIn(f'<article class="app-card is-focus" id="app-{app["id"]}"><details open>', body)
         self.assertNotIn("Globex Labs", self.get("/offers")[2])
 
     def test_mark_applied_twice_does_not_duplicate(self) -> None:
@@ -343,7 +345,7 @@ class OfferFiltersTest(WebTestCase):
         self.assertEqual((status, headers["Location"]), (303, "/offers?score=8&loc=remote"))
         status, headers, _ = self.post("/matches/apply", {"job_id": "lever:globex-labs:abc"})
         self.assertEqual(status, 303)
-        self.assertRegex(headers["Location"], r"^/tasks\?app=\d+&msg=applied$")
+        self.assertRegex(headers["Location"], r"^/applications\?app=\d+&msg=applied$")
 
 
 class SkipTest(WebTestCase):
@@ -497,30 +499,26 @@ class OfferActionsTest(WebTestCase):
     def test_interested(self) -> None:
         status, headers, _ = self.post("/offers/interested", {"job_id": self.GLOBEX})
         app = self.app()
-        self.assertEqual((status, headers["Location"]), (303, f"/tasks?app={app['id']}&msg=interested"))
+        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={app['id']}&msg=interested"))
         self.assertEqual((app["status"], app["date_applied"]), ("to_apply", None))
-        self.assertEqual(self.tasks(), [
-            ("Research the company", "prep", "2026-01-22", "todo"),
-            ("Check CV fit / tailor CV", "prep", "2026-01-22", "todo"),
-            ("Apply", "apply", "2026-01-23", "todo"),
-        ])
+        self.assertEqual(self.tasks(), [("Apply", "apply", "2026-01-23", "todo")])
         with self.conn() as conn:
             self.assertEqual(conn.execute("SELECT decision FROM job_decisions WHERE getjo_job_id = ?",
                                           (self.GLOBEX,)).fetchone()[0], "interested")
         self.assertEqual(OfferFiltersTest.companies(self, "?show=interested"), {"Globex Labs"})
         _, _, body = self.get(headers["Location"])
         self.assertIn("Saved as interested", body)
+        self.assertIn(f'<article class="app-card is-focus" id="app-{app["id"]}"><details open>', body)
 
     def test_interested_then_applied(self) -> None:
         self.post("/offers/interested", {"job_id": self.GLOBEX})
         self.post("/offers/interested", {"job_id": self.GLOBEX})  # a repeat adds nothing
-        self.assertEqual(len(self.tasks()), 3)
+        self.assertEqual(len(self.tasks()), 1)
         self.post("/offers/apply", {"job_id": self.GLOBEX})
         app = self.app()
         self.assertEqual((app["status"], app["date_applied"]), ("applied", TODAY))
         self.assertIn(("Apply", "apply", "2026-01-23", "done"), self.tasks())
         self.assertIn(("Chase if no reply", "admin", "2026-01-27", "todo"), self.tasks())
-        self.assertIn(("Research the company", "prep", "2026-01-22", "todo"), self.tasks())
         self.assertEqual(OfferFiltersTest.companies(self, "?show=applied"), {"Acme Rockets", "Globex Labs"})
 
     def test_interested_never_moves_an_application_back(self) -> None:
@@ -577,49 +575,54 @@ class OfferActionsTest(WebTestCase):
 
 
 class TasksTest(WebTestCase):
-    def test_tasks_for_one_application(self) -> None:
-        self.post("/offers/interested", {"job_id": "lever:globex-labs:abc"})
-        with self.conn() as conn:
-            app_id = db.find_by_job(conn, "lever:globex-labs:abc")["id"]
-            open_titles = {t["title"] for t in db.list_tasks(conn)}
-        _, _, body = self.get(f"/tasks?app={app_id}")
-        self.assertIn("Showing the tasks for Globex Labs", body)
-        self.assertIn(f'<option value="{app_id}" selected>', body)
-        others = open_titles - {"Apply", "Research the company", "Check CV fit / tailor CV"}
-        self.assertTrue(others)
-        for title in others:
-            self.assertNotIn(f"<td>{title}</td>", body)
-        for bad in ("abc", "99999", ""):
-            with self.subTest(app=bad):
-                status, _, body = self.get(f"/tasks?app={bad}")
-                self.assertEqual(status, 200)
-                self.assertNotIn("Showing the tasks for", body)
+    def test_tasks_page_redirects_to_applications(self) -> None:
+        status, headers, _ = self.get("/tasks")
+        self.assertEqual((status, headers["Location"]), (303, "/applications"))
+        self.assertEqual(self.get("/tasks?app=3")[1]["Location"], "/applications?app=3")
+        body = self.get("/applications")[2]
+        self.assertNotIn('href="/tasks"', body)
+        self.assertNotIn("<span>Tasks</span>", body)
 
     def test_overdue_highlighted(self) -> None:
-        _, _, body = self.get("/tasks")
+        _, _, body = self.get("/applications")
         self.assertIn('<span class="badge s4 overdue">2026-01-19</span>', body)
         self.assertIn("Write STAR story", body)  # recently done
 
     def test_add_and_done(self) -> None:
         status, headers, _ = self.post("/tasks/add", {
             "title": "Mock system design", "kind": "drill", "due_date": "2026-01-22", "application_id": "1",
+            "return": "/applications?app=1",
         })
-        self.assertEqual((status, headers["Location"]), (303, "/tasks?msg=task_added"))
+        self.assertEqual((status, headers["Location"]), (303, "/applications?app=1&msg=task_added"))
         with self.conn() as conn:
             task = next(t for t in db.list_tasks(conn) if t["title"] == "Mock system design")
         self.assertEqual((task["kind"], task["due_date"], task["application_id"]), ("drill", "2026-01-22", 1))
-        self.assertIn("Mock system design", self.get("/tasks")[2])
+        self.assertIn("Mock system design", self.get("/applications")[2])
 
         status, headers, _ = self.post("/tasks/done", {"task_id": str(task["id"])})
-        self.assertEqual((status, headers["Location"]), (303, "/tasks?msg=task_done"))
+        self.assertEqual((status, headers["Location"]), (303, "/applications?msg=task_done"))
         with self.conn() as conn:
             self.assertNotIn(task["id"], [t["id"] for t in db.list_tasks(conn)])
         self.assertIn("Task marked done", self.get(headers["Location"])[2])
 
         status, headers, _ = self.post("/tasks/reopen", {"task_id": str(task["id"])})
-        self.assertEqual((status, headers["Location"]), (303, "/tasks?msg=task_reopened"))
+        self.assertEqual((status, headers["Location"]), (303, "/applications?msg=task_reopened"))
         with self.conn() as conn:
             self.assertIn(task["id"], [t["id"] for t in db.list_tasks(conn)])
+
+    def test_general_tasks(self) -> None:
+        status, headers, out = self.post("/tasks/add", {"title": "Update LinkedIn", "kind": "admin"},
+                                         JsonActionsTest.JSON)
+        self.assertEqual(status, 200)
+        self.assertIn("Update LinkedIn", json.loads(out)["html"])
+        body = self.get("/applications")[2]
+        general = body[body.index("General tasks"):]
+        self.assertIn("Update LinkedIn", general)
+        self.assertIn('id="general-tasks"', general)
+        with self.conn() as conn:
+            app_titles = {t["title"] for t in db.list_tasks(conn) if t["application_id"]}
+        for title in app_titles:
+            self.assertNotIn(f"<td>{title}</td>", general.split("Recently done")[0])  # they stay on their cards
 
     def test_bad_task_input(self) -> None:
         for form in ({"title": ""}, {"title": "x", "kind": "nap"}, {"title": "x", "due_date": "monday"},
@@ -632,12 +635,143 @@ class TasksTest(WebTestCase):
         self.assertEqual(self.post("/nope", {})[0], 404)
 
 
+class ApplicationsBoardTest(WebTestCase):
+    GLOBEX = "lever:globex-labs:abc"
+
+    def app_id(self) -> int:
+        self.post("/offers/apply", {"job_id": self.GLOBEX})
+        with self.conn() as conn:
+            return db.find_by_job(conn, self.GLOBEX)["id"]
+
+    def open_tasks(self, app_id: int) -> list[tuple]:
+        with self.conn() as conn:
+            return [(t["title"], t["due_date"]) for t in db.app_tasks(conn).get(app_id, [])]
+
+    def test_board_columns_and_closed_lane(self) -> None:
+        body = self.get("/applications")[2]
+        self.assertIn('<body class="theme-ochre">', body)
+        labels = [web._status_label(s) for s in web.BOARD_STAGES]
+        self.assertEqual(labels, ["Interested", "Applied", "Recruiter call", "Coding interview", "System design",
+                                  "Company interview", "Offer"])
+        positions = [body.index(f'<section class="lane" aria-label="{label}">') for label in labels]
+        self.assertEqual(positions, sorted(positions))
+        closed = body[body.index('<details class="closed-lane">'):]
+        for label in ("Rejected", "No response", "Withdrawn"):
+            self.assertIn(f'aria-label="{label}"', closed)
+
+    def test_card_shows_days_next_task_and_comments(self) -> None:
+        app_id = self.app_id()
+        with self.conn() as conn:
+            db.add_comment(conn, app_id, "Referral from a former colleague")
+        body = self.get(f"/applications?app={app_id}")[2]
+        card = body[body.index(f'id="app-{app_id}"'):]
+        card = card[:card.index("</article>")]
+        self.assertIn("Globex Labs", card)
+        self.assertIn("new today", card)
+        self.assertIn("Chase if no reply", card)
+        self.assertIn('title="comments">', card)
+        self.assertIn("Referral from a former colleague", card)
+        self.assertEqual(body.count("is-focus"), 1)
+
+    def test_days_in_stage(self) -> None:
+        app_id = self.app_id()
+        with self.conn() as conn:
+            conn.execute("UPDATE status_history SET changed_at = '2026-01-15T09:00:00Z' WHERE application_id = ?",
+                         (app_id,))
+            conn.commit()
+        body = self.get("/applications")[2]
+        card = body[body.index(f'id="app-{app_id}"'):]
+        self.assertIn("5 days in stage", card[:card.index("</summary>")])
+
+    def test_unknown_focus_is_ignored(self) -> None:
+        for bad in ("abc", "99999", ""):
+            with self.subTest(app=bad):
+                status, _, body = self.get(f"/applications?app={bad}")
+                self.assertEqual(status, 200)
+                self.assertNotIn("is-focus", body)
+
+    def test_move_with_interview_date_and_comment(self) -> None:
+        app_id = self.app_id()
+        status, headers, _ = self.post("/applications/move", {
+            "app_id": str(app_id), "status": "technical", "interview_date": "2026-01-26",
+            "comment": "Two rounds, pairing",
+        })
+        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={app_id}&msg=moved"))
+        self.assertEqual(self.open_tasks(app_id), [("Coding practice", "2026-01-25"),
+                                                   ("Review the role's tech stack", "2026-01-25")])
+        with self.conn() as conn:
+            self.assertEqual(db.get_application(conn, app_id)["status"], "technical")
+            chase = conn.execute("SELECT status FROM tasks WHERE application_id = ? AND title = 'Chase if no reply'",
+                                 (app_id,)).fetchone()[0]
+            interview = conn.execute("SELECT date, stage FROM interviews WHERE application_id = ?",
+                                     (app_id,)).fetchone()
+        self.assertEqual(chase, "closed")
+        self.assertEqual(tuple(interview), ("2026-01-26", "technical"))
+        body = self.get(headers["Location"])[2]
+        self.assertIn("Moved.", body)
+        self.assertIn("Two rounds, pairing", body)
+        lane = body[body.index('aria-label="Coding interview"'):]
+        self.assertIn(f'id="app-{app_id}"', lane[:lane.index("</section>")])
+
+    def test_move_back_and_to_closed(self) -> None:
+        app_id = self.app_id()
+        self.post("/applications/move", {"app_id": str(app_id), "status": "rejected"})
+        self.assertEqual(self.open_tasks(app_id), [("Debrief — what to improve", "2026-01-23")])
+        body = self.get(f"/applications?app={app_id}")[2]
+        self.assertIn('<details class="closed-lane" open>', body)
+        self.post("/applications/move", {"app_id": str(app_id), "status": "applied"})
+        self.assertEqual(self.open_tasks(app_id), [("Chase if no reply", "2026-01-27")])
+
+    def test_interview_date_ignored_for_other_stages(self) -> None:
+        app_id = self.app_id()
+        self.post("/applications/move", {"app_id": str(app_id), "status": "offer", "interview_date": "2026-01-26"})
+        self.assertEqual(self.open_tasks(app_id), [("Review the offer", "2026-01-22")])
+        with self.conn() as conn:
+            self.assertIsNone(conn.execute("SELECT 1 FROM interviews WHERE application_id = ?", (app_id,)).fetchone())
+
+    def test_bad_moves_and_comments(self) -> None:
+        app_id = str(self.app_id())
+        for path, form in (("/applications/move", {"app_id": app_id, "status": "hired"}),
+                           ("/applications/move", {"app_id": "999", "status": "offer"}),
+                           ("/applications/move", {"status": "offer"}),
+                           ("/applications/move", {"app_id": app_id, "status": "technical", "interview_date": "soon"}),
+                           ("/applications/move", {"app_id": app_id, "status": "offer", "comment": "x" * 1001}),
+                           ("/applications/comment", {"app_id": app_id, "body": ""}),
+                           ("/applications/comment", {"app_id": app_id, "body": "x" * 1001})):
+            with self.subTest(path=path, form=str(form)[:60]):
+                self.assertEqual(self.post(path, form)[0], 400)
+
+    def test_comment(self) -> None:
+        app_id = self.app_id()
+        status, headers, _ = self.post("/applications/comment", {"app_id": str(app_id), "body": "Take-home test sent"})
+        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={app_id}&msg=commented"))
+        with self.conn() as conn:
+            self.assertEqual([e["comment"] for e in db.timeline(conn, app_id)], [None, "Take-home test sent"])
+        self.assertIn("Take-home test sent", self.get(headers["Location"])[2])
+
+    def test_no_response_check_runs_on_a_request(self) -> None:
+        app_id = self.app_id()
+        with self.conn() as conn:
+            conn.execute("UPDATE status_history SET changed_at = '2026-01-01T09:00:00Z' WHERE application_id = ?",
+                         (app_id,))
+            conn.commit()
+        web.handle(self.settings, "GET", "/applications", HOST, today="2026-01-15")
+        with self.conn() as conn:
+            self.assertEqual(db.get_application(conn, app_id)["status"], "no_response")
+            self.assertEqual(db.timeline(conn, app_id)[-1]["comment"], "auto: no reply in 14 days")
+
+    def test_dashboard_counts_applications_not_tasks(self) -> None:
+        body = self.get("/")[2]
+        for gone in ("Overdue", "Tasks done", "Revise networking basics", 'class="chart line"'):
+            self.assertNotIn(gone, body)
+
+
 class SharedDatabaseTest(WebTestCase):
     def test_cli_write_visible_to_next_request(self) -> None:
-        self.assertNotIn("Call the recruiter", self.get("/tasks")[2])
+        self.assertNotIn("Call the recruiter", self.get("/applications")[2])
         code, _, _ = self.run_cli("task", "add", "Call the recruiter", "--kind", "admin")
         self.assertEqual(code, 0)
-        self.assertIn("Call the recruiter", self.get("/tasks")[2])
+        self.assertIn("Call the recruiter", self.get("/applications")[2])
 
         code, _, _ = self.run_cli("applied", "--job-id", "ashby:initech-cloud:x1")
         self.assertEqual(code, 0)
@@ -649,7 +783,7 @@ class SharedDatabaseTest(WebTestCase):
         self.assertIn("Added in the browser", out)
         self.post("/offers/apply", {"job_id": "lever:globex-labs:abc"})
         _, out, _ = self.run_cli("today")
-        self.assertNotIn("Globex Labs", out)
+        self.assertNotIn("lever:globex-labs:abc", out)  # no longer a new match
 
 
 class RequestChecksTest(WebTestCase):

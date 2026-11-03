@@ -17,20 +17,22 @@ class TodayTest(IsolatedTestCase):
     def test_empty_db_lists_matches(self) -> None:
         code, out, _ = self.run_cli("today")
         self.assertEqual(code, 0)
-        self.assertIn("Next actions due (0)", out)
+        self.assertIn("Tasks due today or overdue (0)", out)
+        self.assertNotIn("No response", out)
         self.assertIn("matches ≥7 not yet applied or skipped (3)", out)
         self.assertIn("Initech Cloud — DevOps Engineer", out)
         self.assertNotIn("Hooli Data", out)  # score 6
 
     def test_overdue_tasks_and_linked_matches(self) -> None:
         with closing(db.connect(self.prep_db)) as conn:
-            db.add_application(conn, "Acme Rockets", "Platform Engineer", getjo_job_id="greenhouse:acme-rockets:1001",
-                               status="applied", next_action="Chase recruiter", next_action_date=days(-1))
+            app_id = db.add_application(conn, "Acme Rockets", "Platform Engineer",
+                                        getjo_job_id="greenhouse:acme-rockets:1001", status="applied")
+            db.add_task(conn, "Chase recruiter", "admin", days(-1), app_id)
             db.add_task(conn, "Revise TCP", "prep", days(0))
             db.add_task(conn, "Future task", "prep", days(3))
         code, out, _ = self.run_cli("today", "--limit", "1")
         self.assertEqual(code, 0)
-        self.assertIn("Chase recruiter", out)
+        self.assertIn(f"Chase recruiter due {days(-1)} — Acme Rockets", out)
         self.assertIn("Revise TCP", out)
         self.assertNotIn("Future task", out)
         self.assertIn("(2)", out)
@@ -112,14 +114,16 @@ class AppliedTest(IsolatedTestCase):
         app = self.app()
         self.assertEqual(app["status"], "technical")
         self.assertEqual(app["date_applied"], "2026-01-02")
-        self.assertEqual(app["next_action"], "Thank-you note")
+        with closing(db.connect(self.prep_db)) as conn:
+            titles = [t["title"] for t in db.app_tasks(conn)[1]]
+        self.assertEqual(titles, ["Coding practice", "Review the role's tech stack", "Thank-you note"])
 
     def test_planned_application_has_no_date_applied(self) -> None:
         _, out, _ = self.run_cli("applied", "--job-id", "lever:globex-labs:abc", "--status", "to_apply")
         self.assertIsNone(self.app()["date_applied"])
         self.assertIn("[interested]", out)
         self.assertIn(f"[apply] Apply due {days(3)}", out)
-        self.assertIn("Research the company", out)
+        self.assertNotIn("Research the company", out)  # the agent's job (company research), not a to-do
         with closing(db.connect(self.prep_db)) as conn:
             row = conn.execute("SELECT decision FROM job_decisions").fetchone()
         self.assertEqual(row[0], "interested")
@@ -133,12 +137,79 @@ class AppliedTest(IsolatedTestCase):
         self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
         code, out, _ = self.run_cli("update", "1", "--status", "technical", "--next-action", "Prep", "--next-date", "tomorrow")
         self.assertEqual(code, 0)
-        self.assertIn("[technical] next: Prep", out)
+        self.assertIn(f"[coding interview] next: Prep ({days(1)})", out)
         _, out, _ = self.run_cli("apps", "--status", "technical")
         self.assertIn("Nowhere Ltd", out)
         code, _, err = self.run_cli("update", "99", "--status", "offer")
         self.assertEqual(code, 2)
         self.assertIn("no application", err)
+
+    def test_update_status_runs_stage_tasks(self) -> None:
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        code, out, _ = self.run_cli("update", "1", "--status", "system_design", "--interview-date", days(5),
+                                    "--comment", "Panel of three")
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"System design practice due {days(4)}", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            tasks = {t["title"]: t["status"] for t in db.list_tasks(conn, None)}
+            history = db.timeline(conn, 1)
+            interview = conn.execute("SELECT date, stage FROM interviews").fetchone()
+        self.assertEqual(tasks, {"Chase if no reply": "closed", "System design practice": "todo"})
+        self.assertEqual(history[-1], {"at": history[-1]["at"], "status": "system_design", "comment": "Panel of three"})
+        self.assertEqual(tuple(interview), (days(5), "system_design"))
+
+    def test_update_flag_checks(self) -> None:
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        for argv in (("--comment", "x"), ("--interview-date", "+2"), ("--next-date", "+2"), ()):
+            with self.subTest(argv=argv):
+                code, _, _ = self.run_cli("update", "1", *argv)
+                self.assertNotEqual(code, 0)
+        code, _, _ = self.run_cli("update", "1", "--clear-next")
+        self.assertNotEqual(code, 0)  # removed: the next action follows the tasks
+
+    def test_update_to_same_stage_says_so(self) -> None:
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        code, out, _ = self.run_cli("update", "1", "--status", "applied", "--interview-date", "+2")
+        self.assertEqual(code, 0)
+        self.assertIn("Already applied: nothing moved; --comment and --interview-date were not saved", out)
+
+    def test_comment(self) -> None:
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        code, out, _ = self.run_cli("comment", "1", "Second interview booked")
+        self.assertEqual(code, 0)
+        self.assertIn("Comment added", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.timeline(conn, 1)[-1]["comment"], "Second interview booked")
+        self.assertEqual(self.run_cli("comment", "99", "x")[0], 2)
+        self.assertEqual(self.run_cli("comment", "1", "  ")[0], 2)
+
+    def test_today_lists_auto_no_response(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            app_id, _ = db.record_application(conn, "Quiet Co", "SRE", date_applied=days(-20), today=days(-20))
+            conn.execute("UPDATE status_history SET changed_at = ? WHERE application_id = ?",
+                         (days(-20) + "T09:00:00Z", app_id))
+            conn.commit()
+        _, out, _ = self.run_cli("today")
+        self.assertIn("Moved to No response (no reply in 14 days), last 7 days (1):", out)
+        self.assertIn("Quiet Co — SRE", out)
+        self.assertEqual(self.app(app_id)["status"], "no_response")
+        _, out, _ = self.run_cli("today")  # already moved: still listed, not moved twice
+        self.assertIn("Quiet Co — SRE", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.status_history(conn, app_id), ["applied", "no_response"])
+
+    def test_no_response_days_setting(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            app_id, _ = db.record_application(conn, "Quiet Co", "SRE", date_applied=days(-5), today=days(-5))
+            conn.execute("UPDATE status_history SET changed_at = ? WHERE application_id = ?",
+                         (days(-5) + "T09:00:00Z", app_id))
+            conn.commit()
+        self.run_cli("today")
+        self.assertEqual(self.app(app_id)["status"], "applied")
+        with mock.patch.dict(os.environ, {"PREP_NO_RESPONSE_DAYS": "5"}):
+            _, out, _ = self.run_cli("today")
+        self.assertIn("no reply in 5 days", out)
+        self.assertEqual(self.app(app_id)["status"], "no_response")
 
 
 class TaskTest(IsolatedTestCase):

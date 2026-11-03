@@ -8,7 +8,8 @@ from prep import config
 from prep.config import REPO_ROOT, ConfigError, load_settings
 
 CLEAN_ENV = {"INTERPREP_SETTINGS": "", "PREP_DB": "", "PREP_GETJO_DB": "", "PREP_PRIVATE_DIR": "",
-             "PREP_DASHBOARD_PORT": "", "PREP_WEEKLY_TARGET": ""}
+             "PREP_DASHBOARD_PORT": "", "PREP_WEEKLY_TARGET": "",
+             "PREP_NO_RESPONSE_DAYS": ""}
 
 
 class LoadSettingsTest(unittest.TestCase):
@@ -32,6 +33,7 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(s.prep_db, REPO_ROOT / "data" / "prep.db")
         self.assertEqual(s.dashboard_port, 8765)
         self.assertEqual(s.weekly_target, 10)
+        self.assertEqual(s.no_response_days, 14)
 
     def test_dashboard_keys_from_file_and_env(self) -> None:
         path = self.write("dashboard_port = 9000\nweekly_target = 5\n")
@@ -40,8 +42,15 @@ class LoadSettingsTest(unittest.TestCase):
             s = load_settings(path)
         self.assertEqual((s.dashboard_port, s.weekly_target), (8766, 12))
 
+    def test_no_response_days_from_file_and_env(self) -> None:
+        path = self.write("no_response_days = 21\n")
+        self.assertEqual(load_settings(path).no_response_days, 21)
+        with mock.patch.dict(os.environ, {"PREP_NO_RESPONSE_DAYS": "10"}):
+            self.assertEqual(load_settings(path).no_response_days, 10)
+
     def test_bad_dashboard_keys_rejected(self) -> None:
-        for text in ('dashboard_port = "x"\n', "dashboard_port = 0\n", "weekly_target = true\n"):
+        for text in ('dashboard_port = "x"\n', "dashboard_port = 0\n", "weekly_target = true\n",
+                     "no_response_days = 0\n", "no_response_days = 400\n"):
             with self.subTest(text=text), self.assertRaises(ConfigError):
                 load_settings(self.write(text))
 

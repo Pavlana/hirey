@@ -105,10 +105,6 @@ class StatsTest(unittest.TestCase):
             self.add("applied", applied=day)
         weeks = stats.applications_per_week(self.conn, TODAY, weeks=3)
         self.assertEqual(weeks, [("2026-02-23", 0), ("2026-03-02", 1), ("2026-03-09", 2)])
-        task = db.add_task(self.conn, "Drill")
-        db.complete_task(self.conn, task)
-        self.conn.execute("UPDATE tasks SET done_at = '2026-03-10T21:00:00Z'")
-        self.assertEqual(stats.tasks_done_per_week(self.conn, TODAY, weeks=1), [("2026-03-09", 1)])
 
 
 if __name__ == "__main__":
