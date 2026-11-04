@@ -1,11 +1,13 @@
 """SQLite storage for applications, their status history and comments, interviews, tasks,
-gaps and job decisions (prep.db).
+gaps, job decisions, and the agent's research queue and results (prep.db).
 
 Allowed values for enum-like columns are checked in Python, not with CHECK
 constraints: later phases may add values, and SQLite cannot alter a CHECK in place.
 Dates are ISO strings: YYYY-MM-DD for days, YYYY-MM-DDTHH:MM:SSZ for timestamps.
 """
 
+import json
+import re
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +49,16 @@ STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
 # research, CV fit). Kept only so _backfill_task_stages marks old ones as auto tasks.
 RETIRED_STAGE_TASKS = {"to_apply": (("Research the company", "prep", 2), ("Check CV fit / tailor CV", "prep", 2))}
 AUTO_COMMENT = "auto: no reply in {days} days"
+# Agent work queued for an application (done by the /research skill, never by the dashboard).
+REQUEST_KINDS = ("research", "cv_fit")
+REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit"}
+# claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
+REQUEST_STATUSES = ("pending", "claimed", "done")
+CLAIM_HOURS = 6
+RECOGNITION = ("well_known", "niche", "little_known")
+RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
+SIZE_BANDS = ("1-50", "51-250", "251-1000", "1001-5000", "5000+")
+FIT_GAP_SESSION = "cv fit"
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -136,6 +148,50 @@ CREATE TABLE IF NOT EXISTS application_comments (
     created_at     TEXT NOT NULL
 );
 
+-- Research and CV fit requests. At most one open (pending or claimed) request per application and
+-- kind: the partial unique index makes a second one fail even when two requests race.
+CREATE TABLE IF NOT EXISTS agent_requests (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    kind           TEXT NOT NULL,       -- research / cv_fit
+    status         TEXT NOT NULL DEFAULT 'pending',
+    force          INTEGER NOT NULL DEFAULT 0,  -- 1: Redo, research again even if the profile is fresh
+    requested_at   TEXT NOT NULL,
+    claimed_at     TEXT,
+    done_at        TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_requests_open
+    ON agent_requests(application_id, kind) WHERE status IN ('pending', 'claimed');
+
+-- One profile per company, keyed by company_slug(); the full text is private_dir/companies/<slug>.md.
+CREATE TABLE IF NOT EXISTS company_profiles (
+    slug             TEXT PRIMARY KEY,
+    company          TEXT NOT NULL,
+    file_path        TEXT NOT NULL,
+    what_it_does     TEXT,
+    sector           TEXT,
+    employees        INTEGER,
+    employees_as_of  TEXT,
+    size_band        TEXT,
+    london_remote    TEXT,
+    recognition      TEXT,              -- RECOGNITION
+    recognition_note TEXT,
+    funding          TEXT,
+    sources          TEXT,              -- JSON list of URLs
+    suggested_tier   TEXT,              -- A / B / C, suggested by the agent; the user sets applications.tier
+    tier_reason      TEXT,
+    researched_at    TEXT NOT NULL
+);
+
+-- The latest CV fit check per application; the full text is private_dir/fit/<app-id>-<slug>.md.
+CREATE TABLE IF NOT EXISTS cv_fits (
+    application_id INTEGER PRIMARY KEY REFERENCES applications(id),
+    score          INTEGER NOT NULL,    -- 1-5
+    top_gaps       TEXT NOT NULL,       -- JSON list, at most 3
+    file_path      TEXT NOT NULL,
+    checked_at     TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
@@ -147,6 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_
 MIGRATIONS: dict[str, dict[str, str]] = {
     "status_history": {"comment": "TEXT"},  # the comment given with a stage change
     "tasks": {"stage": "TEXT"},             # the stage whose STAGE_TASKS created it; NULL if hand-made
+    "gaps": {"application_id": "INTEGER REFERENCES applications(id)"},  # e.g. a gap found by a CV fit
 }
 
 APPLICATION_FIELDS = (
@@ -401,7 +458,8 @@ def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | 
     Entering applied completes the open Apply task (applying is done). Open auto tasks from
     other stages are closed (status closed, not done). Then the stage's STAGE_TASKS are added,
     skipping a title the application already has open. For INTERVIEW_STAGES with an
-    interview date, they are due the day before it (today if that has passed).
+    interview date, they are due the day before it (today if that has passed). Entering to_apply
+    (Interested) also queues company research and a CV fit for the agent (queue_request).
     """
     today = today or today_iso()
     if stage == "applied":
@@ -425,6 +483,10 @@ def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | 
         ids.append(add_task(conn, title, kind, _stage_due(today, days, stage, interview_date), app_id,
                             stage=stage))
     sync_next_action(conn, app_id)
+    if stage == "to_apply":  # the agent researches the company and checks the CV fit (/research)
+        queue_request(conn, app_id, "research")  # cheap when the profile is fresh: it is reused
+        if cv_fit(conn, app_id) is None:
+            queue_request(conn, app_id, "cv_fit")
     return ids
 
 
@@ -776,17 +838,240 @@ def add_interview(conn: sqlite3.Connection, application_id: int, day: str, stage
     return cursor.lastrowid
 
 
-def add_gap(conn: sqlite3.Connection, gap: str, day: str | None = None, session: str | None = None) -> int:
+def add_gap(conn: sqlite3.Connection, gap: str, day: str | None = None, session: str | None = None,
+            application_id: int | None = None) -> int:
     day = day or today_iso()
     _check_date("date", day)
-    cursor = conn.execute("INSERT INTO gaps (date, session, gap) VALUES (?, ?, ?)", (day, session, gap))
+    cursor = conn.execute("INSERT INTO gaps (date, session, gap, application_id) VALUES (?, ?, ?, ?)",
+                          (day, session, gap, application_id))
     conn.commit()
     return cursor.lastrowid
+
+
+def _gap_key(text: str) -> str:
+    return " ".join(text.split()).casefold()
+
+
+def add_open_gaps(conn: sqlite3.Connection, gaps: list[str], session: str, application_id: int | None = None,
+                  day: str | None = None) -> list[int]:
+    """Add each gap unless an open gap with the same text (ignoring case and spacing) exists.
+    Returns the new gap ids."""
+    have = {_gap_key(r[0]) for r in conn.execute("SELECT gap FROM gaps WHERE status = 'open'")}
+    ids = []
+    for gap in gaps:
+        key = _gap_key(gap)
+        if key and key not in have:
+            have.add(key)
+            ids.append(add_gap(conn, " ".join(gap.split()), day, session, application_id))
+    return ids
 
 
 def close_gap(conn: sqlite3.Connection, gap_id: int) -> None:
     conn.execute("UPDATE gaps SET status = 'closed' WHERE id = ?", (gap_id,))
     conn.commit()
+
+
+# --- agent research queue and results ---------------------------------------------
+
+_COMPANY_SUFFIXES = {"ltd", "limited", "inc", "plc", "llc", "gmbh", "llp", "corp", "co"}
+
+
+def company_slug(company: str) -> str:
+    """A stable key for a company: lowercase words joined by "-", legal suffixes dropped
+    ("Acme Rockets Ltd." -> "acme-rockets"). Profile files and company notes use it."""
+    words = re.findall(r"[a-z0-9]+", company.lower())
+    while len(words) > 1 and words[-1] in _COMPANY_SUFFIXES:
+        words.pop()
+    return "-".join(words) or "company"
+
+
+def _claim_cutoff() -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=CLAIM_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def queue_request(conn: sqlite3.Connection, app_id: int, kind: str, force: bool = False) -> tuple[int, bool]:
+    """Queue research or a CV fit for an application; returns (request id, newly queued).
+
+    An open (pending or claimed) request of the same kind is reused, so a second click changes
+    nothing; `force` (Redo) is then added to it. The unique index settles two racing inserts."""
+    _check("kind", kind, REQUEST_KINDS)
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    try:
+        cursor = conn.execute(
+            "INSERT INTO agent_requests (application_id, kind, force, requested_at) VALUES (?, ?, ?, ?)",
+            (app_id, kind, int(force), now_iso()),
+        )
+        conn.commit()
+        return cursor.lastrowid, True
+    except sqlite3.IntegrityError:
+        conn.rollback()
+    row = conn.execute(
+        "SELECT id FROM agent_requests WHERE application_id = ? AND kind = ? AND status IN ('pending', 'claimed')",
+        (app_id, kind),
+    ).fetchone()
+    if force:
+        conn.execute("UPDATE agent_requests SET force = 1 WHERE id = ?", (row["id"],))
+        conn.commit()
+    return row["id"], False
+
+
+def last_request_id(conn: sqlite3.Connection) -> int:
+    """The highest agent_requests id (0 if none): callers compare it before and after an action."""
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM agent_requests").fetchone()[0]
+
+
+def requests_since(conn: sqlite3.Connection, after_id: int) -> list[dict]:
+    """Requests queued after `after_id` that are still open, oldest first: id, application_id, kind."""
+    rows = conn.execute(
+        "SELECT id, application_id, kind FROM agent_requests WHERE id > ? AND status != 'done' ORDER BY id",
+        (after_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+def open_requests(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
+    """Requests waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago), oldest
+    first, with the application's company and role. `claimed` is True for a live claim."""
+    where = "WHERE r.status IN ('pending', 'claimed')" + (" AND r.application_id = ?" if app_id is not None else "")
+    rows = conn.execute(
+        f"""
+        SELECT r.id, r.application_id, r.kind, r.status, r.force, r.requested_at, r.claimed_at,
+               a.company, a.role
+        FROM agent_requests r JOIN applications a ON a.id = r.application_id
+        {where} ORDER BY r.id
+        """,
+        (app_id,) if app_id is not None else (),
+    )
+    cutoff = _claim_cutoff()
+    found = []
+    for r in rows:
+        d = dict(r)
+        d["claimed"] = d["status"] == "claimed" and (d["claimed_at"] or "") >= cutoff
+        found.append(d)
+    return found
+
+
+def claim_request(conn: sqlite3.Connection, request_id: int) -> bool:
+    """Take a request for this session. Only one caller wins: the update applies while the
+    request is still pending (or its claim has gone stale)."""
+    cursor = conn.execute(
+        "UPDATE agent_requests SET status = 'claimed', claimed_at = ? "
+        "WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
+        (now_iso(), request_id, _claim_cutoff()),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def finish_requests(conn: sqlite3.Connection, app_ids: list[int], kind: str) -> int:
+    """Mark the open requests of `kind` for these applications done; returns how many."""
+    _check("kind", kind, REQUEST_KINDS)
+    done = 0
+    for app_id in app_ids:
+        done += conn.execute(
+            "UPDATE agent_requests SET status = 'done', done_at = ? WHERE application_id = ? AND kind = ? "
+            "AND status IN ('pending', 'claimed')",
+            (now_iso(), app_id, kind),
+        ).rowcount
+    conn.commit()
+    return done
+
+
+def applications_at(conn: sqlite3.Connection, slug: str) -> list[int]:
+    """Ids of the applications whose company has this slug."""
+    rows = conn.execute("SELECT id, company FROM applications ORDER BY id")
+    return [r["id"] for r in rows if company_slug(r["company"]) == slug]
+
+
+PROFILE_FIELDS = (
+    "company", "file_path", "what_it_does", "sector", "employees", "employees_as_of", "size_band",
+    "london_remote", "recognition", "recognition_note", "funding", "sources", "suggested_tier",
+    "tier_reason", "researched_at",
+)
+
+
+def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict) -> list[int]:
+    """Store (or replace) a company's research summary and finish the open research requests of
+    every application at that company. Returns those application ids."""
+    unknown = set(profile) - set(PROFILE_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown profile fields: {', '.join(sorted(unknown))}")
+    for name in ("company", "file_path", "researched_at"):
+        if not profile.get(name):
+            raise ValueError(f"a company profile needs {name}")
+    _check("recognition", profile.get("recognition"), RECOGNITION)
+    _check("size_band", profile.get("size_band"), SIZE_BANDS)
+    _check("suggested_tier", profile.get("suggested_tier"), TIERS)
+    _check_date("researched_at", profile["researched_at"])
+    _check_date("employees_as_of", profile.get("employees_as_of"))
+    row = {name: profile.get(name) for name in PROFILE_FIELDS}
+    row["sources"] = json.dumps(list(profile.get("sources") or []))
+    row["slug"] = slug
+    names = ", ".join(row)
+    conn.execute(f"INSERT OR REPLACE INTO company_profiles ({names}) VALUES ({', '.join(':' + k for k in row)})", row)
+    conn.commit()
+    app_ids = applications_at(conn, slug)
+    finish_requests(conn, app_ids, "research")
+    return app_ids
+
+
+def company_profile(conn: sqlite3.Connection, slug: str) -> dict | None:
+    row = conn.execute("SELECT * FROM company_profiles WHERE slug = ?", (slug,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["sources"] = json.loads(d["sources"] or "[]")
+    return d
+
+
+def save_cv_fit(conn: sqlite3.Connection, app_id: int, score: int, gaps: list[str], file_path: str,
+                day: str | None = None) -> list[int]:
+    """Store (or replace) an application's CV fit summary (score 1-5, its first 3 gaps), add its
+    gaps to the gaps table (session "cv fit", skipping ones already open) and finish its open
+    cv_fit request. Returns the new gap ids."""
+    day = day or today_iso()
+    _check_date("checked_at", day)
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
+        raise ValueError(f"the fit score must be a whole number from 1 to 5; got {score!r}")
+    gaps = [g.strip() for g in gaps if isinstance(g, str) and g.strip()]
+    conn.execute(
+        "INSERT OR REPLACE INTO cv_fits (application_id, score, top_gaps, file_path, checked_at) VALUES (?, ?, ?, ?, ?)",
+        (app_id, score, json.dumps(gaps[:3]), file_path, day),
+    )
+    conn.commit()
+    new = add_open_gaps(conn, gaps, FIT_GAP_SESSION, app_id, day)
+    finish_requests(conn, [app_id], "cv_fit")
+    return new
+
+
+def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM cv_fits WHERE application_id = ?", (app_id,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["top_gaps"] = json.loads(d["top_gaps"] or "[]")
+    return d
+
+
+def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
+    """For the board, by application id: {"profile": dict | None, "fit": dict | None,
+    "open": set of kinds with an open request}."""
+    profiles = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM company_profiles")}
+    fits = {r["application_id"]: dict(r) for r in conn.execute("SELECT * FROM cv_fits")}
+    open_kinds: dict[int, set[str]] = {}
+    for r in conn.execute("SELECT application_id, kind FROM agent_requests WHERE status IN ('pending', 'claimed')"):
+        open_kinds.setdefault(r[0], set()).add(r[1])
+    view = {}
+    for a in conn.execute("SELECT id, company FROM applications"):
+        fit = fits.get(a["id"])
+        if fit:
+            fit["top_gaps"] = json.loads(fit["top_gaps"] or "[]")
+        view[a["id"]] = {"profile": profiles.get(company_slug(a["company"])), "fit": fit,
+                         "open": open_kinds.get(a["id"], set())}
+    return view
 
 
 def board_applications(conn: sqlite3.Connection) -> list[dict]:

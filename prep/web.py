@@ -1,4 +1,5 @@
-"""Local dashboard over prep.db: Dashboard, Job Offers and Applications pages.
+"""Local dashboard over prep.db: Dashboard, Job Offers and Applications pages, plus a read-only
+view of the agent's research and CV fit files.
 
     python -m prep.web [--port 8765]
 
@@ -14,6 +15,10 @@ here are seen by the skills at once.
 `handle()` does routing and rendering without sockets and returns (status, headers, body),
 so tests call it directly. Every value from a database is HTML-escaped. The pay column is
 never read for display.
+
+The dashboard never runs the agent: Research / CV fit buttons and Interested only queue
+requests (db.agent_requests) for the /research skill. When assistant_task is set, newly queued
+requests are also sent to that dev3 agent (prep.assistant), in the background.
 """
 
 import argparse
@@ -30,7 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import charts, db, getjo, stats
+from prep import assistant, charts, db, getjo, research, stats
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep.web")
@@ -72,6 +77,8 @@ MESSAGES = {
     "task_added": "Task added.",
     "task_done": "Task marked done.",
     "task_reopened": "Task reopened.",
+    "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
+    "tier_set": "Tier saved.",
 }
 
 SECURITY_HEADERS = [
@@ -105,6 +112,10 @@ KIND_SHADES = {"apply": "s9", "prep": "s7", "drill": "s5", "admin": "s3"}
 
 class BadRequest(Exception):
     """A form value is missing or invalid; the message is shown on a 400 page."""
+
+
+class NotFound(Exception):
+    """A page asked for something that is not there (or must not be served): plain 404."""
 
 
 def h(value: object) -> str:
@@ -177,14 +188,19 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         "/offers": lambda s, c, t: offers_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications": lambda s, c, t: applications_page(s, c, t, query),
+        "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
     message = MESSAGES.get((query.get("msg") or [""])[0])
     with closing(_connect(settings, today)) as conn:
-        title, subtitle, content = pages[path](settings, conn, today)
+        try:
+            title, subtitle, content = pages[path](settings, conn, today)
+        except NotFound:
+            return _text(404, "Not found.")
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, "/offers" if path == "/offers/skip" else path)
+    active = {"/offers/skip": "/offers", "/research/file": "/applications"}.get(path, path)
+    return _page(200, title, subtitle, notice + content, active)
 
 
 def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_json: bool) -> Response:
@@ -192,10 +208,13 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
         return _text(404, "Not found.")
     action, page, msg = ACTIONS[path]
     with closing(_connect(settings, today)) as conn:
+        mark = db.last_request_id(conn)
         try:
             extra = action(settings, conn, form, today) or {}
         except (ValueError, LookupError) as e:
             raise BadRequest(str(e)) from e
+        # Interested, Move to Interested or a Research / CV fit click may have queued agent work.
+        assistant.notify_in_background(settings, db.requests_since(conn, mark))
     if as_json:
         return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
     if "redirect" in extra:  # built by the action from database ids, never from the form
@@ -370,6 +389,30 @@ def comment_application(settings: Settings, conn: sqlite3.Connection, form: dict
     return {"redirect": _here(app_id)}
 
 
+def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Research / CV fit button: queue the request (Redo when a result exists). A second click
+    while it is pending changes nothing. The agent does the work, never the dashboard."""
+    app_id = _app_id(conn, form)
+    kind = form.get("kind") or ""
+    if kind not in db.REQUEST_KINDS:
+        raise BadRequest("Pick research or cv_fit.")
+    has_result, _ = research.result_path(conn, settings.private_dir, app_id, kind)
+    _, created = db.queue_request(conn, app_id, kind, force=has_result)
+    log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
+    return {"redirect": _here(app_id)}
+
+
+def set_tier(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Confirm or change the application's tier (the agent only suggests one)."""
+    app_id = _app_id(conn, form)
+    tier = form.get("tier") or ""
+    if tier not in db.TIERS:
+        raise BadRequest("Pick tier A, B or C.")
+    db.update_application(conn, app_id, tier=tier)
+    log.info("tier set on application %s from the dashboard", app_id)
+    return {"redirect": _here(app_id)}
+
+
 def _here(app_id: int | None) -> str:
     """The Applications page with a card open (redirect target built from a database id)."""
     return f"/applications?app={app_id}" if app_id is not None else "/applications"
@@ -400,6 +443,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
     "/applications/move": (move_application, "/applications", "moved"),
     "/applications/comment": (comment_application, "/applications", "commented"),
+    "/applications/research": (queue_research, "/applications", "research_queued"),
+    "/applications/tier": (set_tier, "/applications", "tier_set"),
     "/tasks/add": (add_task, "/applications", "task_added"),
     "/tasks/done": (complete_task, "/applications", "task_done"),
     "/tasks/reopen": (reopen_task, "/applications", "task_reopened"),
@@ -671,9 +716,11 @@ def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
     focus = int(app_param) if app_param.isdigit() else None
     tasks = db.app_tasks(conn)
     counts = db.comment_counts(conn)
+    found = db.research_view(conn)
 
     def lane(stage: str) -> str:
-        cards = [_app_card(conn, a, tasks.get(a["id"], []), counts.get(a["id"], 0), today, a["id"] == focus)
+        cards = [_app_card(conn, a, tasks.get(a["id"], []), counts.get(a["id"], 0), today, a["id"] == focus,
+                           found.get(a["id"]))
                  for a in apps if a["status"] == stage]
         body = "".join(cards) or '<p class="lane-empty">–</p>'
         return (f'<section class="lane" aria-label="{h(_status_label(stage))}"><h2>{h(_status_label(stage))}'
@@ -697,9 +744,11 @@ def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
 
 
 def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: int, today: str,
-              focus: bool) -> str:
-    """One application: a <details> whose summary shows company, role, days in stage, next task
-    and comment count; opened, it holds the tasks, Move to…, a comment box and the history."""
+              focus: bool, found: dict | None = None) -> str:
+    """One application: a <details> whose summary shows company, role, days in stage, next task,
+    comment count and research state; opened, it holds the tasks, research and CV fit, Move to…,
+    a comment box and the history."""
+    found = found or {"profile": None, "fit": None, "open": set()}
     days = (date.fromisoformat(today) - date.fromisoformat(app["since"])).days
     age = "new today" if days <= 0 else f"{days} day{'s' if days != 1 else ''} in stage"
     nxt = tasks[0] if tasks else None
@@ -712,7 +761,8 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
     summary = (
         f'<summary><strong class="app-head" title="{h(app["company"])}">{h(app["company"])}</strong>'
         f'<span class="app-role" title="{h(app["role"])}">{h(app["role"])}</span>'
-        f'<span class="app-meta"><span>{tier}{h(age)}</span>{chip}</span>{next_line}</summary>'
+        f'<span class="app-meta"><span>{tier}{h(age)}</span>{chip}</span>{next_line}'
+        f'{_research_chips(found)}</summary>'
     )
     here = _here(app["id"])
     keep = f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
@@ -753,7 +803,8 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
     link = (f'<p class="app-link">{_link(app["link"], "Job posting ↗")}</p>'
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
     body = (
-        f'<div class="app-body">{link}<h3>Tasks</h3>{task_list}{add}<h3>Move</h3>{move}'
+        f'<div class="app-body">{link}<h3>Tasks</h3>{task_list}{add}'
+        f'<h3>Research and CV fit</h3>{_research_section(app, found)}<h3>Move</h3>{move}'
         f'<h3>Comments and history</h3>{comment}'
         + (f'<ul class="timeline">{history}</ul>' if history else "")
         + "</div>"
@@ -761,6 +812,151 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
     css = "app-card is-focus" if focus else "app-card"
     return (f'<article class="{css}" id="app-{h(app["id"])}"><details{" open" if focus else ""}>'
             f"{summary}{body}</details></article>")
+
+
+def _research_chips(found: dict) -> str:
+    """Small state chips for the collapsed card: pending requests and the fit score."""
+    chips = [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
+             for k in db.REQUEST_KINDS if k in found["open"]]
+    if found["fit"] and "cv_fit" not in found["open"]:
+        chips.append(f'<span class="chip">CV fit {h(found["fit"]["score"])}/5</span>')
+    return f'<span class="app-chips">{"".join(chips)}</span>' if chips else ""
+
+
+def _research_button(app_id: int, kind: str, has_result: bool, pending: bool) -> str:
+    """Research / CV fit: queues the request; "… pending" (disabled) while queued; Redo once done."""
+    if pending:
+        return f'<button class="btn btn-ghost btn-sm" disabled>{h(db.REQUEST_LABELS[kind])} pending</button>'
+    label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit"}[kind]
+    return ('<form method="post" action="/applications/research" class="inline">'
+            f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="kind" value="{h(kind)}">'
+            + _button(label, "secondary", "sm") + "</form>")
+
+
+def _open_link(app_id: int, kind: str) -> str:
+    href = "/research/file?" + urlencode([("app", app_id), ("kind", kind)])
+    return f'<a class="btn btn-ghost btn-sm" href="{h(href)}">Open</a>'
+
+
+def _research_section(app: dict, found: dict) -> str:
+    """Company research and CV fit summaries with their buttons, and the tier form."""
+    profile, fit = found["profile"], found["fit"]
+    head = '<div class="research-head"><strong>Company</strong>'
+    if profile:
+        head += f' <span class="mono muted">{h(profile["researched_at"])}</span>'
+    head += ('<span class="research-actions">' + (_open_link(app["id"], "research") if profile else "")
+             + _research_button(app["id"], "research", bool(profile), "research" in found["open"]) + "</span></div>")
+    company = head
+    if profile:
+        size = " · ".join(x for x in (
+            profile["size_band"] and f'{profile["size_band"]} people',
+            profile["employees"] and f'~{profile["employees"]}'
+            + (f' (as of {profile["employees_as_of"]})' if profile["employees_as_of"] else ""),
+            profile["sector"],
+            profile["recognition"] and db.RECOGNITION_LABELS.get(profile["recognition"], profile["recognition"]),
+            profile["london_remote"],
+        ) if x)
+        company += (f'<p>{h(profile["what_it_does"])}</p>' if profile["what_it_does"] else "")
+        company += f'<p class="muted">{h(size)}</p>' if size else ""
+        if profile["suggested_tier"]:
+            company += (f'<p>Suggested tier <strong>{h(profile["suggested_tier"])}</strong>'
+                        + (f' — {h(profile["tier_reason"])}' if profile["tier_reason"] else "") + "</p>")
+    elif "research" not in found["open"]:
+        company += '<p class="muted">Not researched yet.</p>'
+
+    fit_head = '<div class="research-head"><strong>CV fit</strong>'
+    if fit:
+        tone = "s9" if fit["score"] >= 4 else ("s6" if fit["score"] == 3 else "s3")
+        fit_head += " " + _badge(f'{fit["score"]}/5', tone)
+        fit_head += f' <span class="mono muted">{h(fit["checked_at"])}</span>'
+    fit_head += ('<span class="research-actions">' + (_open_link(app["id"], "cv_fit") if fit else "")
+                 + _research_button(app["id"], "cv_fit", bool(fit), "cv_fit" in found["open"]) + "</span></div>")
+    fit_html = fit_head
+    if fit and fit["top_gaps"]:
+        fit_html += '<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>"
+    elif not fit and "cv_fit" not in found["open"]:
+        fit_html += '<p class="muted">Not checked yet.</p>'
+
+    suggested = profile["suggested_tier"] if profile else None
+    current = app["tier"] or suggested
+    options = "".join(f'<option value="{t}"{" selected" if t == current else ""}>Tier {t}</option>' for t in db.TIERS)
+    label = "Confirm" if not app["tier"] and suggested else "Set tier"
+    placeholder = "" if current else '<option value="">Tier…</option>'
+    tier_form = (
+        '<form method="post" action="/applications/tier" class="add add-sm">'
+        f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
+        f'<select name="tier" required aria-label="Tier">{placeholder}{options}</select>'
+        + _button(label, "secondary", "sm") + "</form>"
+    )
+    return f'<div class="research">{company}</div><div class="research">{fit_html}</div>{tier_form}'
+
+
+def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                       query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """A research or CV fit file, read-only. Only a path recorded in prep.db that resolves inside
+    private_dir is read (anything else is a 404); a missing file says so instead of failing."""
+    app_param = (query.get("app") or [""])[0]
+    kind = (query.get("kind") or [""])[0]
+    if not app_param.isdigit() or kind not in db.REQUEST_KINDS:
+        raise NotFound()
+    app = db.get_application(conn, int(app_param))
+    recorded, path = research.result_path(conn, settings.private_dir, int(app_param), kind)
+    if app is None or not recorded or path is None:
+        raise NotFound()
+    title = f'{db.REQUEST_LABELS[kind]} · {app["company"]}'
+    back = f'<p><a class="btn btn-ghost btn-sm" href="{h(_here(app["id"]))}">Back to the card</a></p>'
+    if not path.is_file():
+        return title, app["role"], back + _banner("File missing: it was moved or deleted. Redo it from the card.", "warning")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return title, app["role"], back + _banner("The file could not be read.", "warning")
+    try:
+        meta, body = research.split_front_matter(text)
+    except ValueError:
+        meta, body = {}, text
+    rows = [(h(k.replace("_", " ")), h(", ".join(map(str, v)) if isinstance(v, list) else v))
+            for k, v in meta.items() if k.lower() not in ("pay", "salary")]
+    content = back
+    if rows:
+        content += _card("Summary", _table(("Field", "Value"), rows, ""))
+    content += _card("Notes", f'<div class="doc">{render_markdown(body)}</div>')
+    return title, f'{app["role"]} · {path.name}', content
+
+
+def render_markdown(text: str) -> str:
+    """A small, safe subset of Markdown: headings, bullet lists and paragraphs. Every piece of
+    text is escaped; no links, images or raw HTML are produced."""
+    out: list[str] = []
+    para: list[str] = []
+    items: list[str] = []
+
+    def flush() -> None:
+        if para:
+            out.append(f"<p>{h(' '.join(para))}</p>")
+            para.clear()
+        if items:
+            out.append("<ul>" + "".join(f"<li>{h(i)}</li>" for i in items) + "</ul>")
+            items.clear()
+
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            flush()
+        elif stripped.startswith("#"):
+            flush()
+            level = min(len(stripped) - len(stripped.lstrip("#")) + 1, 4)
+            out.append(f"<h{level}>{h(stripped.lstrip('#').strip())}</h{level}>")
+        elif stripped[:2] in ("- ", "* "):
+            if para:
+                flush()
+            items.append(stripped[2:].strip())
+        else:
+            if items:
+                flush()
+            para.append(stripped)
+    flush()
+    return "".join(out) or '<p class="muted">No notes.</p>'
 
 
 def _task_row(task: dict, today: str, here: str, kind: bool = True) -> str:

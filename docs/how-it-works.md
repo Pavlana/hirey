@@ -13,18 +13,23 @@
                    ▼
 ┌─────────────────────────────────────┐        ┌───────────────────────────┐
 │ inter_prep                          │        │ private_dir (gitignored)  │
-│ prep/getjo.py   matches, locations  │        │ cv.md, notes/, sessions/  │
-│ prep/db.py      prep.db             │        │ read only by skills that  │
-│   applications, status_history,     │        │ need it (phase 3+)        │
-│   application_comments, interviews, │        └───────────────────────────┘
-│   tasks, gaps, job_decisions        │
+│ prep/getjo.py   matches, locations  │        │ cv.md, notes/, sessions/, │
+│ prep/db.py      prep.db             │        │ companies/, fit/ (written │
+│   applications, status_history,     │        │ by /research); read only  │
+│   application_comments, interviews, │        │ by skills that need them  │
+│   tasks, gaps, job_decisions,       │        └───────────────────────────┘
+│   agent_requests, company_profiles, │
+│   cv_fits                           │
 │ prep/stats.py   dashboard numbers   │
 │ prep/cli.py     commands            │
 │ prep/web.py     dashboard server    │
+│ prep/research.py results files      │
+│ prep/assistant.py  dev3 message     │
 └───────▲──────────────────▲──────────┘
         │                  │
  Claude Code skills    browser → http://localhost:8765
  /today /applied /task (127.0.0.1 only; kept running by launchd)
+ /research
 ```
 
 ## Data flow
@@ -69,7 +74,8 @@
    Review the offer (+2). Rejected and No response: Debrief — what to improve (+3).
    Withdrawn adds none. Auto tasks carry their stage in `tasks.stage`; tasks made before that
    column existed got it from their title when the column was added. Hand-made tasks have
-   none and are never closed automatically.
+   none and are never closed automatically. Entering Interested also queues company research
+   and a CV fit for the agent (step 13; the CV fit only when the application has none).
 7. No response: an application still in Applied whose last stage change (latest
    `status_history` row, else `date_applied`, else `created_at`) is `no_response_days` (14)
    or more days old moves to `no_response` with the comment "auto: no reply in 14 days"
@@ -112,6 +118,42 @@
    its scoring prompt); inter_prep never calls getjo. Comments are included, so they reach
    whatever prompt getjo builds from the file.
 
+13. Agent research and CV fit. The agent, not the dashboard, researches the company and
+   checks the CV against the job. The dashboard and the CLI only queue requests in
+   `agent_requests` (kind `research` or `cv_fit`, status `pending` → `claimed` → `done`,
+   `force` for Redo). A partial unique index allows one open request per application and kind,
+   so a double click never queues twice. Requests come from entering Interested
+   (`db.stage_tasks`, so the Job Offers button, `/applied --status to_apply` and Move to
+   Interested all queue them), from the card's Research / CV fit buttons, and from
+   `prep.cli research queue`. The `/research` skill loops on `prep.cli research next`, which
+   claims one application's requests atomically (a claim older than 6 hours counts as pending
+   again) and prints a work packet. For research it gives a verdict: reuse a profile younger than
+   `research_max_age_days` (90), or research again when it is stale, missing or forced. For the
+   CV fit it gives the cv.md path and the job description, read from getjo with
+   `getjo.job_description`. The agent writes Markdown files in `private_dir`:
+   `companies/<slug>.md`, one per company (`db.company_slug`: lowercase words, legal suffixes
+   dropped; a stable key for later company notes), and `fit/<app-id>-<slug>.md`, one per
+   application. Each starts with TOML front matter between `+++` lines (`prep/research.py`).
+   `prep.cli research save` and `fit save` read it into `company_profiles` and `cv_fits`, so a
+   hand edit followed by a save updates the summary. A company save closes the research
+   requests of every application at that company. A fit save adds its gaps to `gaps` (session
+   "cv fit", `gaps.application_id`), skipping any gap already open with the same text (ignoring
+   case and spacing). The profile suggests a tier from the rubric in the skill (A: strong fit at
+   a recognised or good employer; B: decent fit or less known; C: weak fit or risky); the user
+   confirms it on the card, which stores `applications.tier`.
+14. Picking up queued work without typing. A committed SessionStart hook
+   (`.claude/settings.json`) runs `python3 -m prep.cli queue`. That command opens prep.db with
+   `mode=ro`, creates nothing, and prints one line with counts and application ids only. A
+   missing database prints nothing. The line offers /research; it is not an order, because the
+   hook also runs in coding sessions. `/today` runs /research when work is pending. Optionally,
+   `assistant_task` names a long-running dev3 task. When a dashboard request or a CLI
+   `applied` / `update` queues new requests, each affected application is sent
+   `/research <id>` with `dev3 message --task seq:<N> [--project <assistant_project>]`
+   (`prep/assistant.py`). The command is a fixed argument list built from ids, with no shell
+   and a 15-second timeout. The dashboard runs it in a background thread. dev3 is found through
+   `dev3_bin`, then PATH, then `~/.dev3.0/bin/dev3`. A failure is logged and the requests stay
+   queued for the hook or /today.
+
 ## Dashboard
 
 `prep/web.py` uses the standard library's `ThreadingHTTPServer`. `handle()` routes a request
@@ -150,7 +192,13 @@ normally and redirects.
 |------|-------|--------|
 | Dashboard `/` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks. It counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here | — |
 | Job Offers `/offers` | getjo jobs filtered by query string: `score` (minimum, 1–10, default 7; applies to new jobs only, and unscored new jobs never pass; decided jobs show at any score), `company` and `role` (case-insensitive substring), `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both), `show` (new default, interested, applied, skipped, all). New rows have exactly three actions: Applied, Interested, Skipped; interested rows offer Applied only (skipping a tracked job would mean withdrawing it); skipped rows offer Undo skip. Bad values fall back to defaults. Decided jobs that getjo has dropped show from their snapshot. `/matches` redirects here with its query; a message instead if getjo's database is missing or unreadable. `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/apply` (also the old `/matches/apply`), `/offers/interested`, `/offers/skip`, `/offers/unskip`. Applied and Interested redirect to `/applications?app=ID` (JSON: `redirect`), built from the application id only |
-| Applications `/applications` | a board: one lane per open stage (Interested … Offer) and a collapsed Closed lane (Rejected, No response, Withdrawn). A card (`<details>`, so it opens without the script) shows company, tier, role, days in stage, the next open task with its due date (overdue in red, today in amber) and a comment count; opened, it holds the open tasks (Done, Add), the job link, Move to… (any stage, interview date, comment), a comment box and the history, newest first. `?app=ID` renders that card open and highlighted (and opens the Closed lane if it is there); an unknown id is ignored. Below: General tasks (no application; add, done, sortable) and the 10 most recently done tasks with Reopen. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/comment` (both redirect to `/applications?app=ID`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (forms on a card carry `return=/applications?app=ID`, so the card stays open) |
+| Research file `/research/file?app=ID&kind=research\|cv_fit` | the application's company profile or CV fit file, read-only: front matter as a table (any pay/salary key left out) and the body as minimal Markdown (headings, lists, paragraphs, all escaped). Only a path recorded in prep.db that resolves inside `private_dir` is read; anything else (no record, no `private_dir`, a path outside it) is a 404. A missing file shows "File missing" | — |
+| Applications `/applications` | a board: one lane per open stage (Interested … Offer) and a collapsed Closed lane (Rejected, No response, Withdrawn). A card (`<details>`, so it opens without the script) shows company, tier, role, days in stage, the next open task with its due date (overdue in red, today in amber) and a comment count; opened, it holds the open tasks (Done, Add), the job link, Move to… (any stage, interview date, comment), a comment box and the history, newest first. Its Research and CV fit section shows the company summary
+(what it does, size, sector, how well known, London/remote, suggested tier and reason, date)
+and the CV fit (score n/5, top 3 gaps, date), each with Open and a button: Research / CV fit
+queues the request, "… pending" (disabled) while queued, Redo once a result exists. A tier
+select confirms or changes the tier. The collapsed card shows "… pending" chips and the fit
+score. `?app=ID` renders that card open and highlighted (and opens the Closed lane if it is there); an unknown id is ignored. Below: General tasks (no application; add, done, sortable) and the 10 most recently done tasks with Reopen. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/comment`, `/applications/research`, `/applications/tier` (all redirect to `/applications?app=ID`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (forms on a card carry `return=/applications?app=ID`, so the card stays open) |
 
 Without JavaScript, forms post and then redirect (303) back to the page (Job Offers forms carry
 a `return` field so the redirect keeps the filters; it is accepted only for the same path and
@@ -193,12 +241,15 @@ processes without a shell profile, so the server finds `prep_db` and `getjo_db` 
 
 One TOML file holds absolute paths: `getjo_db`, `prep_db`, `private_dir`, plus the optional
 keys `dashboard_port` (default 8765), `weekly_target` (applications per week, default 10)
-and `no_response_days` (default 14, from 1 to 365). It is looked up as
+`no_response_days` (default 14, from 1 to 365), `research_max_age_days` (default 90), and
+the standing-assistant keys `assistant_task` (a dev3 task seq), `assistant_project` (a dev3
+project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI). It is looked up as
 `$INTERPREP_SETTINGS`, then `config/settings.toml` in the checkout, then
 `~/.config/inter_prep/settings.toml`. The per-user file is the normal place, because dev3
 worktrees, launchd and the Claude app all find it without a shell environment.
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
-`PREP_WEEKLY_TARGET` and `PREP_NO_RESPONSE_DAYS` override single keys. A relative `prep_db`
+`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
+`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN` override single keys. A relative `prep_db`
 is resolved against the repo root of the running checkout, so `prep_db` should be an absolute
 path outside any worktree.
 
@@ -207,6 +258,10 @@ path outside any worktree.
 - getjo is never written to and its code is never imported; the `jobs` table shape is the
   only contract.
 - Nothing applies to jobs or contacts anyone. The dashboard listens on loopback only and
-  makes no outgoing requests; job links open only when clicked.
+  makes no outgoing requests; job links open only when clicked. The dashboard never runs the
+  agent. Its only outgoing action is the optional local `dev3 message` to the standing
+  assistant.
+- Research and CV fit results stay in `private_dir` and prep.db. Logs hold ids and kinds,
+  never CV text, gaps or research.
 - Personal files stay in `private_dir` and gitignored paths; `prep/privacy.py` checks that
   none of them is tracked.

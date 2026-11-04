@@ -30,6 +30,10 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_DASHBOARD_PORT": "",
             "PREP_WEEKLY_TARGET": "",
             "PREP_NO_RESPONSE_DAYS": "",
+            "PREP_RESEARCH_MAX_AGE_DAYS": "",
+            "PREP_ASSISTANT_TASK": "",
+            "PREP_ASSISTANT_PROJECT": "",
+            "PREP_DEV3_BIN": "",
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()

@@ -49,7 +49,7 @@ a committed file.
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `notes/`, `sessions/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
@@ -60,8 +60,10 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
+             research.py (agent result files), assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, task/ — each SKILL.md calls python -m prep.cli <command>
+.claude/skills/  today/, applied/, task/, research/ — each SKILL.md calls python -m prep.cli <command>
+.claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
@@ -83,4 +85,5 @@ data/        local databases (gitignored)
   `PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
+- Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

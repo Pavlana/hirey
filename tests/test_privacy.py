@@ -9,7 +9,7 @@ from prep.config import REPO_ROOT
 class PatternTest(unittest.TestCase):
     def test_forbidden(self) -> None:
         for path in ("cv.md", "docs/cv.md", "Anything.docx", "x/tracker.xlsx", "a.pdf", "data/prep.db",
-                     "data/notes.txt", "notes/today.md", "sessions/s1.md", "mock-interview-kit.md",
+                     "data/notes.txt", "notes/today.md", "sessions/s1.md", "companies/acme.md", "fit/3-acme.md", "mock-interview-kit.md",
                      "stories.md", "gaps.md", "design-cases.md", ".env", ".env.local",
                      "config/settings.toml", "other/jobs.db", ".claude/skills/board/SKILL.md"):
             self.assertTrue(privacy.is_forbidden(path), path)

@@ -16,6 +16,11 @@ Keys:
     weekly_target   applications per week shown on the dashboard (default 10)
     no_response_days  days in Applied with no stage change before an application moves to
                       No response automatically (default 14)
+    research_max_age_days  a company profile older than this is researched again (default 90)
+    assistant_task  optional dev3 task seq of a standing assistant agent: newly queued research
+                    and CV fit requests are sent to it with `dev3 message` (unset: no message)
+    assistant_project  optional dev3 project id, passed with --project when set
+    dev3_bin        optional absolute path to the dev3 CLI (default: found on PATH)
 
 Relative paths are resolved against the repo root, never the current directory,
 because the code also runs from dev3 worktrees.
@@ -33,6 +38,7 @@ DEFAULT_PREP_DB = "data/prep.db"
 DEFAULT_DASHBOARD_PORT = 8765
 DEFAULT_WEEKLY_TARGET = 10
 DEFAULT_NO_RESPONSE_DAYS = 14
+DEFAULT_RESEARCH_MAX_AGE_DAYS = 90
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -43,6 +49,10 @@ ENV_KEYS = {
     "dashboard_port": "PREP_DASHBOARD_PORT",
     "weekly_target": "PREP_WEEKLY_TARGET",
     "no_response_days": "PREP_NO_RESPONSE_DAYS",
+    "research_max_age_days": "PREP_RESEARCH_MAX_AGE_DAYS",
+    "assistant_task": "PREP_ASSISTANT_TASK",
+    "assistant_project": "PREP_ASSISTANT_PROJECT",
+    "dev3_bin": "PREP_DEV3_BIN",
 }
 
 
@@ -58,6 +68,10 @@ class Settings:
     dashboard_port: int = DEFAULT_DASHBOARD_PORT
     weekly_target: int = DEFAULT_WEEKLY_TARGET
     no_response_days: int = DEFAULT_NO_RESPONSE_DAYS
+    research_max_age_days: int = DEFAULT_RESEARCH_MAX_AGE_DAYS
+    assistant_task: int | None = None
+    assistant_project: str | None = None
+    dev3_bin: Path | None = None
 
 
 def _resolve(value: str) -> Path:
@@ -108,7 +122,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "private_dir"):
+    for key in ("getjo_db", "private_dir", "dev3_bin"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -120,4 +134,18 @@ def load_settings(path: Path | None = None) -> Settings:
         dashboard_port=_int(data, "dashboard_port", DEFAULT_DASHBOARD_PORT, 1, 65535),
         weekly_target=_int(data, "weekly_target", DEFAULT_WEEKLY_TARGET, 1, 1000),
         no_response_days=_int(data, "no_response_days", DEFAULT_NO_RESPONSE_DAYS, 1, 365),
+        research_max_age_days=_int(data, "research_max_age_days", DEFAULT_RESEARCH_MAX_AGE_DAYS, 1, 3650),
+        assistant_task=_int(data, "assistant_task", 0, 1, 10**9) if data.get("assistant_task") else None,
+        assistant_project=_project(data.get("assistant_project")),
+        dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,
     )
+
+
+def _project(value: object) -> str | None:
+    """A dev3 project id: letters, digits and dashes only, since it goes on a command line."""
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text.replace("-", "").isalnum() or not text.isascii():
+        raise ConfigError(f"assistant_project must be a dev3 project id (letters, digits, dashes), got {value!r}")
+    return text

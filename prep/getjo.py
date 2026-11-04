@@ -57,6 +57,12 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     return dict(row) if row else None
 
 
+def job_description(conn: sqlite3.Connection, job_id: str) -> str | None:
+    """The job's description text (left out of COLUMNS: long, needed only for a CV fit check)."""
+    row = conn.execute("SELECT description FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return row["description"] if row else None
+
+
 def jobs_by_id(conn: sqlite3.Connection, ids: set[str]) -> dict[str, dict]:
     """The jobs getjo still has among `ids`, by id."""
     found = {}

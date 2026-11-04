@@ -1,6 +1,6 @@
 ---
 name: today
-description: Daily job-search brief from inter_prep — applications that moved to No response, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
+description: Daily job-search brief from inter_prep — applications that moved to No response, queued company research and CV fit checks (run them), tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
 ---
 
 # /today
@@ -17,6 +17,9 @@ description: Daily job-search brief from inter_prep — applications that moved 
    - **Moved to No response** (only if the output lists any): applications that sat in
      Applied with no reply and were moved automatically. One line each; mention that each
      got a Debrief task and that moving the card back on the dashboard works as usual.
+   - **Agent work** (only if the output has an "Agent work pending" line): run /research now,
+     without asking the user to type anything, and give its short summary here. It reads
+     cv.md and does web searches about the companies; that is expected.
    - **Due now**: tasks due today or overdue, oldest first, with the company when the task
      belongs to an application. One line each.
    - **New matches** (jobs already applied for or skipped on the Job Offers page are left out):
@@ -29,5 +32,5 @@ description: Daily job-search brief from inter_prep — applications that moved 
 
 Rules:
 - Read only what the command prints. Do not open the private folder (CV, notes, sessions)
-  for this skill.
+  for this skill, except through /research for pending agent work.
 - Do not apply to anything or contact anyone. Suggest; the user acts.

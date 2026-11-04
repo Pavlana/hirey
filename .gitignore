@@ -11,6 +11,8 @@ notes/*
 !notes/*.example.md
 sessions/*
 !sessions/*.example.md
+companies/*
+fit/*
 data/*
 !data/.gitkeep
 *.db

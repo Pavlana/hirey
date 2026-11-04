@@ -10,6 +10,11 @@
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
     python -m prep.cli feedback export [--out PATH]
+    python -m prep.cli queue                          (read-only: counts and application ids)
+    python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
+    python -m prep.cli research queue APP_ID [--kind research|cv_fit] [--redo]
+    python -m prep.cli research save APP_ID [--file PATH]
+    python -m prep.cli fit save APP_ID [--file PATH]
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
@@ -27,7 +32,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import db, getjo
+from prep import assistant, db, getjo, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -85,6 +90,10 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
         print(f"Moved to No response (no reply in {settings.no_response_days} days), last 7 days ({len(moved)}):")
         print("\n".join(f"  #{m['id']} {m['company']} — {m['role']} ({m['changed_at'][:10]})" for m in moved))
         print()
+
+    line = _queue_line(db.open_requests(conn))
+    if line:
+        print(line + "\n")
 
     due = db.tasks_due(conn, today)
     print(f"Tasks due today or overdue ({len(due)}):")
@@ -154,8 +163,10 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     if not (company and role):
         raise SystemExit("error: URL not found in getjo; pass --company and --role too")
 
+    mark = db.last_request_id(conn)
     app_id, created = db.record_application(conn, company, role, status=args.status, date_applied=args.date, **fields)
     _add_next_task(conn, args, app_id)
+    queued = _notify_new(settings, conn, mark)
     app = db.get_application(conn, app_id)
     if job:
         db.record_decision(conn, job, "interested" if app["status"] == "to_apply" else "applied")
@@ -171,7 +182,20 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     if tasks:
         print("  open tasks:")
         print("\n".join(f"    {_task_line(t)}" for t in tasks))
+    if queued:
+        print(f"  queued for the agent: {_kinds(queued)} (run /research)")
     return 0
+
+
+def _notify_new(settings: Settings, conn: sqlite3.Connection, mark: int) -> list[dict]:
+    """Requests queued since `mark`; sent to the standing assistant when one is configured."""
+    new = db.requests_since(conn, mark)
+    assistant.notify(settings, new)
+    return new
+
+
+def _kinds(requests: list[dict]) -> str:
+    return " and ".join(db.REQUEST_LABELS[k] for k in db.REQUEST_KINDS if any(r["kind"] == k for r in requests))
 
 
 def cmd_apps(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -209,16 +233,20 @@ def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     if db.get_application(conn, args.app_id) is None:
         raise LookupError(f"no application with id {args.app_id}")
     db.update_application(conn, args.app_id, **fields)
+    mark = db.last_request_id(conn)
     if args.status and not db.move_application(conn, args.app_id, args.status, comment=args.comment,
                                                 interview_date=args.interview_date):
         print(f"Already {db.status_label(args.status)}: nothing moved"
               + ("; --comment and --interview-date were not saved" if args.comment or args.interview_date else ""))
     _add_next_task(conn, args, args.app_id)
+    queued = _notify_new(settings, conn, mark)
     print(f"Updated {_app_line(db.get_application(conn, args.app_id))}")
     tasks = db.app_tasks(conn).get(args.app_id, [])
     if args.status and tasks:
         print("  open tasks:")
         print("\n".join(f"    {_task_line(t)}" for t in tasks))
+    if queued:
+        print(f"  queued for the agent: {_kinds(queued)} (run /research)")
     return 0
 
 
@@ -287,6 +315,170 @@ def write_jsonl(path: Path, records: list[dict]) -> None:
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
     os.replace(tmp, path)
+
+
+# --- agent research queue -------------------------------------------------------------
+
+def _queue_line(requests: list[dict]) -> str:
+    """One line: open request counts and application ids only (never company names or text)."""
+    if not requests:
+        return ""
+    counts = ", ".join(f"{sum(1 for r in requests if r['kind'] == k)} {db.REQUEST_LABELS[k].lower()}"
+                       for k in db.REQUEST_KINDS if any(r["kind"] == k for r in requests))
+    apps = ", ".join(str(a) for a in sorted({r["application_id"] for r in requests}))
+    claimed = sum(1 for r in requests if r.get("claimed"))
+    busy = f"; {claimed} already being done by another session" if claimed else ""
+    return f"Agent work pending: {counts} (applications {apps}){busy}. Run /research to do it."
+
+
+def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
+    """Read-only (the SessionStart hook runs it in every session): prep.db is opened with
+    mode=ro and nothing is created; a missing database or table prints nothing."""
+    path = settings.prep_db
+    if not path.is_file():
+        return 0
+    try:
+        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
+            rows = conn.execute(
+                "SELECT application_id, kind, status, claimed_at FROM agent_requests "
+                "WHERE status IN ('pending', 'claimed') ORDER BY id").fetchall()
+    except sqlite3.Error:
+        return 0
+    cutoff = db._claim_cutoff()
+    requests = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff}
+                for r in rows if r[1] in db.REQUEST_KINDS]
+    line = _queue_line(requests)
+    if line:
+        print("inter_prep: " + line + " Offer it to the user, or run it at once if this is the "
+              "standing assistant session.")
+    return 0
+
+
+def _private_dir(settings: Settings) -> Path:
+    if not settings.private_dir:
+        raise SystemExit("error: private_dir is not set (settings or PREP_PRIVATE_DIR)")
+    return settings.private_dir
+
+
+def cmd_research(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.research_cmd == "queue":
+        if db.get_application(conn, args.app_id) is None:
+            raise LookupError(f"no application with id {args.app_id}")
+        kinds = [args.kind] if args.kind else list(db.REQUEST_KINDS)
+        for kind in kinds:
+            _, created = db.queue_request(conn, args.app_id, kind, force=args.redo)
+            print(f"{db.REQUEST_LABELS[kind]} for #{args.app_id}: {'queued' if created else 'already queued'}")
+        return 0
+    if args.research_cmd == "next":
+        return _research_next(args, settings, conn)
+    if args.research_cmd == "save":
+        return _research_save(args, settings, conn)
+    return 2
+
+
+def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Claim the open requests of one application (the given one, else the oldest unclaimed) and
+    print the work packet: what to research, where to write it, and the command that saves it."""
+    private_dir = _private_dir(settings)
+    pending = [r for r in db.open_requests(conn, args.app_id) if not r["claimed"]]
+    if not pending:
+        others = [r for r in db.open_requests(conn, args.app_id) if r["claimed"]]
+        print("Nothing pending" + (" (some requests are being done by another session)" if others else "") + ".")
+        return 0
+    app_id = args.app_id or pending[0]["application_id"]
+    claimed = [r for r in pending if r["application_id"] == app_id and db.claim_request(conn, r["id"])]
+    if not claimed:
+        print("Another session claimed this work first; run research next again.")
+        return 0
+    app = db.get_application(conn, app_id)
+    slug = db.company_slug(app["company"])
+    remaining = len({r["application_id"] for r in db.open_requests(conn) if not r["claimed"]})
+    print(f"Application #{app_id}: {app['company']} — {app['role']} [{db.status_label(app['status'])}]")
+    if app.get("link"):
+        print(f"  link: {app['link']}")
+    print(f"  company slug: {slug}")
+    for r in claimed:
+        if r["kind"] == "research":
+            _print_research_step(conn, settings, private_dir, app_id, slug, bool(r["force"]))
+        else:
+            _print_fit_step(settings, private_dir, app, slug)
+    print(f"\nApplications still waiting after this one: {remaining}")
+    return 0
+
+
+def _print_research_step(conn: sqlite3.Connection, settings: Settings, private_dir: Path, app_id: int,
+                         slug: str, force: bool) -> None:
+    path = research.company_file(private_dir, slug)
+    state, age = research.freshness(db.company_profile(conn, slug), settings.research_max_age_days, db.today_iso())
+    if force:
+        verdict = "Redo requested: research the company again and rewrite the file"
+    elif state == "fresh" and path.is_file():
+        verdict = f"profile is {age} days old (limit {settings.research_max_age_days}): reuse it, do not research again"
+    elif state == "stale":
+        verdict = f"profile is {age} days old (limit {settings.research_max_age_days}): research again and rewrite the file"
+    elif path.is_file():
+        verdict = "a file exists but is not in prep.db: check it, update it if needed, then save"
+    else:
+        verdict = "no profile yet: research the company and write the file"
+    print("\nCompany research:")
+    print(f"  {verdict}")
+    print(f"  file: {path} ({'exists' if path.is_file() else 'missing'})")
+    print(f"  then: python -m prep.cli research save {app_id}")
+
+
+def _print_fit_step(settings: Settings, private_dir: Path, app: dict, slug: str) -> None:
+    cv = private_dir / research.CV_FILE
+    print("\nCV fit:")
+    print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before the fit check'})")
+    print(f"  file: {research.fit_file(private_dir, app['id'], slug)}")
+    print(f"  then: python -m prep.cli fit save {app['id']}")
+    description = None
+    if app.get("getjo_job_id"):
+        try:
+            with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+                description = getjo.job_description(gconn, app["getjo_job_id"])
+        except (getjo.GetjoUnavailable, sqlite3.Error) as e:
+            print(f"  job description: not available ({e}); use the job link")
+            return
+    if description:
+        print("  job description (from getjo, read-only):")
+        print("\n".join(f"    {line}" for line in description.strip().splitlines()))
+    else:
+        print("  job description: none in getjo; use the job link")
+
+
+def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    slug = db.company_slug(app["company"])
+    path = Path(args.file).expanduser() if args.file else research.company_file(_private_dir(settings), slug)
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    profile = research.read_profile(path)
+    profile["company"] = profile["company"] or app["company"]
+    app_ids = db.save_company_profile(conn, slug, profile)
+    log.info("company profile %s saved", slug)
+    tier = f", suggested tier {profile['suggested_tier']}" if profile["suggested_tier"] else ""
+    print(f"Saved company profile {slug} ({profile['researched_at']}{tier}); "
+          f"research done for applications {', '.join(map(str, app_ids))}")
+    return 0
+
+
+def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    slug = db.company_slug(app["company"])
+    path = Path(args.file).expanduser() if args.file else research.fit_file(_private_dir(settings), args.app_id, slug)
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    fit = research.read_fit(path)
+    new_gaps = db.save_cv_fit(conn, args.app_id, fit["score"], fit["gaps"], str(path), fit["checked_at"])
+    log.info("cv fit saved for application %s", args.app_id)  # never the gaps or the CV
+    print(f"Saved CV fit for #{args.app_id}: {fit['score']}/5, {len(fit['gaps'])} gaps "
+          f"({len(new_gaps)} new in the gaps list)")
+    return 0
 
 
 def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
@@ -370,6 +562,29 @@ def build_parser() -> argparse.ArgumentParser:
     f = fsub.add_parser("export", help="write private_dir/feedback/job_decisions.jsonl")
     f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")
     p.set_defaults(func=cmd_feedback)
+
+    p = sub.add_parser("queue", help="read-only: open research / CV fit requests (counts and ids)")
+    p.set_defaults(func=cmd_queue, read_only=True)
+
+    p = sub.add_parser("research", help="company research and CV fit queue (used by /research)")
+    rsub = p.add_subparsers(dest="research_cmd", required=True)
+    r = rsub.add_parser("next", help="claim the next application's requests and print what to do")
+    r.add_argument("app_id", type=int, nargs="?")
+    r = rsub.add_parser("queue", help="queue research and/or a CV fit for an application")
+    r.add_argument("app_id", type=int)
+    r.add_argument("--kind", choices=db.REQUEST_KINDS)
+    r.add_argument("--redo", action="store_true", help="research again even if the profile is fresh")
+    r = rsub.add_parser("save", help="store the company profile from companies/<slug>.md")
+    r.add_argument("app_id", type=int)
+    r.add_argument("--file", help="default: private_dir/companies/<slug>.md")
+    p.set_defaults(func=cmd_research)
+
+    p = sub.add_parser("fit", help="CV fit results (used by /research)")
+    fsub = p.add_subparsers(dest="fit_cmd", required=True)
+    f = fsub.add_parser("save", help="store the CV fit from fit/<app-id>-<slug>.md")
+    f.add_argument("app_id", type=int)
+    f.add_argument("--file", help="default: private_dir/fit/<app-id>-<slug>.md")
+    p.set_defaults(func=cmd_fit)
     return parser
 
 
@@ -383,6 +598,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         settings = load_settings()
         log.info("prep.db at %s", settings.prep_db)
+        if getattr(args, "read_only", False):
+            return args.func(args, settings)
         conn = db.connect(settings.prep_db)
         try:
             return args.func(args, settings, conn)

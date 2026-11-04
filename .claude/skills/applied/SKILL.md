@@ -30,7 +30,8 @@ Interested buttons on the dashboard's Job Offers page.
    Dates take `YYYY-MM-DD`, `today`, `tomorrow` or `+N` days. Running it again for the same
    job updates the existing row and never moves it back to an earlier stage.
    The first tasks are created automatically:
-   - Interested: Apply (due in 3 days).
+   - Interested: Apply (due in 3 days). Company research and a CV fit check are queued for
+     the agent; the output says so. Offer to run /research now.
    - Applied: Chase if no reply (due in 7 days); an open Apply task is marked done.
 
 4. Report the printed line in one or two sentences: what was recorded, whether it was linked

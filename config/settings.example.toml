@@ -6,7 +6,8 @@
 # a per-checkout override), then ~/.config/inter_prep/settings.toml.
 # Each key can also be set with an environment variable, which wins over the file:
 #   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET,
-#   PREP_NO_RESPONSE_DAYS
+#   PREP_NO_RESPONSE_DAYS, PREP_RESEARCH_MAX_AGE_DAYS, PREP_ASSISTANT_TASK,
+#   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
 # "../getjo" would point somewhere different in every worktree.
@@ -19,7 +20,7 @@ getjo_db = "/absolute/path/to/getjo/data/jobs.db"
 # the running checkout, and a worktree's data/ folder is deleted with the worktree.
 prep_db = "/absolute/path/to/inter_prep/data/prep.db"
 
-# Folder holding cv.md, notes/ and sessions/. Never committed.
+# Folder holding cv.md, notes/, sessions/, and the agent's companies/ and fit/ files. Never committed.
 private_dir = "/absolute/path/to/inter_prep"
 
 # Optional. Port of the local dashboard (python -m prep.web); it always binds to 127.0.0.1.
@@ -31,3 +32,19 @@ private_dir = "/absolute/path/to/inter_prep"
 # Optional. Days an application can sit in Applied with no stage change before it moves to
 # No response automatically (checked on each dashboard request and by /today).
 # no_response_days = 14
+
+# Optional. A company profile older than this many days is researched again when another
+# role at that company is queued (Redo on the card always researches again).
+# research_max_age_days = 90
+
+# Optional. The seq number of a long-running dev3 task acting as a standing assistant. When set,
+# newly queued research / CV fit requests (Interested, or the card's buttons) are also sent to it
+# as "/research <application id>" with `dev3 message`. Unset: requests wait for the next Claude
+# session (SessionStart hook) or /today.
+# assistant_task = 42
+# Optional. That task's dev3 project id, passed as --project. Usually not needed: dev3 finds
+# the task by its seq from the main checkout. Set it if several dev3 projects are in use and the
+# message reaches the wrong one.
+# assistant_project = "00000000-0000-0000-0000-000000000000"
+# Optional. Absolute path to the dev3 CLI. Default: dev3 on PATH, else ~/.dev3.0/bin/dev3.
+# dev3_bin = "/absolute/path/to/dev3"

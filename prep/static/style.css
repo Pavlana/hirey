@@ -416,6 +416,20 @@ form.move > *, form.move input { height: 30px; font-size: 13px; }
 .interview-date[hidden] { display: none; }
 .timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
 .timeline li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+/* Research and CV fit on a card, and the read-only file page */
+.app-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-muted); white-space: nowrap; }
+.chip-pending { border-style: dashed; color: var(--accent-text); }
+.research { display: grid; gap: 4px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.research-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.research-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+.research-actions form.inline { margin: 0; }
+.research .gaps { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.doc { max-width: 72ch; line-height: 1.55; }
+.doc h2, .doc h3, .doc h4 { margin: var(--space-4) 0 var(--space-2); }
+.doc h2:first-child, .doc h3:first-child { margin-top: 0; }
+.doc p, .doc ul { margin: 0 0 var(--space-3); }
+.doc li { margin-bottom: 2px; }
 .closed-lane { margin-top: var(--space-3); }
 .closed-lane > summary, .recent > summary { cursor: pointer; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; color: var(--text-muted); font-weight: 500; }
 .closed-lane > summary .muted { font-size: 12.5px; }

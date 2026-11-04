@@ -9,7 +9,8 @@ from prep.config import REPO_ROOT, ConfigError, load_settings
 
 CLEAN_ENV = {"INTERPREP_SETTINGS": "", "PREP_DB": "", "PREP_GETJO_DB": "", "PREP_PRIVATE_DIR": "",
              "PREP_DASHBOARD_PORT": "", "PREP_WEEKLY_TARGET": "",
-             "PREP_NO_RESPONSE_DAYS": ""}
+             "PREP_NO_RESPONSE_DAYS": "", "PREP_RESEARCH_MAX_AGE_DAYS": "", "PREP_ASSISTANT_TASK": "",
+             "PREP_ASSISTANT_PROJECT": "", "PREP_DEV3_BIN": ""}
 
 
 class LoadSettingsTest(unittest.TestCase):
@@ -34,6 +35,25 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(s.dashboard_port, 8765)
         self.assertEqual(s.weekly_target, 10)
         self.assertEqual(s.no_response_days, 14)
+        self.assertEqual(s.research_max_age_days, 90)
+        self.assertIsNone(s.assistant_task)
+        self.assertIsNone(s.assistant_project)
+        self.assertIsNone(s.dev3_bin)
+
+    def test_assistant_keys_from_file_and_env(self) -> None:
+        path = self.write('assistant_task = 42\nassistant_project = "e942eb1d-98a4"\nresearch_max_age_days = 30\n'
+                          'dev3_bin = "/opt/dev3/bin/dev3"\n')
+        s = load_settings(path)
+        self.assertEqual((s.assistant_task, s.assistant_project, s.research_max_age_days), (42, "e942eb1d-98a4", 30))
+        self.assertEqual(s.dev3_bin, Path("/opt/dev3/bin/dev3"))
+        with mock.patch.dict(os.environ, {"PREP_ASSISTANT_TASK": "7"}):
+            self.assertEqual(load_settings(path).assistant_task, 7)
+
+    def test_bad_assistant_keys_rejected(self) -> None:
+        for text in ('assistant_task = "abc"\n', "assistant_task = -1\n", 'assistant_project = "a b; rm"\n',
+                     'dev3_bin = "relative/dev3"\n', "research_max_age_days = 0\n"):
+            with self.subTest(text=text), self.assertRaises(ConfigError):
+                load_settings(self.write(text))
 
     def test_dashboard_keys_from_file_and_env(self) -> None:
         path = self.write("dashboard_port = 9000\nweekly_target = 5\n")

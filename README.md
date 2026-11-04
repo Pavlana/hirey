@@ -31,7 +31,8 @@ The settings file is looked up in this order:
 The per-user file is the normal place: every checkout and git worktree, a launchd job and
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
-`PREP_WEEKLY_TARGET` and `PREP_NO_RESPONSE_DAYS`. Use absolute paths, with `prep_db`
+`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
+`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree.
 
 ## Try it with example data
@@ -57,6 +58,8 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli comment ID "text"`                               | Comment on an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
+| `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
+|            | `python -m prep.cli queue`                                           | Read-only: counts and application ids of queued research (used by the SessionStart hook) |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 
@@ -91,6 +94,24 @@ charts are server-rendered SVG):
   optional comment), a comment box and the history. Moving creates the new stage's tasks and
   closes the old stage's open ones. General tasks (no application) and recently done tasks
   sit below the board.
+
+### Company research and CV fit
+
+Marking a job Interested queues company research and a CV fit check for the agent. Each card
+also has **Research** and **CV fit** buttons, which read **Redo** once a result exists. The
+dashboard never runs the agent. The `/research` skill does the work in a Claude Code session.
+It writes `companies/<slug>.md` and `fit/<id>-<slug>.md` to `private_dir`, and the card shows
+the summary (suggested tier, fit score, top gaps) with an **Open** link to a read-only view of
+the file.
+
+Queued work is picked up three ways:
+
+- The committed SessionStart hook (`.claude/settings.json`) lists pending work at the start of
+  a session.
+- `/today` runs it.
+- With `assistant_task = <seq>` (and optionally `assistant_project`, `dev3_bin`) in the
+  settings, new requests are sent at once to that long-running dev3 task as
+  `/research <id>`.
 
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
 other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never
