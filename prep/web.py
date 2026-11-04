@@ -49,9 +49,20 @@ LOOPBACK_NAMES = ("localhost", "127.0.0.1")
 MAX_BODY = 64 * 1024
 RECENT_DONE = 10
 MAX_COMMENT = 1000
-# Applications board: one column per open stage, then a collapsed lane for the closed ones.
+# Applications: the funnel order (Next stage follows it) and the closed outcomes.
 BOARD_STAGES = ("to_apply", "applied", "recruiter_call", "technical", "system_design", "final", "offer")
 CLOSED_LANE = ("rejected", "no_response", "withdrawn")
+# Board columns: stored statuses stay as they are; the four interview stages share one column.
+BOARD_COLUMNS = {
+    "interested": ("to_apply",), "applied": ("applied",), "interviewing": db.INTERVIEW_STAGES,
+    "offer": ("offer",), "closed": CLOSED_LANE,
+}
+COLUMN_LABELS = {"interested": "Interested", "applied": "Applied", "interviewing": "Interviewing",
+                 "offer": "Offer", "closed": "Closed"}
+STEP_LABELS = {"recruiter_call": "Recruiter call", "technical": "Coding", "system_design": "System design",
+               "final": "Company interview"}
+VIEWS = ("board", "list")
+CURRENT = ' aria-current="true"'
 
 Response = tuple[int, list[tuple[str, str]], bytes]
 
@@ -68,9 +79,9 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
-    "applied": "Recorded as applied. Its card and first tasks are highlighted.",
-    "interested": "Saved as interested. Its card and first tasks are highlighted.",
-    "moved": "Moved. The stage's tasks are on the card.",
+    "applied": "Recorded as applied. Its panel shows the first tasks.",
+    "interested": "Saved as interested. Its panel shows the first tasks.",
+    "moved": "Moved. The stage's tasks are in its panel.",
     "commented": "Comment added.",
     "skipped": "Skipped. It no longer appears in new job offers.",
     "unskipped": "Skip undone; the job is new again.",
@@ -218,6 +229,10 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     if as_json:
         return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
     if "redirect" in extra:  # built by the action from database ids, never from the form
+        back, target = urlsplit(form.get("return") or ""), urlsplit(extra["redirect"])
+        if back.path == target.path and parse_qs(back.query).get("app") == parse_qs(target.query).get("app"):
+            # the side panel's own URL with its view and stage filter, re-encoded by _return_to
+            return 303, [("Location", _return_to(form["return"], back.path, msg))], b""
         sep = "&" if "?" in extra["redirect"] else "?"
         return 303, [("Location", f"{extra['redirect']}{sep}{urlencode([('msg', msg)])}")], b""
     return 303, [("Location", _return_to(form.get("return"), page, msg))], b""
@@ -707,66 +722,223 @@ def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return "Skip a job", f'{job["company"]} — {job["title"]}', _card("Why skip it?", form, cls="card-form")
 
 
+def board_filters(query: dict[str, list[str]]) -> dict:
+    """Applications page state from the query string: open card (`app`), `view` (board or list)
+    and `stage` (a board column). Unknown values fall back to the defaults."""
+    def first(key: str) -> str:
+        return (query.get(key) or [""])[0].strip()
+
+    app, view, stage = first("app"), first("view"), first("stage")
+    return {
+        "app": int(app) if app.isdigit() else None,
+        "view": view if view in VIEWS else "board",
+        "stage": stage if stage in BOARD_COLUMNS else "",
+    }
+
+
+def apps_url(app: int | None = None, view: str = "board", stage: str = "") -> str:
+    """An Applications page URL; default values are left out (built from ids and fixed names)."""
+    pairs = [(k, v) for k, v in (("app", app), ("view", view if view != "board" else None),
+                                  ("stage", stage or None)) if v is not None]
+    return "/applications" + (f"?{urlencode(pairs)}" if pairs else "")
+
+
+def column_of(status: str) -> str:
+    """The board column of a stored status (to_apply → interested, technical → interviewing…)."""
+    return next(col for col, statuses in BOARD_COLUMNS.items() if status in statuses)
+
+
+def next_stage(status: str) -> str | None:
+    """The stage after `status` in the funnel (Interested … Offer); None for Offer and closed."""
+    if status not in BOARD_STAGES or status == BOARD_STAGES[-1]:
+        return None
+    return BOARD_STAGES[BOARD_STAGES.index(status) + 1]
+
+
+def step_dots(status: str, label: bool = True) -> str:
+    """Interview progress: one dot per interview step (done, current, ahead) and the current
+    step's short label (left out next to a stage badge). Empty outside the interview stages."""
+    if status not in db.INTERVIEW_STAGES:
+        return ""
+    current = db.INTERVIEW_STAGES.index(status)
+    dots = "".join(
+        f'<span class="step {"is-done" if i < current else "is-current" if i == current else "is-ahead"}"></span>'
+        for i in range(len(db.INTERVIEW_STAGES)))
+    name = STEP_LABELS[status]
+    text = f'<span class="step-label">{h(name)}</span>' if label else ""
+    return (f'<span class="steps" title="Step {current + 1} of {len(db.INTERVIEW_STAGES)}: {h(name)}">'
+            f'<span class="dots" aria-hidden="true">{dots}</span>{text}</span>')
+
+
+def age_tone(status: str, days: int, no_response_days: int) -> str:
+    """Ageing colour for days in stage: Applied turns amber at day 7 and red two days before it
+    would move to No response. Other stages stay neutral."""
+    if status != "applied":
+        return ""
+    if days >= max(no_response_days - 2, 1):
+        return "late"
+    return "ageing" if days >= 7 else ""
+
+
+def list_order(rows: list[dict]) -> list[dict]:
+    """List view order: applications with a dated next task first (earliest due first), then
+    undated tasks, then none; ties by days in stage, longest first."""
+    def key(r: dict) -> tuple:
+        nxt = r["next"]
+        rank = 0 if nxt and nxt["due_date"] else (1 if nxt else 2)
+        return rank, (nxt["due_date"] or "") if nxt else "", -r["days"], r["app"]["id"]
+    return sorted(rows, key=key)
+
+
 def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
                       query: dict[str, list[str]]) -> tuple[str, str, str]:
-    """The board: a column per open stage, a collapsed lane for closed ones, general tasks.
-    ?app=ID opens and highlights that card (an unknown id is ignored)."""
-    apps = db.board_applications(conn)
-    app_param = (query.get("app") or [""])[0]
-    focus = int(app_param) if app_param.isdigit() else None
-    tasks = db.app_tasks(conn)
+    """A five-column board (or a list) to scan, with a stage strip that filters it, and a side
+    panel for the application named by ?app=ID (an unknown id is ignored). General tasks below."""
+    f = board_filters(query)
+    tasks = db.app_tasks(conn, "todo")
     counts = db.comment_counts(conn)
     found = db.research_view(conn)
+    rows = []
+    for a in db.board_applications(conn):
+        own = tasks.get(a["id"], [])
+        rows.append({"app": a, "column": column_of(a["status"]), "next": own[0] if own else None,
+                     "tasks": own, "comments": counts.get(a["id"], 0),
+                     "days": (date.fromisoformat(today) - date.fromisoformat(a["since"])).days,
+                     "found": found.get(a["id"]) or {"profile": None, "fit": None, "open": set()}})
+    focus = next((r for r in rows if r["app"]["id"] == f["app"]), None)
+    shown = [r for r in rows if not f["stage"] or r["column"] == f["stage"]]
 
-    def lane(stage: str) -> str:
-        cards = [_app_card(conn, a, tasks.get(a["id"], []), counts.get(a["id"], 0), today, a["id"] == focus,
-                           found.get(a["id"]))
-                 for a in apps if a["status"] == stage]
-        body = "".join(cards) or '<p class="lane-empty">–</p>'
-        return (f'<section class="lane" aria-label="{h(_status_label(stage))}"><h2>{h(_status_label(stage))}'
-                f'<span class="count">{len(cards)}</span></h2>{body}</section>')
+    def card(r: dict) -> str:
+        return _app_card(r, today, settings.no_response_days, apps_url(r["app"]["id"], f["view"], f["stage"]),
+                         r is focus)
 
-    closed = [a for a in apps if a["status"] in CLOSED_LANE]
-    summary = " · ".join(f"{_status_label(s)} {n}" for s in CLOSED_LANE
-                         if (n := sum(1 for a in closed if a["status"] == s)))
-    open_closed = " open" if any(a["id"] == focus for a in closed) else ""
-    board = (
-        f'<div class="board">{"".join(lane(s) for s in BOARD_STAGES)}</div>'
-        f'<details class="closed-lane"{open_closed}><summary>Closed <span class="count">{len(closed)}</span>'
-        f'<span class="muted">{h(summary)}</span></summary>'
-        f'<div class="board board-closed">{"".join(lane(s) for s in CLOSED_LANE)}</div></details>'
-    )
-    if not apps:
-        board = _empty("No applications yet.", "Mark a job Applied or Interested on Job Offers, or use /applied.")
-    open_count = len(apps) - len(closed)
-    content = _card("Pipeline", board, count=open_count, cls="card-board") + _general_tasks(conn, tasks.get(None, []), today)
-    return "Applications", f"{open_count} open · {len(closed)} closed · {today}", content
+    open_count = sum(1 for r in rows if r["column"] != "closed")
+    closed_count = len(rows) - open_count
+    if not rows:
+        main = _empty("No applications yet.", "Mark a job Applied or Interested on Job Offers, or use /applied.")
+    else:
+        main = (_stage_strip(rows, f) + _board(shown, f, card, focus)
+                + _app_list(shown, f, today) + _move_dialog())
+    panel = _panel(conn, focus, today, f) if focus else ""
+    layout = (f'<div class="apps" data-view="{f["view"]}">'
+              f'<div class="apps-main">{_card("Pipeline", main, count=open_count, cls="card-board")}</div>'
+              f"{panel}</div>")
+    content = layout + _general_tasks(conn, tasks.get(None, []), today)
+    return "Applications", f"{open_count} open · {closed_count} closed · {today}", content
 
 
-def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: int, today: str,
-              focus: bool, found: dict | None = None) -> str:
-    """One application: a <details> whose summary shows company, role, days in stage, next task,
-    comment count and research state; opened, it holds the tasks, research and CV fit, Move to…,
-    a comment box and the history."""
-    found = found or {"profile": None, "fit": None, "open": set()}
-    days = (date.fromisoformat(today) - date.fromisoformat(app["since"])).days
-    age = "new today" if days <= 0 else f"{days} day{'s' if days != 1 else ''} in stage"
-    nxt = tasks[0] if tasks else None
-    next_line = (f'<span class="app-next">{_due(nxt["due_date"], today)}'
-                 f'<span class="app-next-title" title="{h(nxt["title"])}">{h(nxt["title"])}</span></span>' if nxt
+def _stage_strip(rows: list[dict], f: dict) -> str:
+    """Counts per column; each links to that column's filter (the active one clears it), and the
+    Board | List toggle (links, so it works without the script)."""
+    pills = []
+    for col, label in COLUMN_LABELS.items():
+        n = sum(1 for r in rows if r["column"] == col)
+        active = f["stage"] == col
+        href = apps_url(f["app"], f["view"], "" if active else col)
+        pills.append(f'<a class="stage-pill{" is-active" if active else ""}" href="{h(href)}" data-stage="{col}"'
+                     f'{CURRENT if active else ""}>{h(label)} <span class="count">{n}</span></a>')
+    views = "".join(
+        f'<a class="view-btn{" is-active" if f["view"] == v else ""}" href="{h(apps_url(f["app"], v, f["stage"]))}" '
+        f'data-view="{v}"{CURRENT if f["view"] == v else ""}>{v.capitalize()}</a>'
+        for v in VIEWS)
+    return (f'<div class="stage-strip"><nav class="stage-pills" aria-label="Filter by stage">{"".join(pills)}</nav>'
+            f'<div class="view-toggle" role="group" aria-label="View">{views}</div></div>')
+
+
+def _board(rows: list[dict], f: dict, card: Callable[[dict], str], focus: dict | None) -> str:
+    """Five columns; with a stage filter only that column. Closed is a strip that expands."""
+    columns = []
+    for col, label in COLUMN_LABELS.items():
+        if f["stage"] and col != f["stage"]:
+            continue
+        mine = [r for r in rows if r["column"] == col]
+        if col == "closed":
+            columns.append(_closed_column(mine, card, bool(f["stage"]) or (focus is not None and focus in mine)))
+            continue
+        body = "".join(card(r) for r in mine) or '<p class="col-empty">–</p>'
+        columns.append(f'<section class="col" aria-label="{h(label)}" data-drop="{col}">'
+                       f'<h2>{h(label)}<span class="count">{len(mine)}</span></h2><div class="col-cards">{body}</div></section>')
+    filtered = " is-filtered" if f["stage"] else ""
+    return f'<div class="board{filtered}" data-board{" hidden" if f["view"] != "board" else ""}>{"".join(columns)}</div>'
+
+
+def _closed_column(rows: list[dict], card: Callable[[dict], str], expanded: bool) -> str:
+    """Closed: a narrow strip with the count per outcome; opened, the cards grouped by outcome."""
+    groups = []
+    for status in CLOSED_LANE:
+        mine = [r for r in rows if r["app"]["status"] == status]
+        groups.append(f'<h3>{h(_status_label(status))} <span class="count">{len(mine)}</span></h3>'
+                      + "".join(card(r) for r in mine))
+    counts = "".join(f'<span>{h(_status_label(s))} {sum(1 for r in rows if r["app"]["status"] == s)}</span>'
+                     for s in CLOSED_LANE)
+    return (f'<details class="col col-closed" aria-label="Closed" data-drop="closed"{" open" if expanded else ""}>'
+            f'<summary><span class="col-closed-title">Closed <span class="count">{len(rows)}</span></span>'
+            f'<span class="col-closed-counts">{counts}</span></summary>'
+            f'<div class="col-cards">{"".join(groups)}</div></details>')
+
+
+def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool) -> str:
+    """A compact card, a link to its side panel (no forms): company and role (they wrap), the
+    interview steps, the next task with its due date, tier and fit badges, days in stage with
+    an ageing colour, pending research chips and the comment count. Draggable with the script."""
+    app, nxt, days = r["app"], r["next"], r["days"]
+    next_line = (f'<span class="app-next">{_due(nxt["due_date"], today)}<span>{h(nxt["title"])}</span></span>' if nxt
                  else '<span class="app-next muted">No open tasks</span>')
-    chip = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{comments}</span>'
-            if comments else "")
-    tier = f'<span class="app-tier">Tier {h(app["tier"])}</span> · ' if app["tier"] else ""
-    summary = (
-        f'<summary><strong class="app-head" title="{h(app["company"])}">{h(app["company"])}</strong>'
-        f'<span class="app-role" title="{h(app["role"])}">{h(app["role"])}</span>'
-        f'<span class="app-meta"><span>{tier}{h(age)}</span>{chip}</span>{next_line}'
-        f'{_research_chips(found)}</summary>'
-    )
-    here = _here(app["id"])
-    keep = f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
-    rows = "".join(_task_row(t, today, here, kind=False) for t in tasks)
+    tone = age_tone(app["status"], days, no_response_days)
+    age_text = _age_text(days)
+    age = (f'<span class="age{" age-" + tone if tone else ""}" title="{h(age_text)}">'
+           f'{"today" if days <= 0 else f"{days}d"}</span>')
+    badges = [_tier_badge(app["tier"]) if app["tier"] else ""]
+    fit = r["found"]["fit"]
+    if fit and "cv_fit" not in r["found"]["open"]:
+        badges.append(f'<span class="chip" title="CV fit">fit {h(fit["score"])}/5</span>')
+    badges += [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
+               for k in db.REQUEST_KINDS if k in r["found"]["open"]]
+    if r["column"] == "closed":
+        badges.insert(0, _status_badge(app["status"]))
+    comments = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{r["comments"]}</span>'
+                if r["comments"] else "")
+    css = "app-card is-focus" if focus else "app-card"
+    return (f'<a class="{css}" id="app-{h(app["id"])}" href="{h(href)}" draggable="true" data-app="{h(app["id"])}" '
+            f'data-column="{r["column"]}" data-status="{h(app["status"])}">'
+            f'<strong class="app-head">{h(app["company"])}</strong><span class="app-role">{h(app["role"])}</span>'
+            f'{step_dots(app["status"])}{next_line}'
+            f'<span class="app-meta"><span class="app-badges">{"".join(badges)}</span>{comments}{age}</span></a>')
+
+
+def _age_text(days: int) -> str:
+    return f'{days} day{"s" if days != 1 else ""} in stage' if days > 0 else "new today"
+
+
+def _app_list(rows: list[dict], f: dict, today: str) -> str:
+    """The list view: one table, open applications only (unless filtered to Closed), sorted by
+    the next due task. A row's company links to its side panel."""
+    if f["stage"] != "closed":
+        rows = [r for r in rows if r["column"] != "closed"]
+    table_rows, attrs = [], []
+    for r in list_order(rows):
+        app, nxt = r["app"], r["next"]
+        fit = r["found"]["fit"]
+        href = apps_url(app["id"], f["view"], f["stage"])
+        table_rows.append((
+            f'<a href="{h(href)}">{h(app["company"])}</a>', h(app["role"]), _status_badge(app["status"]),
+            h(nxt["title"]) if nxt else "", _due(nxt["due_date"], today) if nxt else "",
+            _mono(h(r["days"])), h(f'{fit["score"]}/5') if fit else "", h(app["tier"] or ""),
+        ))
+        attrs.append(f'data-href="{h(href)}" data-app="{h(app["id"])}"' + (' class="is-focus"' if app["id"] == f["app"] else ""))
+    head = ("Company", "Role", "Stage", "Next task", ("Due", "date"), ("Days", "num"), ("Fit", "text"), "Tier")
+    table = _table(head, table_rows, "No open applications here.", table_id="app-list", row_attrs=attrs)
+    return f'<div class="app-list" data-list{" hidden" if f["view"] != "list" else ""}>{table}</div>'
+
+
+def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
+    """The side panel for one application: tasks, Next stage and Move to, company research,
+    CV fit and tier, comments and history. Every form posts and comes back to this panel."""
+    app = r["app"]
+    here = apps_url(app["id"], f["view"], f["stage"])
+    keep = (f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
+            f'<input type="hidden" name="return" value="{h(here)}">')
+    rows = "".join(_task_row(t, today, here, kind=False, ajax=False) for t in r["tasks"])
     task_list = (f'<table class="mini" id="tasks-{h(app["id"])}"><tbody>{rows}</tbody></table>' if rows
                  else '<p class="muted">No open tasks.</p>')
     add = (
@@ -777,6 +949,14 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
         '<input type="date" name="due_date" aria-label="Due date">'
         + _button("Add", "secondary", "sm") + "</form>"
     )
+    nxt = next_stage(app["status"])
+    next_form = ""
+    if nxt:
+        date_field = ('<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
+                      if nxt in db.INTERVIEW_STAGES else "")
+        next_form = (f'<form method="post" action="/applications/move" class="next-stage">{keep}'
+                     f'<input type="hidden" name="status" value="{nxt}">{date_field}'
+                     + _button(f"Next stage: {_status_label(nxt)}", size="sm") + "</form>")
     stages = "".join(
         f'<option value="{s}"{" disabled" if s == app["status"] else ""}>{h(_status_label(s))}</option>'
         for s in (*BOARD_STAGES, *CLOSED_LANE))
@@ -786,7 +966,7 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
         f'<select name="status" required aria-label="Move to"><option value="">Move to…</option>{stages}</select>'
         '<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
         f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="Comment (optional)" aria-label="Comment with the move">'
-        + _button("Move", size="sm") + "</form>"
+        + _button("Move", "secondary", "sm") + "</form>"
     )
     comment = (
         f'<form method="post" action="/applications/comment" class="add add-sm">{keep}'
@@ -800,27 +980,48 @@ def _app_card(conn: sqlite3.Connection, app: dict, tasks: list[dict], comments: 
         + "</li>"
         for e in reversed(db.timeline(conn, app["id"]))
     )
-    link = (f'<p class="app-link">{_link(app["link"], "Job posting ↗")}</p>'
+    link = (f' · {_link(app["link"], "Job posting ↗")}'
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
-    body = (
-        f'<div class="app-body">{link}<h3>Tasks</h3>{task_list}{add}'
-        f'<h3>Research and CV fit</h3>{_research_section(app, found)}<h3>Move</h3>{move}'
-        f'<h3>Comments and history</h3>{comment}'
+    close = apps_url(None, f["view"], f["stage"])
+    return (
+        f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}">'
+        f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
+        f'<p class="panel-sub">{h(app["role"])}</p>'
+        f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
+        f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
+        f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></header>'
+        f'<div class="panel-body">'
+        f'<section><h3>Tasks</h3>{task_list}{add}</section>'
+        f'<section><h3>Stage</h3>{next_form}{move}</section>'
+        f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"])}</section>'
+        f'<section><h3>Comments and history</h3>{comment}'
         + (f'<ul class="timeline">{history}</ul>' if history else "")
-        + "</div>"
+        + "</section></div></aside>"
     )
-    css = "app-card is-focus" if focus else "app-card"
-    return (f'<article class="{css}" id="app-{h(app["id"])}"><details{" open" if focus else ""}>'
-            f"{summary}{body}</details></article>")
 
 
-def _research_chips(found: dict) -> str:
-    """Small state chips for the collapsed card: pending requests and the fit score."""
-    chips = [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
-             for k in db.REQUEST_KINDS if k in found["open"]]
-    if found["fit"] and "cv_fit" not in found["open"]:
-        chips.append(f'<span class="chip">CV fit {h(found["fit"]["score"])}/5</span>')
-    return f'<span class="app-chips">{"".join(chips)}</span>' if chips else ""
+def _move_dialog() -> str:
+    """The drop dialog: an interview step with a date (dropped on Interviewing) or an outcome
+    (dropped on Closed). The page script fills in app_id and return, shows one group and
+    disables the other; without the script it never opens."""
+    steps = "".join(f'<option value="{s}">{h(STEP_LABELS[s])}</option>' for s in db.INTERVIEW_STAGES)
+    outcomes = "".join(f'<button class="btn btn-secondary btn-sm" name="status" value="{s}">{h(_status_label(s))}</button>'
+                       for s in CLOSED_LANE)
+    return (
+        '<dialog id="move-dialog" class="dialog" aria-labelledby="move-title">'
+        '<form method="post" action="/applications/move" class="skip-form">'
+        '<input type="hidden" name="app_id" value=""><input type="hidden" name="return" value="">'
+        '<h2 id="move-title" data-move-title>Move</h2><p class="muted" data-move-app></p>'
+        '<fieldset class="move-group" data-group="interviewing"><label>Interview step '
+        f'<select name="status" aria-label="Interview step">{steps}</select></label>'
+        '<label>Interview date <input type="date" name="interview_date"></label></fieldset>'
+        f'<textarea name="comment" maxlength="{MAX_COMMENT}" rows="2" placeholder="Comment (optional)" '
+        'aria-label="Comment"></textarea>'
+        f'<div class="reasons" role="group" aria-label="Outcome" data-group="closed">{outcomes}</div>'
+        '<div class="dialog-actions"><button type="button" class="btn btn-ghost btn-sm" data-close>Cancel</button>'
+        '<button class="btn btn-primary btn-sm" data-group="interviewing">Move</button></div>'
+        "</form></dialog>"
+    )
 
 
 def _research_button(app_id: int, kind: str, has_result: bool, pending: bool) -> str:
@@ -959,12 +1160,13 @@ def render_markdown(text: str) -> str:
     return "".join(out) or '<p class="muted">No notes.</p>'
 
 
-def _task_row(task: dict, today: str, here: str, kind: bool = True) -> str:
-    """An open task in General tasks (due, title, kind, Done) or on a card (no kind, to fit).
-    A plain post returns to `here` (a URL built from database ids)."""
+def _task_row(task: dict, today: str, here: str, kind: bool = True, ajax: bool = True) -> str:
+    """An open task in General tasks (due, title, kind, Done) or in the side panel (no kind, to
+    fit; no ajax, so the board's next task refreshes too). A plain post returns to `here` (a URL
+    built from database ids)."""
     done = (
-        '<form method="post" action="/tasks/done" class="inline" data-ajax="done">'
-        f'<input type="hidden" name="task_id" value="{h(task["id"])}">'
+        '<form method="post" action="/tasks/done" class="inline"' + (' data-ajax="done">' if ajax else ">")
+        + f'<input type="hidden" name="task_id" value="{h(task["id"])}">'
         f'<input type="hidden" name="return" value="{h(here)}">'
         + _button("Done", "secondary", "sm") + "</form>"
     )

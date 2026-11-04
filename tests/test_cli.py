@@ -171,7 +171,20 @@ class AppliedTest(IsolatedTestCase):
         self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
         code, out, _ = self.run_cli("update", "1", "--status", "applied", "--interview-date", "+2")
         self.assertEqual(code, 0)
-        self.assertIn("Already applied: nothing moved; --comment and --interview-date were not saved", out)
+        self.assertIn("Already applied: nothing moved; --interview-date not saved (not an interview stage)", out)
+
+    def test_same_interview_stage_keeps_date_and_comment(self) -> None:
+        # A rescheduled call or a second round: nothing moves, but nothing the user said is lost.
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        self.run_cli("update", "1", "--status", "recruiter_call")
+        code, out, _ = self.run_cli("update", "1", "--status", "recruiter_call", "--interview-date", "+3",
+                                    "--comment", "Moved to Thursday 14:00")
+        self.assertEqual(code, 0)
+        self.assertIn(f"Already recruiter call: nothing moved; comment saved; interview date {days(3)} saved", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.timeline(conn, 1)[-1]["comment"], "Moved to Thursday 14:00")
+            self.assertEqual([tuple(r) for r in conn.execute("SELECT date, stage FROM interviews")],
+                             [(days(3), "recruiter_call")])
 
     def test_comment(self) -> None:
         self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")

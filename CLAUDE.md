@@ -62,7 +62,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
              research.py (agent result files), assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, task/, research/ — each SKILL.md calls python -m prep.cli <command>
+.claude/skills/  today/, applied/, stage/, task/, research/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)

@@ -54,7 +54,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, tasks due or overdue, new getjo matches |
 | `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
-|            | `python -m prep.cli update ID [--status S [--comment T] [--interview-date D]] [--next-action T [--next-date D]]` | Move an application to a stage (closes the old stage's tasks, adds the new ones); `--next-action` adds a task |
+| `/stage`   | `python -m prep.cli update ID [--status S [--comment T] [--interview-date D]] [--next-action T [--next-date D]]` | Move an application to a stage (closes the old stage's tasks, adds the new ones); `--next-action` adds a task. Already at that stage: the comment and an interview date are still saved. `/stage` takes a pasted recruiter email, call notes or a one-line message and runs this (plus `comment` / `task add`) itself |
 |            | `python -m prep.cli comment ID "text"`                               | Comment on an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
@@ -83,17 +83,23 @@ charts are server-rendered SVG):
   **Applied** (application recorded as applied today, same logic as `/applied --job-id`),
   **Interested** (application recorded with status `to_apply`, shown as "Interested") and
   **Skipped** (a pop-up with the skip reasons and an optional comment; without JavaScript a
-  plain form page). Applied and Interested open the Applications board with that card
-  open and highlighted; an Interested job can later be marked Applied. A skip can be undone.
+  plain form page). Applied and Interested open the Applications board with that
+  application's side panel open; an Interested job can later be marked Applied. A skip can be undone.
   Decided jobs also drop out of `/today`.
-- **Applications** (`/applications`; `/tasks` redirects): a board with one column per stage
-  (Interested, Applied, Recruiter call, Coding interview, System design, Company interview,
-  Offer) and a collapsed Closed lane (Rejected, No response, Withdrawn). Each card shows
-  days in stage, its next task and a comment count; opened, it lists the tasks (tick done,
-  add one), **Move to…** any stage (with an interview date for interview stages and an
-  optional comment), a comment box and the history. Moving creates the new stage's tasks and
+- **Applications** (`/applications`; `/tasks` redirects): a board with five columns
+  (Interested, Applied, Interviewing, Offer, Closed). Interviewing holds the recruiter call,
+  coding, system design and company interview steps; its cards show step dots and the current
+  step. Closed is a narrow strip with counts (Rejected, No response, Withdrawn) that expands.
+  Compact cards show company and role, the next task and due date, tier and CV fit, days in
+  stage (Applied turns amber at day 7 and red near the no-response cut-off) and pending agent
+  work. Clicking a card opens a side panel with the tasks (tick done, add one), **Next stage**
+  and **Move to…** (interview date for interview steps, optional comment), company research,
+  CV fit and tier, comments and history; Esc or ✕ closes it. Cards can be dragged between
+  columns (Interviewing asks for the step and date, Closed for the outcome). A stage strip
+  filters by column, and a List view shows one table sorted by the next due task; the
+  Board / List choice is remembered in the browser. Moving creates the new stage's tasks and
   closes the old stage's open ones. General tasks (no application) and recently done tasks
-  sit below the board.
+  sit below.
 
 ### Company research and CV fit
 

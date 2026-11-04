@@ -215,6 +215,21 @@ def _add_next_task(conn: sqlite3.Connection, args: argparse.Namespace, app_id: i
         db.add_task(conn, args.next_action, "admin", args.next_date, app_id)
 
 
+def _same_stage(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
+    """Already at --status: keep the comment as a free comment and, for an interview stage, the
+    interview date (a rescheduled call or a second round), so nothing the user said is lost."""
+    saved = []
+    if args.comment:
+        db.add_comment(conn, args.app_id, args.comment)
+        saved.append("comment saved")
+    if args.interview_date and args.status in db.INTERVIEW_STAGES:
+        db.add_interview(conn, args.app_id, args.interview_date, args.status)
+        saved.append(f"interview date {args.interview_date} saved")
+    elif args.interview_date:
+        saved.append("--interview-date not saved (not an interview stage)")
+    print(f"Already {db.status_label(args.status)}: nothing moved" + "".join(f"; {s}" for s in saved))
+
+
 def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     _check_next(args)
     if (args.comment or args.interview_date) and not args.status:
@@ -236,8 +251,7 @@ def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     mark = db.last_request_id(conn)
     if args.status and not db.move_application(conn, args.app_id, args.status, comment=args.comment,
                                                 interview_date=args.interview_date):
-        print(f"Already {db.status_label(args.status)}: nothing moved"
-              + ("; --comment and --interview-date were not saved" if args.comment or args.interview_date else ""))
+        _same_stage(conn, args)
     _add_next_task(conn, args, args.app_id)
     queued = _notify_new(settings, conn, mark)
     print(f"Updated {_app_line(db.get_application(conn, args.app_id))}")

@@ -6,6 +6,21 @@
 (() => {
   const toasts = document.querySelector(".toasts");
 
+  // Applications: Board | List is remembered per browser; a URL without ?view= gets the
+  // remembered one. This runs first, so a flash message (?msg=) survives the redirect.
+  const VIEW_KEY = "applications-view";
+  const appsPage = document.querySelector(".apps");
+  if (appsPage) {
+    let stored = null;
+    try { stored = localStorage.getItem(VIEW_KEY); } catch { /* storage blocked: default view */ }
+    const here = new URL(location.href);
+    if (!here.searchParams.has("view") && stored === "list" && appsPage.dataset.view !== "list") {
+      here.searchParams.set("view", "list");
+      location.replace(here);
+      return;
+    }
+  }
+
   // --- toasts -------------------------------------------------------------------
   // Text is always set with textContent: server messages can echo form input.
   function toast(message, { error = false, action = null, ms = 5000 } = {}) {
@@ -188,18 +203,196 @@
   }
 
   // --- Applications board ---------------------------------------------------------------
-  // ?app=ID (e.g. from Job Offers) renders that card open and highlighted; bring it into view.
-  const focusCard = document.querySelector(".app-card.is-focus");
-  if (focusCard) focusCard.scrollIntoView({ block: "center", inline: "center" });
+  // The server renders every state from the query string (?app=ID side panel, ?view=, ?stage=),
+  // so this only adds: the panel opens without a reload, Esc closes it, the Board | List choice
+  // is remembered, and cards can be dragged between columns.
 
   // Move to…: the interview date only matters for interview stages, so show it only then.
-  document.querySelectorAll("form.move[data-interview-stages]").forEach((form) => {
-    const stages = form.dataset.interviewStages.split(" ");
-    const field = form.querySelector(".interview-date");
-    const sync = () => { field.hidden = !stages.includes(form.elements.status.value); };
-    form.elements.status.addEventListener("change", sync);
-    sync();
-  });
+  function syncMoveForms(root) {
+    root.querySelectorAll("form.move[data-interview-stages]").forEach((form) => {
+      const stages = form.dataset.interviewStages.split(" ");
+      const field = form.querySelector(".interview-date");
+      const sync = () => { field.hidden = !stages.includes(form.elements.status.value); };
+      form.elements.status.addEventListener("change", sync);
+      sync();
+    });
+  }
+  syncMoveForms(document);
+
+  const apps = document.querySelector(".apps");
+  if (apps) {
+    document.querySelectorAll(".view-btn[data-view]").forEach((link) => {
+      link.addEventListener("click", () => {
+        try { localStorage.setItem(VIEW_KEY, link.dataset.view); } catch { /* not remembered */ }
+      });
+    });
+
+    const focusCard = document.querySelector(".app-card.is-focus");
+    if (focusCard) focusCard.scrollIntoView({ block: "nearest", inline: "nearest" });
+
+    // Side panel: fetch the page for ?app=ID and swap in only its panel, so the board keeps
+    // its scroll position. The fetched HTML is the server's own escaped page; scripts in a
+    // DOMParser document never run.
+    function markFocus(appId) {
+      document.querySelectorAll(".app-card.is-focus, .app-list tr.is-focus").forEach((el) => el.classList.remove("is-focus"));
+      if (!appId) return;
+      document.getElementById(`app-${appId}`)?.classList.add("is-focus");
+      document.querySelector(`.app-list tr[data-app="${CSS.escape(appId)}"]`)?.classList.add("is-focus");
+    }
+
+    async function showPanel(url, push) {
+      const current = document.getElementById("panel");
+      current?.classList.add("is-loading");
+      try {
+        const res = await fetch(url, { headers: { Accept: "text/html" }, credentials: "same-origin" });
+        if (!res.ok) throw new Error(`Could not open it (HTTP ${res.status}).`);
+        const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+        const next = doc.getElementById("panel");
+        if (next) {
+          const panel = document.importNode(next, true);
+          if (current) current.replaceWith(panel); else apps.append(panel);
+          syncMoveForms(panel);
+          panel.querySelector(".panel-close")?.focus({ preventScroll: true });
+        } else {
+          current?.remove();
+        }
+        markFocus(next ? next.dataset.app : null);
+        if (push) history.pushState(null, "", url);
+      } catch (err) {
+        current?.classList.remove("is-loading");
+        toast(err.message, { error: true });
+      }
+    }
+
+    function closePanel() {
+      const panel = document.getElementById("panel");
+      if (!panel) return;
+      const href = panel.querySelector("[data-close-panel]").getAttribute("href");
+      const appId = panel.dataset.app;
+      panel.remove();
+      markFocus(null);
+      history.pushState(null, "", href);
+      document.getElementById(`app-${appId}`)?.focus({ preventScroll: true });
+    }
+
+    document.addEventListener("click", (e) => {
+      if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      if (e.target.closest("[data-close-panel]")) { e.preventDefault(); closePanel(); return; }
+      const link = e.target.closest("a.app-card, .app-list a");
+      const row = !link && e.target.closest(".app-list tr[data-href]");
+      if (!link && !row) return;
+      if (row && e.target.closest("button, input, select, form")) return;
+      e.preventDefault();
+      showPanel(link ? link.getAttribute("href") : row.dataset.href, true);
+    });
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
+      if (e.target instanceof Element && e.target.closest("input, select, textarea")) return;
+      closePanel();
+    });
+    window.addEventListener("popstate", () => showPanel(location.href, false));
+
+    // Drag and drop between columns (native HTML5 events). Interested, Applied and Offer move at
+    // once; Interviewing asks for the step and date, Closed for the outcome. Every move posts to
+    // /applications/move, then the page reloads from the server with a "Moved" toast.
+    const dialog = document.getElementById("move-dialog");
+    const STATUS_OF = { interested: "to_apply", applied: "applied", offer: "offer" };
+    const STEPS = ["recruiter_call", "technical", "system_design", "final"];
+    let dragged = null;
+
+    function reloadMoved() {
+      const url = new URL(location.href);
+      url.searchParams.set("msg", "moved");
+      location.assign(url);
+    }
+
+    async function move(data) {
+      try {
+        await post("/applications/move", data);
+        reloadMoved();
+      } catch (err) {
+        toast(err.message || "Not moved.", { error: true });
+      }
+    }
+
+    function askMove(card, column) {
+      const form = dialog.querySelector("form");
+      form.reset();
+      form.elements.app_id.value = card.dataset.app;
+      form.elements.return.value = location.pathname + location.search;
+      const interviewing = column === "interviewing";
+      dialog.querySelectorAll("[data-group]").forEach((el) => {
+        el.hidden = el.dataset.group !== column;
+        el.querySelectorAll("select, input").forEach((input) => { input.disabled = el.hidden; });
+      });
+      dialog.querySelector("[data-move-title]").textContent = interviewing ? "Move to Interviewing" : "Close this application";
+      dialog.querySelector("[data-move-app]").textContent = card.querySelector(".app-head")?.textContent || "";
+      if (interviewing) {
+        const at = STEPS.indexOf(card.dataset.status);
+        form.querySelector('select[name="status"]').value = STEPS[Math.min(at + 1, STEPS.length - 1)];
+      }
+      dialog.showModal();
+      (interviewing ? form.querySelector('select[name="status"]') : form.elements.comment).focus();
+    }
+
+    if (dialog && dialog.showModal && window.fetch) {
+      const form = dialog.querySelector("form");
+      dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const data = new URLSearchParams(new FormData(form, e.submitter)); // an outcome button adds its status
+        if (!data.get("status")) return;
+        const buttons = form.querySelectorAll("button");
+        buttons.forEach((b) => { b.disabled = true; });
+        try {
+          await post(form.action, data);
+          dialog.close();
+          reloadMoved();
+        } catch (err) {
+          toast(err.message || "Not moved.", { error: true });
+        } finally {
+          buttons.forEach((b) => { b.disabled = false; });
+        }
+      });
+
+      document.addEventListener("dragstart", (e) => {
+        const card = e.target.closest?.("a.app-card");
+        if (!card) return;
+        dragged = card;
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", card.dataset.app);
+        card.classList.add("is-dragging");
+      });
+      document.addEventListener("dragend", () => {
+        dragged?.classList.remove("is-dragging");
+        dragged = null;
+        document.querySelectorAll(".col.is-drop").forEach((c) => c.classList.remove("is-drop"));
+      });
+      document.querySelectorAll("[data-drop]").forEach((col) => {
+        col.addEventListener("dragover", (e) => {
+          if (!dragged || dragged.dataset.column === col.dataset.drop) return;
+          e.preventDefault(); // allows the drop
+          e.dataTransfer.dropEffect = "move";
+          col.classList.add("is-drop");
+        });
+        col.addEventListener("dragleave", (e) => {
+          if (!col.contains(e.relatedTarget)) col.classList.remove("is-drop");
+        });
+        col.addEventListener("drop", (e) => {
+          e.preventDefault();
+          col.classList.remove("is-drop");
+          const card = dragged;
+          const column = col.dataset.drop;
+          if (!card || card.dataset.column === column) return; // same column: nothing to do
+          if (STATUS_OF[column]) {
+            move(new URLSearchParams({ app_id: card.dataset.app, status: STATUS_OF[column] }));
+          } else {
+            askMove(card, column);
+          }
+        });
+      });
+    }
+  }
 
   // --- forms without a reload --------------------------------------------------------
   function refreshCount(tableId) {

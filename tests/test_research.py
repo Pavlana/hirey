@@ -282,9 +282,11 @@ class DashboardTest(WebTestCase):
         self.private = self.tmp / "private"
 
     def card(self, app_id: int) -> str:
+        """The compact card plus its side panel (where the research section lives)."""
         body = self.get(f"/applications?app={app_id}")[2]
         start = body.index(f'id="app-{app_id}"')
-        return body[start:body.index("</article>", start)]
+        panel = body.index('<aside class="panel"')
+        return body[start:body.index("</a>", start)] + body[panel:body.index("</aside>", panel)]
 
     def test_buttons_queue_then_show_pending_then_redo(self) -> None:
         card = self.card(self.MDE)

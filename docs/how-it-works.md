@@ -29,7 +29,7 @@
         │                  │
  Claude Code skills    browser → http://localhost:8765
  /today /applied /task (127.0.0.1 only; kept running by launchd)
- /research
+ /stage /research
 ```
 
 ## Data flow
@@ -50,7 +50,12 @@
 5. Stages: Interested (`to_apply`) → Applied → Recruiter call → Coding interview
    (`technical`) → System design → Company interview (`final`) → Offer; closed: Rejected,
    No response, Withdrawn (`db.STATUS_LABELS` holds the labels; stored values are unchanged).
-   A take-home test or a second interview is a comment, not a stage. Every status change
+   A take-home test or a second interview is a comment, not a stage. `/stage` turns a pasted
+   recruiter email, call notes or a short message into these commands: it finds the application
+   (`cli apps`), runs `cli update ID --status S [--interview-date D] --comment "summary"` (a short
+   summary, never the whole email or pay), and adds extra to-dos with `cli task add --app ID`.
+   `cli update` to the stage the application is already in moves nothing but still saves the
+   comment (as a free comment) and, for an interview stage, the interview date. Every status change
    goes through `db.move_application` (Move to… on the board, `cli update --status`,
    `record_application` and the no-response check): it writes a `status_history` row with
    the optional comment, sets `date_applied` the first time the application is sent, stores
@@ -82,7 +87,7 @@
    (`db.auto_no_response`). The Chase task (day 7) is closed and a Debrief task added. It runs
    on every dashboard request and in `prep.cli today`. Moving the card back works as usual.
 8. Comments: a stage change can carry a comment (`status_history.comment`); free comments go
-   to `application_comments`. `db.timeline` merges both by time for the card's history.
+   to `application_comments`. `db.timeline` merges both by time for the side panel's history.
 9. Next action: `applications.next_action` / `next_action_date` always hold the application's
    next open task (dated first, earliest first), set by `db.sync_next_action` whenever its
    tasks change. They are kept for older readers and no longer typed by hand;
@@ -124,7 +129,7 @@
    `force` for Redo). A partial unique index allows one open request per application and kind,
    so a double click never queues twice. Requests come from entering Interested
    (`db.stage_tasks`, so the Job Offers button, `/applied --status to_apply` and Move to
-   Interested all queue them), from the card's Research / CV fit buttons, and from
+   Interested all queue them), from the side panel's Research / CV fit buttons, and from
    `prep.cli research queue`. The `/research` skill loops on `prep.cli research next`, which
    claims one application's requests atomically (a claim older than 6 hours counts as pending
    again) and prints a work packet. For research it gives a verdict: reuse a profile younger than
@@ -140,7 +145,7 @@
    "cv fit", `gaps.application_id`), skipping any gap already open with the same text (ignoring
    case and spacing). The profile suggests a tier from the rubric in the skill (A: strong fit at
    a recognised or good employer; B: decent fit or less known; C: weak fit or risky); the user
-   confirms it on the card, which stores `applications.tier`.
+   confirms it in the side panel, which stores `applications.tier`.
 14. Picking up queued work without typing. A committed SessionStart hook
    (`.claude/settings.json`) runs `python3 -m prep.cli queue`. That command opens prep.db with
    `mode=ro`, creates nothing, and prints one line with counts and application ids only. A
@@ -174,9 +179,15 @@ style, and every label is escaped. The site is branded "getjo" in the page title
 Content-Security-Policy allows only these same-origin files (`script-src 'self'`, no inline
 script or style), and nothing is fetched from another host (no CDN, fonts or chart libraries).
 
-`app.js` is an enhancement only: it makes table headers sortable, scrolls a highlighted
-Applications card into view, shows the interview-date field of Move to… only for interview
-stages, makes the Job Offers filters live (selects and checkboxes reload with the new
+`app.js` is an enhancement only: it makes table headers sortable, opens the Applications side
+panel without a reload (it fetches the `?app=ID` page, swaps in only its panel and pushes the
+URL; Esc and ✕ close it), remembers the Board / List choice in `localStorage` (a URL without
+`view` gets the remembered one; storage errors are ignored), adds drag and drop between board
+columns with native HTML5 drag events (Interested, Applied and Offer move at once; Interviewing
+opens a `<dialog>` for the step, default the next one, and the interview date; Closed one for
+the outcome; every drop posts `/applications/move` with `Accept: application/json`, then the
+page reloads with the Moved toast; a drop on the card's own column does nothing), shows the
+interview-date field of Move to… only for interview stages, makes the Job Offers filters live (selects and checkboxes reload with the new
 query; company and role narrow the loaded rows as you type and update the URL), and sends forms marked `data-ajax` with `fetch` and
 `Accept: application/json`. For such requests the POST endpoints answer JSON
 (`{"ok": true, "message": …, "html": …}` or `{"ok": false, "message": …}` with status 400)
@@ -193,12 +204,7 @@ normally and redirects.
 | Dashboard `/` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks. It counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here | — |
 | Job Offers `/offers` | getjo jobs filtered by query string: `score` (minimum, 1–10, default 7; applies to new jobs only, and unscored new jobs never pass; decided jobs show at any score), `company` and `role` (case-insensitive substring), `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both), `show` (new default, interested, applied, skipped, all). New rows have exactly three actions: Applied, Interested, Skipped; interested rows offer Applied only (skipping a tracked job would mean withdrawing it); skipped rows offer Undo skip. Bad values fall back to defaults. Decided jobs that getjo has dropped show from their snapshot. `/matches` redirects here with its query; a message instead if getjo's database is missing or unreadable. `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/apply` (also the old `/matches/apply`), `/offers/interested`, `/offers/skip`, `/offers/unskip`. Applied and Interested redirect to `/applications?app=ID` (JSON: `redirect`), built from the application id only |
 | Research file `/research/file?app=ID&kind=research\|cv_fit` | the application's company profile or CV fit file, read-only: front matter as a table (any pay/salary key left out) and the body as minimal Markdown (headings, lists, paragraphs, all escaped). Only a path recorded in prep.db that resolves inside `private_dir` is read; anything else (no record, no `private_dir`, a path outside it) is a 404. A missing file shows "File missing" | — |
-| Applications `/applications` | a board: one lane per open stage (Interested … Offer) and a collapsed Closed lane (Rejected, No response, Withdrawn). A card (`<details>`, so it opens without the script) shows company, tier, role, days in stage, the next open task with its due date (overdue in red, today in amber) and a comment count; opened, it holds the open tasks (Done, Add), the job link, Move to… (any stage, interview date, comment), a comment box and the history, newest first. Its Research and CV fit section shows the company summary
-(what it does, size, sector, how well known, London/remote, suggested tier and reason, date)
-and the CV fit (score n/5, top 3 gaps, date), each with Open and a button: Research / CV fit
-queues the request, "… pending" (disabled) while queued, Redo once a result exists. A tier
-select confirms or changes the tier. The collapsed card shows "… pending" chips and the fit
-score. `?app=ID` renders that card open and highlighted (and opens the Closed lane if it is there); an unknown id is ignored. Below: General tasks (no application; add, done, sortable) and the 10 most recently done tasks with Reopen. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/comment`, `/applications/research`, `/applications/tier` (all redirect to `/applications?app=ID`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (forms on a card carry `return=/applications?app=ID`, so the card stays open) |
+| Applications `/applications` | a pipeline card and General tasks. The page state is in the query string, so every view renders without the script: `app=ID` opens the side panel, `view=board\|list`, `stage=interested\|applied\|interviewing\|offer\|closed` filters (unknown values are ignored). A stage strip shows the count per column and links to each filter (the active one clears it), next to Board / List links. The board has five columns (`web.BOARD_COLUMNS`): Interested (`to_apply`), Applied, Interviewing (`db.INTERVIEW_STAGES`), Offer, and Closed (Rejected, No response, Withdrawn), a narrow `<details>` strip with counts that expands (open when the panel or the filter is on a closed application). Stored statuses are unchanged. A card is a link to its panel with no forms: company and role (they wrap, never cut), on Interviewing cards one dot per interview step (done, current, ahead, in `INTERVIEW_STAGES` order) and the step label (Recruiter call, Coding, System design, Company interview), the next open task with its due date, tier, CV fit score, "… pending" chips, comment count and days in stage (Applied only: amber from day 7, red from `no_response_days` − 2). The list view is one table of open applications (closed ones only under the Closed filter): company, role, stage, next task, due, days, fit, tier; dated next tasks first (earliest first), then undated, then none, ties by days in stage. The side panel (`?app=ID`; an unknown id is ignored) holds the open tasks (Done, Add), Next stage (the next of Interested → Applied → Recruiter call → Coding → System design → Company interview → Offer, with an interview date when that is an interview step; none for Offer and closed), Move to… (any stage, interview date, comment), the company research and CV fit section (summary, Open, Research / CV fit / "… pending" / Redo) with the tier select, a comment box and the history, newest first. Its ✕ is a link to the same view without `app`; on screens up to 800px it is a full-screen sheet. A hidden `<dialog>` holds the drop choices for the script. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/comment`, `/applications/research`, `/applications/tier` (redirect to `/applications?app=ID`; a panel form's `return` for the same application keeps its `view` and `stage`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (panel forms carry the panel URL as `return`) |
 
 Without JavaScript, forms post and then redirect (303) back to the page (Job Offers forms carry
 a `return` field so the redirect keeps the filters; it is accepted only for the same path and
