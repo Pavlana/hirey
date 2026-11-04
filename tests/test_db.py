@@ -169,13 +169,10 @@ class StageTasksTest(DbTest):
 
     def test_stage_tasks(self) -> None:
         app_id = db.add_application(self.conn, "Acme", "Engineer")
-        self.assertEqual(len(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-01")), 1)
-        self.assertEqual(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-02"), [])  # idempotent
+        self.assertEqual(db.stage_tasks(self.conn, app_id, "to_apply", "2026-03-01"), [])  # the agent goes first
+        self.assertEqual({r["kind"] for r in db.open_requests(self.conn, app_id)}, {"research", "cv_fit"})
         db.stage_tasks(self.conn, app_id, "applied", "2026-03-02")
-        self.assertEqual(self.titles(app_id), [
-            ("Apply", "apply", "2026-03-04", "done"),
-            ("Chase if no reply", "admin", "2026-03-09", "todo"),
-        ])
+        self.assertEqual(self.titles(app_id), [("Chase if no reply", "admin", "2026-03-09", "todo")])
 
     def test_every_stage(self) -> None:
         expected = {
@@ -232,7 +229,7 @@ class StageTasksTest(DbTest):
         db.move_application(self.conn, app_id, "recruiter_call", "2026-03-11")
         app = db.get_application(self.conn, app_id)
         self.assertEqual(app["date_applied"], "2026-03-11")
-        self.assertEqual({t[0]: t[3] for t in self.titles(app_id)}["Apply"], "closed")
+        self.assertNotIn("Apply", {t[0] for t in self.titles(app_id)})
         withdrawn, _ = db.record_application(self.conn, "B", "r", status="to_apply", today=TODAY)
         db.move_application(self.conn, withdrawn, "withdrawn", TODAY)
         self.assertIsNone(db.get_application(self.conn, withdrawn)["date_applied"])
@@ -499,3 +496,87 @@ class MigrationTest(unittest.TestCase):
             db.move_application(conn, 1, "recruiter_call", TODAY)
             status = [r[0] for r in conn.execute("SELECT status FROM tasks ORDER BY id")]
             self.assertEqual(status[:4], ["closed", "todo", "closed", "todo"])
+
+
+class ReviewTaskTest(DbTest):
+    """Interested adds no Apply task; "Review research and apply" follows once both results are in."""
+    PROFILE = {"company": "Acme", "file_path": "/x/companies/acme.md", "researched_at": "2026-03-09",
+               "suggested_tier": "A"}
+
+    def open_titles(self, app_id: int) -> list[tuple]:
+        return [(t["title"], t["kind"], t["due_date"], t["stage"])
+                for t in db.list_tasks(self.conn, "todo") if t["application_id"] == app_id]
+
+    def interested(self, company: str = "Acme") -> int:
+        app_id, _ = db.record_application(self.conn, company, "Engineer", status="to_apply", today=TODAY)
+        return app_id
+
+    def test_created_once_both_results_are_in_either_order(self) -> None:
+        review = [("Review research and apply", "apply", "2026-03-12", "to_apply")]
+        first = self.interested()
+        self.assertEqual(self.open_titles(first), [])
+        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
+        self.assertEqual(self.open_titles(first), [], "only research is in")
+        db.save_cv_fit(self.conn, first, 4, [], "/x/fit/1-acme.md", "2026-01-01")  # an old checked_at
+        self.assertEqual([t[:2] for t in self.open_titles(first)], [review[0][:2]])
+        # the other order: CV fit first, then the company save adds it
+        second = self.interested("Globex")
+        db.save_cv_fit(self.conn, second, 3, [], "/x/fit/2-globex.md", TODAY)
+        self.assertEqual(self.open_titles(second), [])
+        db.save_company_profile(self.conn, "globex", {**self.PROFILE, "company": "Globex"}, today=TODAY)
+        self.assertEqual(self.open_titles(second), review)
+
+    def test_redo_adds_no_second_one_while_open(self) -> None:
+        app_id = self.interested()
+        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
+        db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/1-acme.md", TODAY)
+        db.queue_request(self.conn, app_id, "research", force=True)
+        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
+        db.save_cv_fit(self.conn, app_id, 5, [], "/x/fit/1-acme.md", TODAY)
+        self.assertEqual(len(self.open_titles(app_id)), 1)
+
+    def test_not_after_moving_on_and_done_on_applied(self) -> None:
+        later = self.interested()
+        db.move_application(self.conn, later, "applied", TODAY)
+        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
+        db.save_cv_fit(self.conn, later, 4, [], "/x/fit/1-acme.md", TODAY)
+        self.assertNotIn("Review research and apply", [t[0] for t in self.open_titles(later)])
+        # a second role at the same company gets it, and Applied marks it done
+        app_id = self.interested()
+        db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/2-acme.md", TODAY)
+        self.assertEqual(self.open_titles(app_id)[0][0], "Review research and apply")
+        db.move_application(self.conn, app_id, "applied", TODAY)
+        done = [t["status"] for t in db.list_tasks(self.conn, None)
+                if t["application_id"] == app_id and t["title"] == "Review research and apply"]
+        self.assertEqual(done, ["done"])
+
+    def test_old_apply_task_stays_and_review_is_added(self) -> None:
+        app_id = self.interested()
+        old = db.add_task(self.conn, "Apply", "apply", "2026-03-13", app_id, stage="to_apply")  # made before
+        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
+        db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/1-acme.md", TODAY)
+        self.assertEqual({t[0] for t in self.open_titles(app_id)}, {"Review research and apply", "Apply"})
+        db.move_application(self.conn, app_id, "applied", TODAY)
+        self.assertEqual(db.get_task(self.conn, old)["status"], "done")
+
+    def test_backfill_still_tags_old_apply_tasks(self) -> None:
+        self.assertIn(("Apply", "apply", 3), db.RETIRED_STAGE_TASKS["to_apply"])
+        self.assertEqual(db.STAGE_TASKS["to_apply"], ())
+
+
+class InterviewDateTest(DbTest):
+    def test_reschedule_moves_the_stage_tasks(self) -> None:
+        app_id, _ = db.record_application(self.conn, "Acme", "Engineer", today=TODAY)
+        db.move_application(self.conn, app_id, "technical", TODAY, interview_date="2026-03-20")
+        mine = db.add_task(self.conn, "Read their blog", "prep", "2026-03-15", app_id)  # hand-made: untouched
+        self.assertEqual(db.set_interview_date(self.conn, app_id, "technical", "2026-03-25", TODAY), (2, "2026-03-24"))
+        due = {t["title"]: t["due_date"] for t in db.list_tasks(self.conn) if t["application_id"] == app_id}
+        self.assertEqual(due, {"Coding practice": "2026-03-24", "Review the role's tech stack": "2026-03-24",
+                               "Read their blog": "2026-03-15"})
+        self.assertEqual(db.get_application(self.conn, app_id)["next_action"], "Read their blog")
+        # the same date again moves nothing; a date already past makes them due today
+        self.assertEqual(db.set_interview_date(self.conn, app_id, "technical", "2026-03-25", TODAY), (0, None))
+        self.assertEqual(db.set_interview_date(self.conn, app_id, "technical", "2026-03-01", TODAY), (2, TODAY))
+        self.assertEqual(db.get_task(self.conn, mine)["due_date"], "2026-03-15")
+        with self.assertRaises(ValueError):
+            db.set_interview_date(self.conn, app_id, "applied", "2026-03-25", TODAY)

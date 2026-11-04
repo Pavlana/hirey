@@ -35,7 +35,7 @@ INTERVIEW_STAGES = ("recruiter_call", "technical", "system_design", "final")
 # First tasks for an application entering a stage: (title, kind, days until due, or None for undated).
 # For INTERVIEW_STAGES the days apply only when no interview date is given.
 STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
-    "to_apply": (("Apply", "apply", 3),),
+    "to_apply": (),  # the agent researches first; REVIEW_TASK follows once both results are in
     "applied": (("Chase if no reply", "admin", 7),),
     "recruiter_call": (("Prepare for the call (questions, pitch, availability)", "prep", 2),),
     "technical": (("Coding practice", "drill", 2), ("Review the role's tech stack", "prep", 2)),
@@ -45,9 +45,13 @@ STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
     "rejected": (("Debrief — what to improve", "prep", 3),),
     "no_response": (("Debrief — what to improve", "prep", 3),),
 }
-# Auto tasks earlier versions created, which the agent now does instead of a to-do (company
-# research, CV fit). Kept only so _backfill_task_stages marks old ones as auto tasks.
-RETIRED_STAGE_TASKS = {"to_apply": (("Research the company", "prep", 2), ("Check CV fit / tailor CV", "prep", 2))}
+# Auto tasks earlier versions created: company research and the CV fit (the agent's job now) and
+# Apply (+3 on entering Interested, replaced by REVIEW_TASK). Kept only so _backfill_task_stages
+# marks old ones as auto tasks.
+RETIRED_STAGE_TASKS = {"to_apply": (("Research the company", "prep", 2), ("Check CV fit / tailor CV", "prep", 2),
+                                    ("Apply", "apply", 3))}
+# Added to an Interested application once both its company research and CV fit are saved (review_task).
+REVIEW_TASK = ("Review research and apply", "apply", 2)
 AUTO_COMMENT = "auto: no reply in {days} days"
 # Agent work queued for an application (done by the /research skill, never by the dashboard).
 REQUEST_KINDS = ("research", "cv_fit")
@@ -455,7 +459,7 @@ def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | 
                 interview_date: str | None = None) -> list[int]:
     """Set up the tasks for an application entering `stage` and return the new task ids.
 
-    Entering applied completes the open Apply task (applying is done). Open auto tasks from
+    Entering applied completes the open Interested apply tasks (Apply, Review research and apply). Open auto tasks from
     other stages are closed (status closed, not done). Then the stage's STAGE_TASKS are added,
     skipping a title the application already has open. For INTERVIEW_STAGES with an
     interview date, they are due the day before it (today if that has passed). Entering to_apply
@@ -464,8 +468,8 @@ def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | 
     today = today or today_iso()
     if stage == "applied":
         conn.execute(
-            "UPDATE tasks SET status = 'done', done_at = ? WHERE application_id = ? AND title = 'Apply' "
-            "AND kind = 'apply' AND status = 'todo'",
+            "UPDATE tasks SET status = 'done', done_at = ? WHERE application_id = ? AND kind = 'apply' "
+            "AND stage = 'to_apply' AND status = 'todo'",
             (now_iso(), app_id),
         )
     conn.execute(
@@ -494,6 +498,47 @@ def _stage_due(today: str, days: int | None, stage: str, interview_date: str | N
     if interview_date and stage in INTERVIEW_STAGES:
         return max(today, (date.fromisoformat(interview_date) - timedelta(days=1)).isoformat())
     return None if days is None else (date.fromisoformat(today) + timedelta(days=days)).isoformat()
+
+
+def set_interview_date(conn: sqlite3.Connection, app_id: int, stage: str, day: str,
+                       today: str | None = None) -> tuple[int, str | None]:
+    """Store a (new) interview date for the stage the application is in. When it differs from the
+    stage's latest date, its open auto tasks move to the day before it (today if that has passed).
+    Returns (tasks moved, their new due date or None)."""
+    today = today or today_iso()
+    _check("stage", stage, INTERVIEW_STAGES)
+    _check_date("interview_date", day)
+    latest = conn.execute(
+        "SELECT date FROM interviews WHERE application_id = ? AND stage = ? ORDER BY id DESC LIMIT 1",
+        (app_id, stage),
+    ).fetchone()
+    add_interview(conn, app_id, day, stage)
+    if latest is not None and latest[0] == day:
+        return 0, None
+    due = _stage_due(today, None, stage, day)
+    moved = conn.execute(
+        "UPDATE tasks SET due_date = ? WHERE application_id = ? AND stage = ? AND status = 'todo'",
+        (due, app_id, stage),
+    ).rowcount
+    conn.commit()
+    sync_next_action(conn, app_id)
+    return moved, due
+
+
+def review_task(conn: sqlite3.Connection, app_id: int, today: str | None = None) -> int | None:
+    """Add REVIEW_TASK to an Interested application once its company research and CV fit are both
+    saved, unless one is already open (a Redo adds no second one). Returns the new task id."""
+    app = get_application(conn, app_id)
+    if app is None or app["status"] != "to_apply":
+        return None
+    if company_profile(conn, company_slug(app["company"])) is None or cv_fit(conn, app_id) is None:
+        return None
+    title, kind, days = REVIEW_TASK
+    if conn.execute("SELECT 1 FROM tasks WHERE application_id = ? AND title = ? AND status = 'todo'",
+                    (app_id, title)).fetchone():
+        return None
+    return add_task(conn, title, kind, _stage_due(today or today_iso(), days, "to_apply", None), app_id,
+                    stage="to_apply")
 
 
 def sync_next_action(conn: sqlite3.Connection, app_id: int) -> None:
@@ -635,6 +680,13 @@ def linked_job_ids(conn: sqlite3.Connection) -> set[str]:
     return {r[0] for r in rows}
 
 
+def app_ids_by_job(conn: sqlite3.Connection) -> dict[str, int]:
+    """getjo job id -> its application id (the oldest one, as find_by_job)."""
+    rows = conn.execute("SELECT getjo_job_id, MIN(id) FROM applications WHERE getjo_job_id IS NOT NULL "
+                        "GROUP BY getjo_job_id")
+    return {r[0]: r[1] for r in rows}
+
+
 def excluded_job_ids(conn: sqlite3.Connection) -> set[str]:
     """getjo job ids that are no longer new: linked to an application, or decided."""
     rows = conn.execute("SELECT getjo_job_id FROM job_decisions")
@@ -684,6 +736,39 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
         raise ValueError("only a skip can be undone")
     conn.execute("DELETE FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,))
     conn.commit()
+
+
+def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
+    """Undo Interested on a job: delete the decision and the to_apply application it created, with
+    its queued requests, so the job is new again. Only while nothing else has happened to it: still
+    to_apply with one history row, no tasks, comments, interviews, gaps, CV fit or tier, and no
+    request taken by the agent. Raises ValueError otherwise. Returns the deleted application id."""
+    app = find_by_job(conn, getjo_job_id)
+    if app is None:
+        raise LookupError(f"no application for job {getjo_job_id}")
+    if app["status"] != "to_apply" or app["tier"]:
+        raise ValueError("It has moved on since; withdraw it from its card instead.")
+    app_id = app["id"]
+    used = conn.execute(
+        """
+        SELECT (SELECT COUNT(*) FROM status_history WHERE application_id = :id) != 1
+            OR EXISTS (SELECT 1 FROM tasks WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM application_comments WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM agent_requests WHERE application_id = :id AND status != 'pending')
+        """,
+        {"id": app_id},
+    ).fetchone()[0]
+    if used:
+        raise ValueError("It has moved on since; withdraw it from its card instead.")
+    with conn:  # one transaction: all or nothing
+        for table in ("agent_requests", "status_history"):
+            conn.execute(f"DELETE FROM {table} WHERE application_id = ?", (app_id,))
+        conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
+        conn.execute("DELETE FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,))
+    return app_id
 
 
 def job_decisions(conn: sqlite3.Connection) -> dict[str, dict]:
@@ -991,9 +1076,10 @@ PROFILE_FIELDS = (
 )
 
 
-def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict) -> list[int]:
-    """Store (or replace) a company's research summary and finish the open research requests of
-    every application at that company. Returns those application ids."""
+def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict, today: str | None = None) -> list[int]:
+    """Store (or replace) a company's research summary, finish the open research requests of every
+    application at that company and add the review task where the CV fit is in too (review_task).
+    Returns those application ids."""
     unknown = set(profile) - set(PROFILE_FIELDS)
     if unknown:
         raise ValueError(f"unknown profile fields: {', '.join(sorted(unknown))}")
@@ -1013,6 +1099,8 @@ def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict) -> 
     conn.commit()
     app_ids = applications_at(conn, slug)
     finish_requests(conn, app_ids, "research")
+    for app_id in app_ids:
+        review_task(conn, app_id, today)
     return app_ids
 
 
@@ -1028,8 +1116,9 @@ def company_profile(conn: sqlite3.Connection, slug: str) -> dict | None:
 def save_cv_fit(conn: sqlite3.Connection, app_id: int, score: int, gaps: list[str], file_path: str,
                 day: str | None = None) -> list[int]:
     """Store (or replace) an application's CV fit summary (score 1-5, its first 3 gaps), add its
-    gaps to the gaps table (session "cv fit", skipping ones already open) and finish its open
-    cv_fit request. Returns the new gap ids."""
+    gaps to the gaps table (session "cv fit", skipping ones already open), finish its open cv_fit
+    request and add the review task when the company research is in too (review_task). Returns
+    the new gap ids."""
     day = day or today_iso()
     _check_date("checked_at", day)
     if get_application(conn, app_id) is None:
@@ -1044,6 +1133,7 @@ def save_cv_fit(conn: sqlite3.Connection, app_id: int, score: int, gaps: list[st
     conn.commit()
     new = add_open_gaps(conn, gaps, FIT_GAP_SESSION, app_id, day)
     finish_requests(conn, [app_id], "cv_fit")
+    review_task(conn, app_id)  # due from today, not from the file's checked_at
     return new
 
 

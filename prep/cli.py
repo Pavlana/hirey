@@ -184,6 +184,8 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print("\n".join(f"    {_task_line(t)}" for t in tasks))
     if queued:
         print(f"  queued for the agent: {_kinds(queued)} (run /research)")
+    if app["status"] == "to_apply":
+        print(f"  a \"{db.REVIEW_TASK[0]}\" task follows once company research and CV fit are both saved")
     return 0
 
 
@@ -223,8 +225,10 @@ def _same_stage(conn: sqlite3.Connection, args: argparse.Namespace) -> None:
         db.add_comment(conn, args.app_id, args.comment)
         saved.append("comment saved")
     if args.interview_date and args.status in db.INTERVIEW_STAGES:
-        db.add_interview(conn, args.app_id, args.interview_date, args.status)
+        moved, due = db.set_interview_date(conn, args.app_id, args.status, args.interview_date)
         saved.append(f"interview date {args.interview_date} saved")
+        if moved:
+            saved.append(f"{moved} prep task{'s' if moved != 1 else ''} moved to {due}")
     elif args.interview_date:
         saved.append("--interview-date not saved (not an interview stage)")
     print(f"Already {db.status_label(args.status)}: nothing moved" + "".join(f"; {s}" for s in saved))
@@ -471,12 +475,26 @@ def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
         raise SystemExit(f"error: no file at {path}")
     profile = research.read_profile(path)
     profile["company"] = profile["company"] or app["company"]
+    mark = _last_task_id(conn)
     app_ids = db.save_company_profile(conn, slug, profile)
     log.info("company profile %s saved", slug)
     tier = f", suggested tier {profile['suggested_tier']}" if profile["suggested_tier"] else ""
     print(f"Saved company profile {slug} ({profile['researched_at']}{tier}); "
           f"research done for applications {', '.join(map(str, app_ids))}")
+    _print_review_tasks(conn, mark)
     return 0
+
+
+def _last_task_id(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tasks").fetchone()[0]
+
+
+def _print_review_tasks(conn: sqlite3.Connection, after_id: int) -> None:
+    """Review tasks a save just added (both results are in for an Interested application)."""
+    rows = conn.execute("SELECT * FROM tasks WHERE id > ? AND title = ? ORDER BY id",
+                        (after_id, db.REVIEW_TASK[0]))
+    for t in rows:
+        print(f"  both results in for #{t['application_id']}: added {_task_line(dict(t))}")
 
 
 def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -488,10 +506,12 @@ def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
     fit = research.read_fit(path)
+    mark = _last_task_id(conn)
     new_gaps = db.save_cv_fit(conn, args.app_id, fit["score"], fit["gaps"], str(path), fit["checked_at"])
     log.info("cv fit saved for application %s", args.app_id)  # never the gaps or the CV
     print(f"Saved CV fit for #{args.app_id}: {fit['score']}/5, {len(fit['gaps'])} gaps "
           f"({len(new_gaps)} new in the gaps list)")
+    _print_review_tasks(conn, mark)
     return 0
 
 

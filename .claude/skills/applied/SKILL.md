@@ -5,8 +5,8 @@ description: Record a job application in inter_prep from a getjo job id, a job U
 
 # /applied
 
-Records an application. It never submits anything anywhere. Same rules as the Applied and
-Interested buttons on the dashboard's Job Offers page.
+Records an application. It never submits anything anywhere. Same rules as the Interested button
+on the dashboard's Job Offers page and the Apply button in an Interested card's panel.
 
 1. Work out what identifies the job:
    - a getjo id (`source:company:job_id`, as shown by `/today`) → `--job-id`
@@ -30,9 +30,11 @@ Interested buttons on the dashboard's Job Offers page.
    Dates take `YYYY-MM-DD`, `today`, `tomorrow` or `+N` days. Running it again for the same
    job updates the existing row and never moves it back to an earlier stage.
    The first tasks are created automatically:
-   - Interested: Apply (due in 3 days). Company research and a CV fit check are queued for
-     the agent; the output says so. Offer to run /research now.
-   - Applied: Chase if no reply (due in 7 days); an open Apply task is marked done.
+   - Interested: no task yet. Company research and a CV fit check are queued for the agent;
+     the output says so. Offer to run /research now. Once both are saved, a "Review research
+     and apply" task (due in 2 days) appears.
+   - Applied: Chase if no reply (due in 7 days); an open Review research and apply (or older
+     Apply) task is marked done.
 
 4. Report the printed line in one or two sentences: what was recorded, whether it was linked
    to a getjo job, and the tasks created. If the output says several getjo jobs matched, show

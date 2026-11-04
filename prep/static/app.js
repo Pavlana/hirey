@@ -504,6 +504,18 @@
         const place = removeRow(row, tableId);
         const params = { task_id: form.elements.task_id.value };
         toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/tasks/reopen", params, tableId) } });
+      } else if (mode === "interested" && row) {
+        // Job Offers: the row stays, its actions cell becomes "Interested · research queued".
+        const cell = form.closest("td");
+        const before = Array.from(cell.childNodes);
+        cell.innerHTML = reply.html; // a cell the server built and escaped
+        row.classList.add("is-new");
+        const params = new URLSearchParams({ job_id: form.elements.job_id.value });
+        const undoIt = () => post("/offers/uninterested", params)
+          .then((r) => { cell.replaceChildren(...before); toast(r.message); })
+          .catch((err) => toast(err.message, { error: true }));
+        // Undo only for an application this click created (never one that existed before).
+        toast(reply.message, reply.created ? { action: { label: "Undo", run: undoIt } } : {});
       } else if (mode === "add-row") {
         const table = document.getElementById(form.dataset.target);
         if (!table || !reply.html) { location.reload(); return; } // was an empty state

@@ -55,7 +55,10 @@
    (`cli apps`), runs `cli update ID --status S [--interview-date D] --comment "summary"` (a short
    summary, never the whole email or pay), and adds extra to-dos with `cli task add --app ID`.
    `cli update` to the stage the application is already in moves nothing but still saves the
-   comment (as a free comment) and, for an interview stage, the interview date. Every status change
+   comment (as a free comment) and, for an interview stage, the interview date
+   (`db.set_interview_date`); when that date differs from the stage's latest one, the stage's
+   open auto tasks move to the day before it (today if it has passed), so a rescheduled
+   interview keeps its prep on time. Hand-made tasks keep their dates. Every status change
    goes through `db.move_application` (Move to… on the board, `cli update --status`,
    `record_application` and the no-response check): it writes a `status_history` row with
    the optional comment, sets `date_applied` the first time the application is sent, stores
@@ -68,11 +71,14 @@
    stages (status `closed`, which is not `done`: they drop off the to-do list without
    showing under Recently done),
    then adds the stage's tasks, skipping a title the application already has open (moving
-   back into a stage creates fresh ones). Interested: Apply (+3). Company research and the CV
-   fit check are the agent's job, not to-dos (planned separately); older "Research the
-   company" and "Check CV fit / tailor CV" tasks count as Interested auto tasks
-   (`db.RETIRED_STAGE_TASKS`) and close when the application moves on. Applied: Chase if no reply (+7), and the open Apply task is
-   marked done. Recruiter call: Prepare for the call. Coding interview: Coding practice and
+   back into a stage creates fresh ones). Interested: none at once; the agent does its homework
+   first (step 13). When company research and the CV fit are both saved for an application
+   still in Interested, `db.review_task` adds "Review research and apply" (`db.REVIEW_TASK`,
+   kind apply, +2), called from both saves, so the order does not matter; a Redo adds no
+   second one while one is open. Older "Apply" (+3), "Research the company" and "Check CV fit /
+   tailor CV" tasks count as Interested auto tasks (`db.RETIRED_STAGE_TASKS`); open ones stay as
+   they are and close when the application moves on. Applied: Chase if no reply (+7), and the
+   open Interested apply tasks (Review research and apply, or an older Apply) are marked done. Recruiter call: Prepare for the call. Coding interview: Coding practice and
    Review the role's tech stack. System design: System design practice. Company interview:
    Prepare stories, company values, questions to ask. Interview-stage tasks are due the day
    before the interview date (today if that has passed; +2 days without a date). Offer:
@@ -100,15 +106,19 @@
 10. The dashboard (`python -m prep.web`) reads and writes the same `prep.db`. Each request
    opens a fresh connection (and a fresh read-only getjo connection for the Job Offers page),
    so the skills and the browser see each other's writes on the next request, without a
-   restart. Applied and Interested on the Job Offers page and `/applied --job-id` all go
-   through `db.record_application`, so they behave the same way (one application per getjo
+   restart. Interested on the Job Offers page, `/applied --job-id` and the old `/offers/apply`
+   endpoint (no button any more) all go through `db.record_application`, so they behave the same way (one application per getjo
    job, never moved back to an earlier stage; an explicit `to_apply` never replaces a later
    status).
 11. Job Offers triage writes `job_decisions`: one row per getjo job, `interested`, `applied`
    or `skipped` with a reason (`db.SKIP_REASONS`: location, seniority, role_type, stack, company, pay,
    contract_type, other) and an optional comment. The row copies the job's company, title, location, score,
    url and source at decision time, so the label still reads correctly after getjo drops the
-   job. Undo deletes a skip row; an applied row is never undone there. Applications linked to
+   job. Undo deletes a skip row; an applied row is never undone there. Undo after Interested
+   (`db.undo_interested`) deletes the decision and the `to_apply` application with its queued
+   requests, in one transaction, only while nothing else has happened to it (one history row;
+   no tasks, comments, interviews, gaps, CV fit or tier; no request claimed by the agent), so
+   the job is new again; otherwise it is refused and the card's Move to… withdraws it. Applications linked to
    a getjo job without a row (recorded before the table existed) count as applied when read
    (`db.job_decisions`). A job with a linked application reads its label from the live
    status: `interested` while it is `to_apply`, `applied` once it moves on (a skip stays a
@@ -193,7 +203,10 @@ query; company and role narrow the loaded rows as you type and update the URL), 
 (`{"ok": true, "message": …, "html": …}` or `{"ok": false, "message": …}` with status 400)
 instead of a redirect; `html` is a server-rendered, escaped table row (a newly added general task).
 Results show as toasts; marking a task done offers Undo, which posts `/tasks/reopen`, and a
-skip offers Undo, which posts `/offers/unskip`. A row's Skipped link opens a `<dialog>` with
+skip offers Undo, which posts `/offers/unskip`. Interested on Job Offers swaps the row's
+actions cell for the reply's `html` ("Interested · research queued" and an Open card link) and
+offers Undo, which posts `/offers/uninterested` and puts the old cell back; Undo is offered
+only when the reply says `created` (never for an application that existed before). A row's Skipped link opens a `<dialog>` with
 one button per skip reason and a comment box; it posts `/offers/skip` with the clicked reason
 (`FormData(form, submitter)`). Without JavaScript the link opens `GET /offers/skip`, a plain
 form (reason select + comment) that changes nothing until posted, and every form posts
@@ -202,9 +215,9 @@ normally and redirects.
 | Page | Shows | Writes |
 |------|-------|--------|
 | Dashboard `/` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks. It counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here | — |
-| Job Offers `/offers` | getjo jobs filtered by query string: `score` (minimum, 1–10, default 7; applies to new jobs only, and unscored new jobs never pass; decided jobs show at any score), `company` and `role` (case-insensitive substring), `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both), `show` (new default, interested, applied, skipped, all). New rows have exactly three actions: Applied, Interested, Skipped; interested rows offer Applied only (skipping a tracked job would mean withdrawing it); skipped rows offer Undo skip. Bad values fall back to defaults. Decided jobs that getjo has dropped show from their snapshot. `/matches` redirects here with its query; a message instead if getjo's database is missing or unreadable. `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/apply` (also the old `/matches/apply`), `/offers/interested`, `/offers/skip`, `/offers/unskip`. Applied and Interested redirect to `/applications?app=ID` (JSON: `redirect`), built from the application id only |
+| Job Offers `/offers` | getjo jobs filtered by query string: `score` (minimum, 1–10, default 7; applies to new jobs only, and unscored new jobs never pass; decided jobs show at any score), `company` and `role` (case-insensitive substring), `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both), `show` (new default, interested, applied, skipped, all). New rows have two actions: Interested and Skipped (applying happens on the board, after the agent's research); interested and applied rows link to their card (Open card; skipping a tracked job would mean withdrawing it); skipped rows offer Undo skip. Bad values fall back to defaults. Decided jobs that getjo has dropped show from their snapshot. `/matches` redirects here with its query; a message instead if getjo's database is missing or unreadable. `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/interested`, `/offers/uninterested`, `/offers/skip`, `/offers/unskip`, and `/offers/apply` (also the old `/matches/apply`; no button, kept for old forms). Interested stays on Job Offers (plain post: back with the filters and a banner; JSON: `html`, `app_id`, `created`); `/offers/apply` redirects to `/applications?app=ID` (JSON: `redirect`), built from the application id only |
 | Research file `/research/file?app=ID&kind=research\|cv_fit` | the application's company profile or CV fit file, read-only: front matter as a table (any pay/salary key left out) and the body as minimal Markdown (headings, lists, paragraphs, all escaped). Only a path recorded in prep.db that resolves inside `private_dir` is read; anything else (no record, no `private_dir`, a path outside it) is a 404. A missing file shows "File missing" | — |
-| Applications `/applications` | a pipeline card and General tasks. The page state is in the query string, so every view renders without the script: `app=ID` opens the side panel, `view=board\|list`, `stage=interested\|applied\|interviewing\|offer\|closed` filters (unknown values are ignored). A stage strip shows the count per column and links to each filter (the active one clears it), next to Board / List links. The board has five columns (`web.BOARD_COLUMNS`): Interested (`to_apply`), Applied, Interviewing (`db.INTERVIEW_STAGES`), Offer, and Closed (Rejected, No response, Withdrawn), a narrow `<details>` strip with counts that expands (open when the panel or the filter is on a closed application). Stored statuses are unchanged. A card is a link to its panel with no forms: company and role (they wrap, never cut), on Interviewing cards one dot per interview step (done, current, ahead, in `INTERVIEW_STAGES` order) and the step label (Recruiter call, Coding, System design, Company interview), the next open task with its due date, tier, CV fit score, "… pending" chips, comment count and days in stage (Applied only: amber from day 7, red from `no_response_days` − 2). The list view is one table of open applications (closed ones only under the Closed filter): company, role, stage, next task, due, days, fit, tier; dated next tasks first (earliest first), then undated, then none, ties by days in stage. The side panel (`?app=ID`; an unknown id is ignored) holds the open tasks (Done, Add), Next stage (the next of Interested → Applied → Recruiter call → Coding → System design → Company interview → Offer, with an interview date when that is an interview step; none for Offer and closed), Move to… (any stage, interview date, comment), the company research and CV fit section (summary, Open, Research / CV fit / "… pending" / Redo) with the tier select, a comment box and the history, newest first. Its ✕ is a link to the same view without `app`; on screens up to 800px it is a full-screen sheet. A hidden `<dialog>` holds the drop choices for the script. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/comment`, `/applications/research`, `/applications/tier` (redirect to `/applications?app=ID`; a panel form's `return` for the same application keeps its `view` and `stage`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (panel forms carry the panel URL as `return`) |
+| Applications `/applications` | a pipeline card and General tasks. The page state is in the query string, so every view renders without the script: `app=ID` opens the side panel, `view=board\|list`, `stage=interested\|applied\|interviewing\|offer\|closed` filters (unknown values are ignored). A stage strip shows the count per column and links to each filter (the active one clears it), next to Board / List links. The board has five columns (`web.BOARD_COLUMNS`): Interested (`to_apply`), Applied, Interviewing (`db.INTERVIEW_STAGES`), Offer, and Closed (Rejected, No response, Withdrawn), a narrow `<details>` strip with counts that expands (open under `?stage=closed`; an open panel never expands it, which would push the board sideways at laptop width). Stored statuses are unchanged. A card is a link to its panel with no forms: company and role (they wrap, never cut), on Interviewing cards one dot per interview step (done, current, ahead, in `INTERVIEW_STAGES` order) and the step label (Recruiter call, Coding, System design, Company interview), the next open task with its due date, tier, CV fit score, "… pending" chips (Interested cards instead show "Researching…" while either request is open, or "Ready: fit N/5 · tier X" once both results exist; the tier is the confirmed one, else the suggested one: `web.research_state`), comment count and days in stage (Applied only: amber from day 7, red from `no_response_days` − 2). The list view is one table of open applications (closed ones only under the Closed filter): company, role, stage, next task, due, days, fit, tier; dated next tasks first (earliest first), then undated, then none, ties by days in stage. While the panel is open, a CSS rule hides the list's Days, Fit and Tier columns (they are in the panel), so it also holds when the script opens or closes the panel. The side panel (`?app=ID`; an unknown id is ignored) starts, for an Interested application, with an action row: the research state, Company research, CV fit (as below) and Apply, a `<details>` confirm ("Mark as applied today?") that posts `/applications/apply` (`db.move_application` to applied, only from `to_apply`, as Next stage: Applied, which the row replaces). Then the open tasks (Done, Add), Next stage (the next of Interested → Applied → Recruiter call → Coding → System design → Company interview → Offer, with an interview date when that is an interview step; none for Offer and closed), Move to… (any stage, interview date, comment), the company research and CV fit section (summary, Open, Research / CV fit / "… pending" / Redo; for Interested the buttons are in the action row) with the tier select, a comment box and the history, newest first. Its ✕ is a link to the same view without `app`; on screens up to 800px it is a full-screen sheet. A hidden `<dialog>` holds the drop choices for the script. `/tasks` redirects here with its query | POST `/applications/move`, `/applications/apply`, `/applications/comment`, `/applications/research`, `/applications/tier` (redirect to `/applications?app=ID`; a panel form's `return` for the same application keeps its `view` and `stage`), `/tasks/add`, `/tasks/done`, `/tasks/reopen` (panel forms carry the panel URL as `return`) |
 
 Without JavaScript, forms post and then redirect (303) back to the page (Job Offers forms carry
 a `return` field so the redirect keeps the filters; it is accepted only for the same path and

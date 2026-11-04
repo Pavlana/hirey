@@ -48,7 +48,8 @@ Stages (`--status` value → what the user sees):
   with that date.
 - A take-home test, a second round of the same kind, or a rescheduled call is not a new stage.
   Use the current stage with the new date (the command keeps the date and the comment), or a
-  comment alone.
+  comment alone. A new date moves the stage's open prep tasks to the day before it (today if
+  that has passed); the output says "N prep tasks moved to DATE".
 - Moving backwards is allowed, but only when the text clearly says so.
 - If the stage is genuinely ambiguous ("next steps soon"), record a comment and do not move it.
 
@@ -82,4 +83,4 @@ One or two lines, from the command output. For example:
 > Added: Send availability to Sam (due 5 Nov).
 
 If the command printed "Already …: nothing moved", say what was saved instead (comment,
-interview date). If something failed, say so plainly with the error line.
+interview date, prep tasks moved). If something failed, say so plainly with the error line.

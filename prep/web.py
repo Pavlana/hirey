@@ -80,7 +80,9 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
     "applied": "Recorded as applied. Its panel shows the first tasks.",
-    "interested": "Saved as interested. Its panel shows the first tasks.",
+    "interested": "Interested · research queued. The agent researches the company and checks the CV fit.",
+    "uninterested": "Interested undone; the job is new again.",
+    "applied_today": "Marked as applied today. Chase if no reply is due in 7 days.",
     "moved": "Moved. The stage's tasks are in its panel.",
     "commented": "Comment added.",
     "skipped": "Skipped. It no longer appears in new job offers.",
@@ -308,8 +310,18 @@ def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
 
 
 def mark_interested(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Interested: track the getjo job as to_apply, then go to its card."""
+    """Interested: track the getjo job as to_apply (which queues the agent's research) and stay on
+    Job Offers. The JSON reply holds the row's new actions cell and whether Undo may delete it."""
     return _track_offer(settings, conn, form, today, "interested")
+
+
+def unmark_interested(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
+    """Undo Interested: delete the application it created while nothing else has happened to it."""
+    job_id = form.get("job_id")
+    if not job_id:
+        raise BadRequest("job_id is missing.")
+    app_id = db.undo_interested(conn, job_id)
+    log.info("interested undone from the dashboard; application %s deleted", app_id)
 
 
 def _track_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str,
@@ -319,17 +331,21 @@ def _track_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     if decided and decided["decision"] == "skipped":
         raise BadRequest("This job is skipped; undo the skip first.")
     if decision == "applied":
-        app_id, _ = db.record_application(
+        app_id, created = db.record_application(
             conn, job["company"], job["title"], getjo_job_id=job["id"], link=job["url"], source=job["source"],
             date_applied=None if decided and decided["decision"] == "applied" else today, today=today)
     else:
-        app_id, _ = db.record_application(
+        app_id, created = db.record_application(
             conn, job["company"], job["title"], getjo_job_id=job["id"], link=job["url"], source=job["source"],
             status="to_apply", today=today)
     status = db.get_application(conn, app_id)["status"]
     db.record_decision(conn, job, "interested" if status == "to_apply" else "applied")
     log.info("application %s recorded from the dashboard as %s", app_id, decision)
-    return {"redirect": f"/applications?app={app_id}"}
+    if decision == "applied":
+        return {"redirect": f"/applications?app={app_id}"}
+    # Interested stays on Job Offers: a plain post returns there with its filters
+    queued = bool(db.open_requests(conn, app_id))  # a reused application may have nothing queued
+    return {"html": _tracked_cell(app_id, status, queued), "app_id": app_id, "created": created}
 
 
 def skip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -389,6 +405,15 @@ def move_application(settings: Settings, conn: sqlite3.Connection, form: dict[st
     interview = _optional(form, "interview_date") if status in db.INTERVIEW_STAGES else None
     db.move_application(conn, app_id, status, today, comment, interview)
     log.info("application %s moved to %s from the dashboard", app_id, status)  # never the comment
+    return {"redirect": _here(app_id)}
+
+
+def apply_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The panel's Apply (after its confirm): Interested → Applied today, as Next stage: Applied."""
+    app_id = _app_id(conn, form)
+    if not db.move_application(conn, app_id, "applied", today, only_from="to_apply"):
+        raise BadRequest("It is no longer Interested; use Move to… instead.")
+    log.info("application %s marked applied from the panel", app_id)
     return {"redirect": _here(app_id)}
 
 
@@ -455,8 +480,10 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/offers/interested": (mark_interested, "/offers", "interested"),
     "/offers/skip": (skip_offer, "/offers", "skipped"),
     "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
+    "/offers/uninterested": (unmark_interested, "/offers", "uninterested"),
     "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
     "/applications/move": (move_application, "/applications", "moved"),
+    "/applications/apply": (apply_application, "/applications", "applied_today"),
     "/applications/comment": (comment_application, "/applications", "commented"),
     "/applications/research": (queue_research, "/applications", "research_queued"),
     "/applications/tier": (set_tier, "/applications", "tier_set"),
@@ -594,6 +621,7 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
         return "Job Offers", subtitle, _banner(f"Could not read the getjo database: {e}.", "warning")
 
     found = filter_offers(new_jobs, decided_jobs, decisions, f)
+    app_ids = db.app_ids_by_job(conn)
     here = "/offers?" + urlencode(
         [(k, v) for k, v in (("score", f["score"]), ("company", f["company"]), ("role", f["role"]),
                              *(("loc", loc) for loc in f["loc"]), ("show", f["show"])) if v != ""])
@@ -610,7 +638,7 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
         )
         if f["show"] != "new":
             cells += (_decision_cell(decision),)
-        cells += (_offer_actions(job, decision, f["show"], here),)
+        cells += (_offer_actions(job, decision, f["show"], here, app_ids.get(job["id"])),)
         rows.append(cells)
         attrs.append(f'data-company="{h((job["company"] or "").lower())}" '
                      f'data-role="{h((job["title"] or "").lower())}"')
@@ -661,27 +689,38 @@ def _decision_cell(decision: dict | None) -> str:
     return f'{badge} {h(reason)}{comment}'
 
 
-def _offer_actions(job: dict, decision: dict | None, show: str, here: str) -> str:
-    """Applied · Interested · Skipped for a new job, Applied for an interested one, Undo for a
-    skipped one. Applied and Interested post and land on the job's tasks. Skipped links to the
-    skip form page; the page script opens the skip dialog instead and removes the row."""
+def _offer_actions(job: dict, decision: dict | None, show: str, here: str, app_id: int | None) -> str:
+    """Interested · Skipped for a new job, Open card for a tracked one, Undo for a skipped one.
+    Applying happens on the Applications board, after the agent's research. Interested stays on
+    this page (the script swaps the cell and offers Undo). Skipped links to the skip form page;
+    the script opens the skip dialog instead and removes the row."""
     keep = f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-    applied = (f'<form method="post" action="/offers/apply" class="inline">{keep}'
-               + _button("Applied", size="sm") + "</form>")
-    if decision is not None and decision["decision"] == "interested":
-        return applied  # already tracked: skipping it would mean withdrawing the application
     if decision is None:
-        interested = (f'<form method="post" action="/offers/interested" class="inline">{keep}'
+        interested = (f'<form method="post" action="/offers/interested" class="inline" data-ajax="interested">{keep}'
                       + _button("Interested", "secondary", size="sm") + "</form>")
         skip_url = "/offers/skip?" + urlencode([("job_id", job["id"]), ("return", here)])
         skipped = (f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(job["id"])}"'
                    f'{" data-remove" if show == "new" else ""}>Skipped</a>')
-        return f'<div class="offer-actions">{applied}{interested}{skipped}</div>'
+        return f'<div class="offer-actions">{interested}{skipped}</div>'
     if decision["decision"] == "skipped":
         ajax = ' data-ajax="remove-row"' if show == "skipped" else ""
         return (f'<form method="post" action="/offers/unskip" class="inline"{ajax}>{keep}'
                 + _button("Undo skip", "ghost", "sm") + "</form>")
-    return ""
+    return _open_card(app_id)
+
+
+def _open_card(app_id: int | None) -> str:
+    return f'<a class="btn btn-ghost btn-sm" href="{h(_here(app_id))}">Open card</a>' if app_id is not None else ""
+
+
+def _tracked_cell(app_id: int, status: str, queued: bool = False) -> str:
+    """A row's actions cell once its job is tracked (the Interested reply swaps it in)."""
+    if status == "to_apply":
+        label = "Interested · research queued" if queued else "Interested"
+    else:
+        label = _status_label(status)
+    return f'<div class="offer-actions"><span class="offer-state">{h(label)}</span>{_open_card(app_id)}</div>'
+
 
 
 def _skip_dialog() -> str:
@@ -817,7 +856,7 @@ def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
     if not rows:
         main = _empty("No applications yet.", "Mark a job Applied or Interested on Job Offers, or use /applied.")
     else:
-        main = (_stage_strip(rows, f) + _board(shown, f, card, focus)
+        main = (_stage_strip(rows, f) + _board(shown, f, card)
                 + _app_list(shown, f, today) + _move_dialog())
     panel = _panel(conn, focus, today, f) if focus else ""
     layout = (f'<div class="apps" data-view="{f["view"]}">'
@@ -845,15 +884,17 @@ def _stage_strip(rows: list[dict], f: dict) -> str:
             f'<div class="view-toggle" role="group" aria-label="View">{views}</div></div>')
 
 
-def _board(rows: list[dict], f: dict, card: Callable[[dict], str], focus: dict | None) -> str:
-    """Five columns; with a stage filter only that column. Closed is a strip that expands."""
+def _board(rows: list[dict], f: dict, card: Callable[[dict], str]) -> str:
+    """Five columns; with a stage filter only that column. Closed is a strip that expands, open
+    only under ?stage=closed (never because the panel shows a closed application: at laptop
+    width it would push the board sideways)."""
     columns = []
     for col, label in COLUMN_LABELS.items():
         if f["stage"] and col != f["stage"]:
             continue
         mine = [r for r in rows if r["column"] == col]
         if col == "closed":
-            columns.append(_closed_column(mine, card, bool(f["stage"]) or (focus is not None and focus in mine)))
+            columns.append(_closed_column(mine, card, bool(f["stage"])))
             continue
         body = "".join(card(r) for r in mine) or '<p class="col-empty">–</p>'
         columns.append(f'<section class="col" aria-label="{h(label)}" data-drop="{col}">'
@@ -888,12 +929,19 @@ def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool
     age_text = _age_text(days)
     age = (f'<span class="age{" age-" + tone if tone else ""}" title="{h(age_text)}">'
            f'{"today" if days <= 0 else f"{days}d"}</span>')
-    badges = [_tier_badge(app["tier"]) if app["tier"] else ""]
-    fit = r["found"]["fit"]
-    if fit and "cv_fit" not in r["found"]["open"]:
-        badges.append(f'<span class="chip" title="CV fit">fit {h(fit["score"])}/5</span>')
-    badges += [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
-               for k in db.REQUEST_KINDS if k in r["found"]["open"]]
+    state = research_state(app, r["found"])
+    state_line = ""
+    if state:  # Interested: Researching… or Ready (fit and tier) on its own line, not separate chips
+        text, ready = state
+        state_line = f'<span class="app-state"><span class="chip {"chip-ready" if ready else "chip-pending"}">{h(text)}</span></span>'
+        badges = []
+    else:
+        badges = [_tier_badge(app["tier"]) if app["tier"] else ""]
+        fit = r["found"]["fit"]
+        if fit and "cv_fit" not in r["found"]["open"]:
+            badges.append(f'<span class="chip" title="CV fit">fit {h(fit["score"])}/5</span>')
+        badges += [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
+                   for k in db.REQUEST_KINDS if k in r["found"]["open"]]
     if r["column"] == "closed":
         badges.insert(0, _status_badge(app["status"]))
     comments = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{r["comments"]}</span>'
@@ -902,8 +950,24 @@ def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool
     return (f'<a class="{css}" id="app-{h(app["id"])}" href="{h(href)}" draggable="true" data-app="{h(app["id"])}" '
             f'data-column="{r["column"]}" data-status="{h(app["status"])}">'
             f'<strong class="app-head">{h(app["company"])}</strong><span class="app-role">{h(app["role"])}</span>'
-            f'{step_dots(app["status"])}{next_line}'
+            f'{step_dots(app["status"])}{next_line}{state_line}'
             f'<span class="app-meta"><span class="app-badges">{"".join(badges)}</span>{comments}{age}</span></a>')
+
+
+def research_state(app: dict, found: dict) -> tuple[str, bool] | None:
+    """An Interested application's research state: ("Researching…", False) while company research
+    or the CV fit is queued, ("Ready: fit N/5 · tier X", True) once both results are in (tier: the
+    confirmed one, else the suggested one, left out when neither). None otherwise."""
+    if app["status"] != "to_apply":
+        return None
+    if found["open"]:
+        return "Researching…", False
+    profile, fit = found["profile"], found["fit"]
+    if not (profile and fit):
+        return None
+    tier = app["tier"] or profile["suggested_tier"]
+    # no-break spaces keep "fit 4/5" and "tier A" whole when a narrow card wraps the chip
+    return f'Ready: fit\u00a0{fit["score"]}/5' + (f" · tier\u00a0{tier}" if tier else ""), True
 
 
 def _age_text(days: int) -> str:
@@ -949,9 +1013,10 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
         '<input type="date" name="due_date" aria-label="Due date">'
         + _button("Add", "secondary", "sm") + "</form>"
     )
+    interested = app["status"] == "to_apply"
     nxt = next_stage(app["status"])
     next_form = ""
-    if nxt:
+    if nxt and not interested:  # Interested: the action row's Apply replaces Next stage: Applied
         date_field = ('<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
                       if nxt in db.INTERVIEW_STAGES else "")
         next_form = (f'<form method="post" action="/applications/move" class="next-stage">{keep}'
@@ -991,9 +1056,10 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
         f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></header>'
         f'<div class="panel-body">'
-        f'<section><h3>Tasks</h3>{task_list}{add}</section>'
+        + (_interested_actions(app, r["found"], here) if interested else "")
+        + f'<section><h3>Tasks</h3>{task_list}{add}</section>'
         f'<section><h3>Stage</h3>{next_form}{move}</section>'
-        f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"])}</section>'
+        f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"], buttons=not interested)}</section>'
         f'<section><h3>Comments and history</h3>{comment}'
         + (f'<ul class="timeline">{history}</ul>' if history else "")
         + "</section></div></aside>"
@@ -1024,14 +1090,39 @@ def _move_dialog() -> str:
     )
 
 
-def _research_button(app_id: int, kind: str, has_result: bool, pending: bool) -> str:
-    """Research / CV fit: queues the request; "… pending" (disabled) while queued; Redo once done."""
+def _research_button(app_id: int, kind: str, has_result: bool, pending: bool, here: str = "") -> str:
+    """Research / CV fit: queues the request; "… pending" (disabled) while queued; Redo once done.
+    With `here` (the action row) the labels name the kind and the post returns to that panel URL."""
     if pending:
         return f'<button class="btn btn-ghost btn-sm" disabled>{h(db.REQUEST_LABELS[kind])} pending</button>'
-    label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit"}[kind]
+    if here:
+        label = {"research": "Redo research", "cv_fit": "Redo CV fit"}[kind] if has_result else db.REQUEST_LABELS[kind]
+    else:
+        label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit"}[kind]
+    back = f'<input type="hidden" name="return" value="{h(here)}">' if here else ""
     return ('<form method="post" action="/applications/research" class="inline">'
             f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="kind" value="{h(kind)}">'
-            + _button(label, "secondary", "sm") + "</form>")
+            + back + _button(label, "secondary", "sm") + "</form>")
+
+
+def _interested_actions(app: dict, found: dict, here: str) -> str:
+    """The Interested panel's action row: Company research · CV fit · Apply, with the research state.
+    Apply opens a short confirm (a <details>, so it needs no script) that moves it to Applied today."""
+    state = research_state(app, found)
+    line = ""
+    if state:
+        text, ready = state
+        line = f'<p class="research-state{" is-ready" if ready else ""}" role="status">{h(text)}</p>'
+    buttons = "".join(_research_button(app["id"], kind, bool(found["profile" if kind == "research" else "fit"]),
+                                       kind in found["open"], here) for kind in db.REQUEST_KINDS)
+    apply = (
+        '<details class="confirm"><summary class="btn btn-primary btn-sm">Apply</summary>'
+        '<form method="post" action="/applications/apply" class="confirm-form">'
+        f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+        '<span>Mark as applied today?</span>' + _button("Yes, applied", size="sm") + "</form></details>"
+    )
+    return (f'<section class="panel-actions" aria-label="Next steps">{line}'
+            f'<div class="action-row">{buttons}{apply}</div></section>')
 
 
 def _open_link(app_id: int, kind: str) -> str:
@@ -1039,14 +1130,19 @@ def _open_link(app_id: int, kind: str) -> str:
     return f'<a class="btn btn-ghost btn-sm" href="{h(href)}">Open</a>'
 
 
-def _research_section(app: dict, found: dict) -> str:
-    """Company research and CV fit summaries with their buttons, and the tier form."""
+def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
+    """Company research and CV fit summaries with their buttons (left out for Interested, whose
+    action row holds them), and the tier form."""
     profile, fit = found["profile"], found["fit"]
+
+    def button(kind: str, has_result: bool) -> str:
+        return _research_button(app["id"], kind, has_result, kind in found["open"]) if buttons else ""
+
     head = '<div class="research-head"><strong>Company</strong>'
     if profile:
         head += f' <span class="mono muted">{h(profile["researched_at"])}</span>'
     head += ('<span class="research-actions">' + (_open_link(app["id"], "research") if profile else "")
-             + _research_button(app["id"], "research", bool(profile), "research" in found["open"]) + "</span></div>")
+             + button("research", bool(profile)) + "</span></div>")
     company = head
     if profile:
         size = " · ".join(x for x in (
@@ -1062,8 +1158,8 @@ def _research_section(app: dict, found: dict) -> str:
         if profile["suggested_tier"]:
             company += (f'<p>Suggested tier <strong>{h(profile["suggested_tier"])}</strong>'
                         + (f' — {h(profile["tier_reason"])}' if profile["tier_reason"] else "") + "</p>")
-    elif "research" not in found["open"]:
-        company += '<p class="muted">Not researched yet.</p>'
+    else:
+        company += f'<p class="muted">{"Queued for the agent." if "research" in found["open"] else "Not researched yet."}</p>'
 
     fit_head = '<div class="research-head"><strong>CV fit</strong>'
     if fit:
@@ -1071,12 +1167,12 @@ def _research_section(app: dict, found: dict) -> str:
         fit_head += " " + _badge(f'{fit["score"]}/5', tone)
         fit_head += f' <span class="mono muted">{h(fit["checked_at"])}</span>'
     fit_head += ('<span class="research-actions">' + (_open_link(app["id"], "cv_fit") if fit else "")
-                 + _research_button(app["id"], "cv_fit", bool(fit), "cv_fit" in found["open"]) + "</span></div>")
+                 + button("cv_fit", bool(fit)) + "</span></div>")
     fit_html = fit_head
     if fit and fit["top_gaps"]:
         fit_html += '<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>"
-    elif not fit and "cv_fit" not in found["open"]:
-        fit_html += '<p class="muted">Not checked yet.</p>'
+    elif not fit:
+        fit_html += f'<p class="muted">{"Queued for the agent." if "cv_fit" in found["open"] else "Not checked yet."}</p>'
 
     suggested = profile["suggested_tier"] if profile else None
     current = app["tier"] or suggested

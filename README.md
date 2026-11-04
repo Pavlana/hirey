@@ -79,32 +79,40 @@ charts are server-rendered SVG):
 - **Job Offers** (`/offers`; `/matches` redirects): every getjo match, filtered by minimum
   score (New only), company, role, location (London / Remote / Other) and New / Interested
   / Applied / Skipped / All;
-  filters live in the URL, so a view can be bookmarked. Each new job has three actions:
-  **Applied** (application recorded as applied today, same logic as `/applied --job-id`),
-  **Interested** (application recorded with status `to_apply`, shown as "Interested") and
+  filters live in the URL, so a view can be bookmarked. The flow is triage first, the agent's
+  homework next, apply last, so each new job has two actions: **Interested** (application
+  recorded with status `to_apply`, which queues company research and a CV fit) and
   **Skipped** (a pop-up with the skip reasons and an optional comment; without JavaScript a
-  plain form page). Applied and Interested open the Applications board with that
-  application's side panel open; an Interested job can later be marked Applied. A skip can be undone.
-  Decided jobs also drop out of `/today`.
+  plain form page). Interested keeps the page: the row changes to "Interested · research
+  queued" with an Undo toast (without JavaScript the page reloads with its filters and a
+  banner). Undo deletes the application it created while nothing else has happened to it.
+  Interested jobs link to their card; applying happens there. A skip can be undone. Decided
+  jobs also drop out of `/today`.
 - **Applications** (`/applications`; `/tasks` redirects): a board with five columns
   (Interested, Applied, Interviewing, Offer, Closed). Interviewing holds the recruiter call,
   coding, system design and company interview steps; its cards show step dots and the current
-  step. Closed is a narrow strip with counts (Rejected, No response, Withdrawn) that expands.
-  Compact cards show company and role, the next task and due date, tier and CV fit, days in
-  stage (Applied turns amber at day 7 and red near the no-response cut-off) and pending agent
-  work. Clicking a card opens a side panel with the tasks (tick done, add one), **Next stage**
+  step. Closed is a narrow strip with counts (Rejected, No response, Withdrawn) that expands
+  (from the stage strip). Compact cards show company and role, the next task and due date,
+  tier and CV fit, days in stage (Applied turns amber at day 7 and red near the no-response
+  cut-off) and pending agent work; Interested cards show "Researching…" or "Ready: fit N/5 ·
+  tier X". Clicking a card opens a side panel. For an Interested application it starts with
+  **Company research · CV fit · Apply** (Apply asks "Mark as applied today?" and moves it to
+  Applied). Every panel has the tasks (tick done, add one), **Next stage**
   and **Move to…** (interview date for interview steps, optional comment), company research,
   CV fit and tier, comments and history; Esc or ✕ closes it. Cards can be dragged between
   columns (Interviewing asks for the step and date, Closed for the outcome). A stage strip
-  filters by column, and a List view shows one table sorted by the next due task; the
-  Board / List choice is remembered in the browser. Moving creates the new stage's tasks and
+  filters by column, and a List view shows one table sorted by the next due task (Days, Fit
+  and Tier are hidden while the panel is open); the Board / List choice is remembered in the
+  browser. Moving creates the new stage's tasks and
   closes the old stage's open ones. General tasks (no application) and recently done tasks
   sit below.
 
 ### Company research and CV fit
 
 Marking a job Interested queues company research and a CV fit check for the agent. Each card
-also has **Research** and **CV fit** buttons, which read **Redo** once a result exists. The
+also has **Research** and **CV fit** buttons (in the action row for Interested cards), which
+read **Redo** once a result exists. Once both results are saved for an application still in
+Interested, it gets a "Review research and apply" task, due in two days. The
 dashboard never runs the agent. The `/research` skill does the work in a Claude Code session.
 It writes `companies/<slug>.md` and `fit/<id>-<slug>.md` to `private_dir`, and the card shows
 the summary (suggested tier, fit score, top gaps) with an **Open** link to a read-only view of

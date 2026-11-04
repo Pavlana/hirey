@@ -22,6 +22,9 @@ Run every command from the repo root.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
    - company: one line on what it does and the suggested tier
    - CV fit: the score and the top gaps
+   - when a save printed "both results in": the Interested application now has a "Review
+     research and apply" task; say it is ready to review (the card reads "Ready: fit N/5 ·
+     tier X" and its panel has Apply)
 
 If another session has already claimed the work, leave it alone.
 

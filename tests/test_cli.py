@@ -122,7 +122,9 @@ class AppliedTest(IsolatedTestCase):
         _, out, _ = self.run_cli("applied", "--job-id", "lever:globex-labs:abc", "--status", "to_apply")
         self.assertIsNone(self.app()["date_applied"])
         self.assertIn("[interested]", out)
-        self.assertIn(f"[apply] Apply due {days(3)}", out)
+        self.assertNotIn("Apply due", out)  # the review task follows the agent's results
+        self.assertIn("queued for the agent: Company research and CV fit", out)
+        self.assertIn('"Review research and apply" task follows', out)
         self.assertNotIn("Research the company", out)  # the agent's job (company research), not a to-do
         with closing(db.connect(self.prep_db)) as conn:
             row = conn.execute("SELECT decision FROM job_decisions").fetchone()
@@ -185,6 +187,18 @@ class AppliedTest(IsolatedTestCase):
             self.assertEqual(db.timeline(conn, 1)[-1]["comment"], "Moved to Thursday 14:00")
             self.assertEqual([tuple(r) for r in conn.execute("SELECT date, stage FROM interviews")],
                              [(days(3), "recruiter_call")])
+
+    def test_reschedule_moves_prep_tasks(self) -> None:
+        self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")
+        self.run_cli("update", "1", "--status", "technical", "--interview-date", "+5")
+        code, out, _ = self.run_cli("update", "1", "--status", "technical", "--interview-date", "+9",
+                                    "--comment", "Moved to next Friday")
+        self.assertEqual(code, 0)
+        self.assertIn(f"Already coding interview: nothing moved; comment saved; interview date {days(9)} saved; "
+                      f"2 prep tasks moved to {days(8)}", out)
+        self.assertIn(f"Coding practice due {days(8)}", out)
+        _, out, _ = self.run_cli("update", "1", "--status", "technical", "--interview-date", "+9")
+        self.assertNotIn("moved to", out)  # same date: nothing to move
 
     def test_comment(self) -> None:
         self.run_cli("applied", "--company", "Nowhere Ltd", "--role", "SRE")

@@ -278,6 +278,7 @@ form.filters input[type="search"] { flex: 1 1 160px; }
 .checks { display: inline-flex; align-items: center; gap: var(--space-3); }
 .check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .offer-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
+.offer-state { font-size: 12.5px; color: var(--accent-text); white-space: nowrap; }
 a.btn:hover { text-decoration: none; }
 
 /* Skipped pop-up (Job Offers): a native <dialog>, opened by app.js. */
@@ -436,6 +437,8 @@ main:has(.apps) { max-width: 1680px; }
 .app-head { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .app-role { color: var(--text-muted); font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; margin-top: -2px; }
 .app-next { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
+.app-state { display: flex; }
+.app-state .chip { white-space: normal; line-height: 1.25; }
 .app-meta { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
 .app-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 1; min-width: 0; }
 .app-badges .badge { font-size: 11px; line-height: 15px; padding: 1px 7px; }
@@ -452,6 +455,9 @@ main:has(.apps) { max-width: 1680px; }
 
 .app-list tbody tr[data-href] { cursor: pointer; }
 .app-list tr.is-focus { background: var(--accent-soft); }
+/* With the panel open the list loses Days, Fit and Tier (columns 6-8, shown in the panel). CSS,
+   not the server, so it also holds when the script opens or closes the panel without a reload. */
+.apps:has(> .panel) .app-list :is(th, td):nth-child(n+6) { display: none; }
 
 /* Side panel: sticky beside the board; a full-screen sheet on small screens. */
 .panel {
@@ -492,6 +498,20 @@ form.move > *, form.move input { height: 30px; font-size: 13px; }
 .app-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip { font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-muted); white-space: nowrap; }
 .chip-pending { border-style: dashed; color: var(--accent-text); }
+.chip-ready { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
+/* Interested panel: Company research · CV fit · Apply, with the research state above. */
+.panel-actions { padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
+.research-state { color: var(--accent-text); font-weight: 500; }
+.research-state.is-ready { color: var(--text); }
+.action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.action-row form.inline { margin: 0; }
+.confirm { margin-left: auto; }
+.confirm > summary { list-style: none; cursor: pointer; }
+.confirm > summary::-webkit-details-marker { display: none; }
+.confirm[open] { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.confirm[open] > summary { opacity: .6; }
+.confirm-form { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px;
+  padding: var(--space-2); border-radius: var(--radius-sm); background: var(--accent-soft); }
 .research { display: grid; gap: 4px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
 .research-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .research-actions { margin-left: auto; display: inline-flex; gap: 4px; }
