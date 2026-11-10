@@ -3,6 +3,8 @@
 The full text lives in private_dir (never committed):
     companies/<slug>.md       one per company (db.company_slug), reused for a second role there
     fit/<app-id>-<slug>.md    one per application
+    cv-tailored/<app-id>-<slug>.md   a copy of cv.md tailored to one job; revised through the
+                              thread, frozen as <app-id>-<slug>.sent-v<N>.md when the application is sent
 
 Each file starts with TOML front matter between two "+++" lines, read with tomllib; the
 summary stored in prep.db (company_profiles, cv_fits) comes from it, so a hand edit followed
@@ -18,6 +20,9 @@ from prep import db
 FENCE = "+++"
 COMPANY_DIR = "companies"
 FIT_DIR = "fit"
+TAILORED_DIR = "cv-tailored"
+STYLE_FILE = "_style.md"  # agreed wording reused in every tailored copy (e.g. a career gap line)
+TAILOR_MAX_WORDS = 1_000  # about two pages; one is fine
 CV_FILE = "cv.md"
 
 
@@ -27,6 +32,19 @@ def company_file(private_dir: Path, slug: str) -> Path:
 
 def fit_file(private_dir: Path, app_id: int, slug: str) -> Path:
     return private_dir / FIT_DIR / f"{app_id}-{slug}.md"
+
+
+def tailored_file(private_dir: Path, app_id: int, slug: str) -> Path:
+    return private_dir / TAILORED_DIR / f"{app_id}-{slug}.md"
+
+
+def style_file(private_dir: Path) -> Path:
+    return private_dir / TAILORED_DIR / STYLE_FILE
+
+
+def word_count(text: str) -> int:
+    """Words in a Markdown body (front matter already split off), ignoring Markdown markers."""
+    return sum(1 for w in text.split() if any(c.isalnum() for c in w))
 
 
 def split_front_matter(text: str) -> tuple[dict, str]:
@@ -123,14 +141,21 @@ def inside(private_dir: Path | None, recorded: str | None) -> Path | None:
 
 
 def result_path(conn, private_dir: Path | None, app_id: int, kind: str) -> tuple[bool, Path | None]:
-    """For the dashboard's Open link: (a result is recorded, its path if it is inside private_dir)."""
+    """For the dashboard's Open link: (a result is recorded, its path if it is inside private_dir).
+    kind: research, cv_fit, tailor (the current tailored CV) or cv_sent (the copy that was sent)."""
     app = db.get_application(conn, app_id)
     if app is None:
         return False, None
     if kind == "research":
         record = db.company_profile(conn, db.company_slug(app["company"]))
-    else:
+    elif kind == "cv_fit":
         record = db.cv_fit(conn, app_id)
+    elif kind == "tailor":
+        record = db.tailored_cv(conn, app_id)
+    elif kind == "cv_sent":  # the frozen copy recorded when the application was sent
+        record = {"file_path": app["cv_sent"]} if app.get("cv_sent") else None
+    else:
+        return False, None
     if record is None:
         return False, None
     return True, inside(private_dir, record["file_path"])

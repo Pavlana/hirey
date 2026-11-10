@@ -445,16 +445,17 @@ def send_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     msg_id = db.add_message(conn, app_id, body)  # checks the length after normalising line breaks
     log.info("message %s added to application %s's thread from the dashboard", msg_id, app_id)  # never the text
     assistant.notify_message_in_background(settings, app_id, msg_id)
-    return {"redirect": _here(app_id), "html": _thread(db.thread(conn, app_id), bool(settings.assistant_task))}
+    return {"redirect": _here(app_id),
+            "html": _thread(db.thread(conn, app_id), bool(settings.assistant_task), _tailoring(conn, app_id))}
 
 
 def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Research / CV fit button: queue the request (Redo when a result exists). A second click
+    """Research / CV fit / Tailor CV button: queue the request (Redo when a result exists). A second click
     while it is pending changes nothing. The agent does the work, never the dashboard."""
     app_id = _app_id(conn, form)
     kind = form.get("kind") or ""
     if kind not in db.REQUEST_KINDS:
-        raise BadRequest("Pick research or cv_fit.")
+        raise BadRequest("Pick research, cv_fit or tailor.")
     has_result, _ = research.result_path(conn, settings.private_dir, app_id, kind)
     _, created = db.queue_request(conn, app_id, kind, force=has_result)
     log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
@@ -642,6 +643,7 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
 
     found = filter_offers(new_jobs, decided_jobs, decisions, f)
     app_ids = db.app_ids_by_job(conn)
+    fits = db.fit_scores(conn)
     here = "/offers?" + urlencode(
         [(k, v) for k, v in (("score", f["score"]), ("company", f["company"]), ("role", f["role"]),
                              *(("loc", loc) for loc in f["loc"]), ("show", f["show"])) if v != ""])
@@ -651,9 +653,10 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
     head += ("",)
     rows, attrs = [], []
     for job, decision in found:
+        fit = fits.get(app_ids.get(job["id"]))
         cells = (
             _score_badge(job["score"]),
-            _link(job["url"], job["company"]),
+            _link(job["url"], job["company"]) + (f' {_fit_badge(fit)}' if fit else ""),
             h(job["title"]), h(job["location"]), _mono(h((job["first_seen"] or "")[:10])),
         )
         if f["show"] != "new":
@@ -698,6 +701,15 @@ def _offer_filter_form(f: dict) -> str:
         + _button("Filter", "secondary") + "</form>"
     )
     return _card("Filters", form, cls="card-form")
+
+
+def _fit_badge(score: int) -> str:
+    """The agent's CV fit (1-5) on a tracked job's row, toned like the panel's."""
+    return f'<span class="badge {_fit_tone(score)}" title="CV fit">fit {h(score)}/5</span>'
+
+
+def _fit_tone(score: int) -> str:
+    return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
 
 
 def _decision_cell(decision: dict | None) -> str:
@@ -863,7 +875,8 @@ def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
         rows.append({"app": a, "column": column_of(a["status"]), "next": own[0] if own else None,
                      "tasks": own, "comments": counts.get(a["id"], 0),
                      "days": (date.fromisoformat(today) - date.fromisoformat(a["since"])).days,
-                     "found": found.get(a["id"]) or {"profile": None, "fit": None, "open": set()}})
+                     "found": found.get(a["id"]) or {"profile": None, "fit": None, "tailored": None,
+                                                     "open": set()}})
     focus = next((r for r in rows if r["app"]["id"] == f["app"]), None)
     shown = [r for r in rows if not f["stage"] or r["column"] == f["stage"]]
 
@@ -950,10 +963,14 @@ def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool
     age = (f'<span class="age{" age-" + tone if tone else ""}" title="{h(age_text)}">'
            f'{"today" if days <= 0 else f"{days}d"}</span>')
     state = research_state(app, r["found"])
+    tailored = tailored_state(app, r["found"])
+    tailored_chip = (f'<span class="chip{" chip-pending" if tailored[1] else ""}" title="Tailored CV">{h(tailored[0])}</span>'
+                     if tailored else "")
     state_line = ""
     if state:  # Interested: Researching… or Ready (fit and tier) on its own line, not separate chips
         text, ready = state
-        state_line = f'<span class="app-state"><span class="chip {"chip-ready" if ready else "chip-pending"}">{h(text)}</span></span>'
+        state_line = (f'<span class="app-state"><span class="chip {"chip-ready" if ready else "chip-pending"}">{h(text)}</span>'
+                      f'{tailored_chip}</span>')
         badges = []
     else:
         badges = [_tier_badge(app["tier"]) if app["tier"] else ""]
@@ -961,7 +978,8 @@ def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool
         if fit and "cv_fit" not in r["found"]["open"]:
             badges.append(f'<span class="chip" title="CV fit">fit {h(fit["score"])}/5</span>')
         badges += [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
-                   for k in db.REQUEST_KINDS if k in r["found"]["open"]]
+                   for k in db.RESEARCH_KINDS if k in r["found"]["open"]]
+        badges.append(tailored_chip)
     if r["column"] == "closed":
         badges.insert(0, _status_badge(app["status"]))
     comments = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{r["comments"]}</span>'
@@ -980,7 +998,7 @@ def research_state(app: dict, found: dict) -> tuple[str, bool] | None:
     confirmed one, else the suggested one, left out when neither). None otherwise."""
     if app["status"] != "to_apply":
         return None
-    if found["open"]:
+    if found["open"] & set(db.RESEARCH_KINDS):
         return "Researching…", False
     profile, fit = found["profile"], found["fit"]
     if not (profile and fit):
@@ -988,6 +1006,23 @@ def research_state(app: dict, found: dict) -> tuple[str, bool] | None:
     tier = app["tier"] or profile["suggested_tier"]
     # no-break spaces keep "fit 4/5" and "tier A" whole when a narrow card wraps the chip
     return f'Ready: fit\u00a0{fit["score"]}/5' + (f" · tier\u00a0{tier}" if tier else ""), True
+
+
+def tailored_state(app: dict, found: dict, long: bool = False) -> tuple[str, bool] | None:
+    """The tailored CV's state for the card (short) or the panel (`long`): ("Tailoring…", True)
+    while a tailor request is open, then "CV tailored vN" / "Tailored CV ready · vN · date", and
+    "CV sent vN" / "Sent: tailored CV vN · date" once the application went out with it. None
+    without a request or a copy. The flag is True while the agent is working on it."""
+    current = found.get("tailored")
+    if "tailor" in found["open"]:
+        return "Tailoring…", True
+    if app.get("cv_sent_version"):
+        n = app["cv_sent_version"]
+        return (f"Sent: tailored CV v{n} · {_local_time(app['cv_sent_at'])}" if long else f"CV sent v{n}"), False
+    if current:
+        n = current["version"]
+        return (f"Tailored CV ready · v{n} · {_local_time(current['updated_at'])}" if long else f"CV tailored v{n}"), False
+    return None
 
 
 def _age_text(days: int) -> str:
@@ -1082,31 +1117,32 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, assistant_on:
         + f'<section><h3>Tasks</h3>{task_list}{add}</section>'
         f'<section><h3>Stage</h3>{next_form}{move}</section>'
         f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"], buttons=not interested)}</section>'
-        + _agent_section(app["id"], db.thread(conn, app["id"]), keep, assistant_on) +
+        + _agent_section(app["id"], db.thread(conn, app["id"]), keep, assistant_on, "tailor" in r["found"]["open"]) +
         f'<section><h3>Comments and history</h3>{comment}'
         + (f'<ul class="timeline">{history}</ul>' if history else "")
         + "</section></div></aside>"
     )
 
 
-def _agent_section(app_id: int, messages: list[dict], keep: str, assistant_on: bool) -> str:
+def _agent_section(app_id: int, messages: list[dict], keep: str, assistant_on: bool, tailoring: bool = False) -> str:
     """The Agent thread (newest at the bottom) and a box to ask a question or paste an email.
     `keep` is the panel's trusted hidden app_id/return fields."""
     ask = (
         f'<form method="post" action="/applications/message" class="ask" data-ajax="thread">{keep}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
-        'placeholder="Ask about the company or the CV fit, or paste a recruiter email…" '
+        'placeholder="Ask about the company or the CV fit, ask for CV changes, or paste a recruiter email…" '
         'aria-label="Message to the agent"></textarea>'
         '<div class="ask-foot"><span class="muted">Pasted emails update the stage.</span>'
         + _button("Send", size="sm") + "</div></form>"
     )
     return (f'<section class="agent" aria-labelledby="agent-{h(app_id)}"><h3 id="agent-{h(app_id)}">Agent</h3>'
-            f'{_thread(messages, assistant_on)}{ask}</section>')
+            f'{_thread(messages, assistant_on, tailoring)}{ask}</section>')
 
 
-def _thread(messages: list[dict], assistant_on: bool) -> str:
+def _thread(messages: list[dict], assistant_on: bool, tailoring: bool = False) -> str:
     """The thread itself, swapped in whole by the page script after Send and while polling.
-    data-pending marks a user message still waiting for its reply."""
+    data-pending marks a user message still waiting for its reply, or a tailored CV being written
+    (its note, with any questions, arrives in the thread)."""
     items = "".join(
         f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}">'
         f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
@@ -1114,8 +1150,15 @@ def _thread(messages: list[dict], assistant_on: bool) -> str:
         f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
         for m in messages
     )
-    pending = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
-    if not messages:
+    waiting = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
+    pending = waiting or tailoring
+    if tailoring and not waiting and assistant_on:
+        state = ('<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
+                 "Agent is tailoring the CV… Its questions will appear here.</p>")
+    elif tailoring and not waiting:
+        state = ('<p class="thread-state" role="status">Tailoring queued: run /research in a Claude Code session '
+                 "(no standing assistant is set).</p>")
+    elif not messages:
         state = '<p class="muted thread-empty">No messages yet.</p>'
     elif pending and assistant_on:
         state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Agent is working…</p>'
@@ -1153,8 +1196,8 @@ def _local_time(stamp: str) -> str:
 
 
 def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
-    """GET /applications/thread?app=ID for the panel's polling: whether a message is still
-    pending, the application's status (the agent may have moved it) and the thread's HTML."""
+    """GET /applications/thread?app=ID for the panel's polling: whether a message (or a tailored
+    CV) is still pending, the application's status (the agent may have moved it) and the thread's HTML."""
     raw = (query.get("app") or [""])[0]
     if not raw.isdigit():
         return _json(400, {"ok": False, "message": "app must be an application id."})
@@ -1163,9 +1206,15 @@ def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> 
         if app is None:
             return _json(404, {"ok": False, "message": "No such application."})
         messages = db.thread(conn, app["id"])
-    pending = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
+        tailoring = _tailoring(conn, app["id"])
+    pending = tailoring or any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
     return _json(200, {"ok": True, "pending": pending, "status": app["status"],
-                       "html": _thread(messages, bool(settings.assistant_task))})
+                       "html": _thread(messages, bool(settings.assistant_task), tailoring)})
+
+
+def _tailoring(conn: sqlite3.Connection, app_id: int) -> bool:
+    """A tailor request is open: the panel polls until the agent's note is in the thread."""
+    return any(r["kind"] == "tailor" for r in db.open_requests(conn, app_id))
 
 
 def _move_dialog() -> str:
@@ -1192,15 +1241,19 @@ def _move_dialog() -> str:
     )
 
 
+REDO_LABELS = {"research": "Redo research", "cv_fit": "Redo CV fit", "tailor": "Redo tailored CV"}
+
+
 def _research_button(app_id: int, kind: str, has_result: bool, pending: bool, here: str = "") -> str:
     """Research / CV fit: queues the request; "… pending" (disabled) while queued; Redo once done.
     With `here` (the action row) the labels name the kind and the post returns to that panel URL."""
     if pending:
-        return f'<button class="btn btn-ghost btn-sm" disabled>{h(db.REQUEST_LABELS[kind])} pending</button>'
+        text = "Tailoring…" if kind == "tailor" else f"{db.REQUEST_LABELS[kind]} pending"
+        return f'<button class="btn btn-ghost btn-sm" disabled>{h(text)}</button>'
     if here:
-        label = {"research": "Redo research", "cv_fit": "Redo CV fit"}[kind] if has_result else db.REQUEST_LABELS[kind]
+        label = (REDO_LABELS[kind] if has_result else {"tailor": "Tailor CV"}.get(kind, db.REQUEST_LABELS[kind]))
     else:
-        label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit"}[kind]
+        label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit", "tailor": "Tailor CV"}[kind]
     back = f'<input type="hidden" name="return" value="{h(here)}">' if here else ""
     return ('<form method="post" action="/applications/research" class="inline">'
             f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="kind" value="{h(kind)}">'
@@ -1208,15 +1261,16 @@ def _research_button(app_id: int, kind: str, has_result: bool, pending: bool, he
 
 
 def _interested_actions(app: dict, found: dict, here: str) -> str:
-    """The Interested panel's action row: Company research · CV fit · Apply, with the research state.
+    """The Interested panel's action row: Company research · CV fit · Tailor CV · Apply, with the research state.
     Apply opens a short confirm (a <details>, so it needs no script) that moves it to Applied today."""
     state = research_state(app, found)
     line = ""
     if state:
         text, ready = state
         line = f'<p class="research-state{" is-ready" if ready else ""}" role="status">{h(text)}</p>'
-    buttons = "".join(_research_button(app["id"], kind, bool(found["profile" if kind == "research" else "fit"]),
-                                       kind in found["open"], here) for kind in db.REQUEST_KINDS)
+    results = {"research": found["profile"], "cv_fit": found["fit"], "tailor": found.get("tailored")}
+    buttons = "".join(_research_button(app["id"], kind, bool(results[kind]), kind in found["open"], here)
+                      for kind in db.REQUEST_KINDS)
     apply = (
         '<details class="confirm"><summary class="btn btn-primary btn-sm">Apply</summary>'
         '<form method="post" action="/applications/apply" class="confirm-form">'
@@ -1227,9 +1281,9 @@ def _interested_actions(app: dict, found: dict, here: str) -> str:
             f'<div class="action-row">{buttons}{apply}</div></section>')
 
 
-def _open_link(app_id: int, kind: str) -> str:
+def _open_link(app_id: int, kind: str, label: str = "Open") -> str:
     href = "/research/file?" + urlencode([("app", app_id), ("kind", kind)])
-    return f'<a class="btn btn-ghost btn-sm" href="{h(href)}">Open</a>'
+    return f'<a class="btn btn-ghost btn-sm" href="{h(href)}">{h(label)}</a>'
 
 
 def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
@@ -1265,8 +1319,7 @@ def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
 
     fit_head = '<div class="research-head"><strong>CV fit</strong>'
     if fit:
-        tone = "s9" if fit["score"] >= 4 else ("s6" if fit["score"] == 3 else "s3")
-        fit_head += " " + _badge(f'{fit["score"]}/5', tone)
+        fit_head += " " + _badge(f'{fit["score"]}/5', _fit_tone(fit["score"]))
         fit_head += f' <span class="mono muted">{h(fit["checked_at"])}</span>'
     fit_head += ('<span class="research-actions">' + (_open_link(app["id"], "cv_fit") if fit else "")
                  + button("cv_fit", bool(fit)) + "</span></div>")
@@ -1275,6 +1328,19 @@ def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
         fit_html += '<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>"
     elif not fit:
         fit_html += f'<p class="muted">{"Queued for the agent." if "cv_fit" in found["open"] else "Not checked yet."}</p>'
+
+    tailored = found.get("tailored")
+    state = tailored_state(app, found, long=True)
+    cv_head = ('<div class="research-head"><strong>Tailored CV</strong><span class="research-actions">'
+               + (_open_link(app["id"], "tailor") if tailored else "")
+               + (_open_link(app["id"], "cv_sent", "Open sent") if app.get("cv_sent_version") else "")
+               + button("tailor", bool(tailored)) + "</span></div>")
+    if state:
+        cv_html = cv_head + f'<p class="{"research-state" if state[1] else "muted"}" role="status">{h(state[0])}</p>'
+    else:
+        cv_html = cv_head + '<p class="muted">Not tailored yet. The agent writes a copy for this job; master CV untouched.</p>'
+    if tailored and state and state[0].startswith("Sent") and tailored["version"] != app["cv_sent_version"]:
+        cv_html += f'<p class="muted">Revised since: v{h(tailored["version"])}.</p>'
 
     suggested = profile["suggested_tier"] if profile else None
     current = app["tier"] or suggested
@@ -1287,22 +1353,26 @@ def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
         f'<select name="tier" required aria-label="Tier">{placeholder}{options}</select>'
         + _button(label, "secondary", "sm") + "</form>"
     )
-    return f'<div class="research">{company}</div><div class="research">{fit_html}</div>{tier_form}'
+    return (f'<div class="research">{company}</div><div class="research">{fit_html}</div>'
+            f'<div class="research">{cv_html}</div>{tier_form}')
+
+
+FILE_TITLES = {**db.REQUEST_LABELS, "cv_sent": "Tailored CV sent"}
 
 
 def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
                        query: dict[str, list[str]]) -> tuple[str, str, str]:
-    """A research or CV fit file, read-only. Only a path recorded in prep.db that resolves inside
+    """A research, CV fit or tailored CV file, read-only. Only a path recorded in prep.db that resolves inside
     private_dir is read (anything else is a 404); a missing file says so instead of failing."""
     app_param = (query.get("app") or [""])[0]
     kind = (query.get("kind") or [""])[0]
-    if not app_param.isdigit() or kind not in db.REQUEST_KINDS:
+    if not app_param.isdigit() or kind not in FILE_TITLES:
         raise NotFound()
     app = db.get_application(conn, int(app_param))
     recorded, path = research.result_path(conn, settings.private_dir, int(app_param), kind)
     if app is None or not recorded or path is None:
         raise NotFound()
-    title = f'{db.REQUEST_LABELS[kind]} · {app["company"]}'
+    title = f'{FILE_TITLES[kind]} · {app["company"]}'
     back = f'<p><a class="btn btn-ghost btn-sm" href="{h(_here(app["id"]))}">Back to the card</a></p>'
     if not path.is_file():
         return title, app["role"], back + _banner("File missing: it was moved or deleted. Redo it from the card.", "warning")

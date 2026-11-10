@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Answer messages left in an application's Agent thread on the inter_prep dashboard — questions about the company, the role or the CV fit, or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id] [message id], when the standing assistant receives "/ask <app> <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in an application's Agent thread on the inter_prep dashboard — questions about the company, the role or the CV fit, answers and change requests for the tailored CV, or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id] [message id], when the standing assistant receives "/ask <app> <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
@@ -36,7 +36,8 @@ answering", leave that thread alone. The output contains:
 
 - the application (company, role, stage, link, contact)
 - context files: company research (`companies/<slug>.md`), CV fit (`fit/<id>-<slug>.md`),
-  `cv.md`, each marked exists or missing
+  `cv.md`, and the tailored CV (`cv-tailored/<id>-<slug>.md`, with its version) when there is
+  one, each marked exists or missing
 - the job description from getjo, when there is one
 - the whole thread, oldest first: earlier messages give the context of a follow-up question
 
@@ -69,6 +70,27 @@ skill file `.claude/skills/stage/SKILL.md` has the stage table and the rules.
 
 Reply in one or two lines, for example "Moved to Coding interview, Tue 10 Nov 14:00; prep tasks
 due Mon 9 Nov. Added: send availability to Sam."
+
+**About the tailored CV**: an answer to one of the agent's tailoring questions ("Yes, Terraform
+for two years at …") or a change request ("shorten the summary", "lead with Azure security"):
+
+1. Read the tailored copy (path in `thread show`) and, for facts, `cv.md`.
+2. Edit the tailored copy only. Never edit `cv.md` (it changes only when the user asks on the CV
+   page). Never invent experience: rephrase, reorder and cut. A fact the user states in the thread
+   may go into the copy in their words; anything still unclear becomes a short question in the reply.
+   Follow the tailoring rules in `.claude/skills/research/SKILL.md` (length, structure, impact,
+   keyword coverage). Wording the user agrees for reuse, such as a career gap line, goes into
+   `cv-tailored/_style.md` (path in `thread show`) as well as the copy.
+3. Save it; the note on stdin is the reply to this message, saying in a few lines what changed:
+
+   ```bash
+   python -m prep.cli tailor save APP --to MSG <<'NOTE'
+   v3: summary cut to two lines; Azure security project moved to the top; Terraform added to Skills.
+   NOTE
+   ```
+
+   This answers the message, so do not also run `thread reply` for it. No pay in the copy or the note.
+4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.
 
 **Both** (an email plus a question): record the update first, then answer the question in the
 same reply.

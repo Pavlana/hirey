@@ -1,6 +1,6 @@
 """Tell a standing dev3 assistant agent about new work (optional).
 
-With `assistant_task` set, each application with new research or CV fit requests is sent
+With `assistant_task` set, each application with new research, CV fit or tailored CV requests is sent
 `/research <app id>`, and each new message in a panel's Agent thread `/ask <app id> <message
 id>`, through `dev3 message`, so that agent starts at once in a pane the user can watch. The
 command is a fixed argument list built from database ids only (no shell, never form or message
@@ -34,10 +34,13 @@ def dev3_path(settings: Settings) -> str | None:
 def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[str]]:
     """One `dev3 message` argument list per application in `requests` (dicts with application_id)."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
-    app_ids = sorted({int(r["application_id"]) for r in requests})
+    kinds: dict[int, set[str]] = {}
+    for r in requests:
+        kinds.setdefault(int(r["application_id"]), set()).add(r.get("kind", "research"))
     return [[dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
-             "--subject", f"Research queued for application {app_id}", f"/research {app_id}"]
-            for app_id in app_ids]
+             "--subject", f"{'Tailored CV' if kinds[app_id] == {'tailor'} else 'Research'} queued for application {app_id}",
+             f"/research {app_id}"]
+            for app_id in sorted(kinds)]
 
 
 def ask_command(settings: Settings, app_id: int, message_id: int, dev3: str) -> list[str]:

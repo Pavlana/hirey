@@ -13,7 +13,7 @@ from pathlib import PurePosixPath
 # Matched against the file name (patterns without "/") or the full path (with "/").
 FORBIDDEN = (
     "cv.md", "*.docx", "*.xlsx", "*.pdf", "*.db", "*.db-journal", "*.db-wal", "*.db-shm",
-    "data/*", "notes/*", "sessions/*", "companies/*", "fit/*", "config/settings.toml", ".claude/skills/board/*",
+    "data/*", "notes/*", "sessions/*", "companies/*", "fit/*", "cv-tailored/*", "config/settings.toml", ".claude/skills/board/*",
     "mock-interview-kit.md", "stories.md", "gaps.md", "design-cases.md",
     ".env", ".env.*",
 )

@@ -15,6 +15,7 @@
     python -m prep.cli research queue APP_ID [--kind research|cv_fit] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
+    python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin)
     python -m prep.cli thread show APP_ID [--claim]      (the Agent thread and its context; used by /ask)
     python -m prep.cli thread reply APP_ID --to MSG_ID [--file PATH]   (reply text from the file or stdin)
     python -m prep.cli thread pending
@@ -409,7 +410,7 @@ def cmd_research(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
     if args.research_cmd == "queue":
         if db.get_application(conn, args.app_id) is None:
             raise LookupError(f"no application with id {args.app_id}")
-        kinds = [args.kind] if args.kind else list(db.REQUEST_KINDS)
+        kinds = [args.kind] if args.kind else list(db.RESEARCH_KINDS)  # tailoring only when asked for
         for kind in kinds:
             _, created = db.queue_request(conn, args.app_id, kind, force=args.redo)
             print(f"{db.REQUEST_LABELS[kind]} for #{args.app_id}: {'queued' if created else 'already queued'}")
@@ -442,11 +443,14 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     if app.get("link"):
         print(f"  link: {app['link']}")
     print(f"  company slug: {slug}")
-    for r in claimed:
+    for r in sorted(claimed, key=lambda r: db.REQUEST_KINDS.index(r["kind"])):  # the fit before tailoring
         if r["kind"] == "research":
             _print_research_step(conn, settings, private_dir, app_id, slug, bool(r["force"]))
-        else:
+        elif r["kind"] == "cv_fit":
             _print_fit_step(settings, private_dir, app, slug)
+        elif r["kind"] == "tailor":
+            _print_tailor_step(conn, settings, private_dir, app, slug,
+                               job=not any(c["kind"] == "cv_fit" for c in claimed))  # the fit step printed it
     print(f"\nApplications still waiting after this one: {remaining}")
     return 0
 
@@ -478,6 +482,28 @@ def _print_fit_step(settings: Settings, private_dir: Path, app: dict, slug: str)
     print(f"  file: {research.fit_file(private_dir, app['id'], slug)}")
     print(f"  then: python -m prep.cli fit save {app['id']}")
     _print_job_description(settings, app)
+
+
+def _print_tailor_step(conn: sqlite3.Connection, settings: Settings, private_dir: Path, app: dict,
+                       slug: str, job: bool = True) -> None:
+    cv = private_dir / research.CV_FILE
+    fit = db.cv_fit(conn, app["id"])
+    current = db.tailored_cv(conn, app["id"])
+    print("\nTailored CV (a copy for this job only; never edit cv.md):")
+    if current:
+        print(f"  Redo requested: rewrite the copy from the current cv.md (now version {current['version']})")
+    print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before tailoring'})")
+    if fit:
+        print(f"  CV fit: {fit['file_path']} (score {fit['score']}/5; use its gaps and advice)")
+    print(f"  file: {research.tailored_file(private_dir, app['id'], slug)}")
+    style = research.style_file(private_dir)
+    print(f"  agreed wording: {style} ({'exists: reuse it' if style.is_file() else 'missing'})")
+    print("  rules: only rephrase, reorder and cut what cv.md says; never invent experience. Anything the")
+    print("    job needs that cv.md does not answer becomes a question in the note. No pay.")
+    print(f"  then: python -m prep.cli tailor save {app['id']} with the thread note on stdin "
+          "(what was tailored, then the questions)")
+    if job:
+        _print_job_description(settings, app)
 
 
 def _print_job_description(settings: Settings, app: dict) -> None:
@@ -547,6 +573,29 @@ def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
     return 0
 
 
+def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """tailor save: record the tailored copy (version + 1) and post the note from stdin in the
+    thread; with --to it answers that user message (a revision asked for in the thread)."""
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    slug = db.company_slug(app["company"])
+    path = (Path(args.file).expanduser() if args.file
+            else research.tailored_file(_private_dir(settings), args.app_id, slug))
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    _, body = research.split_front_matter(path.read_text(encoding="utf-8"))  # the same +++ block as the other files
+    note = sys.stdin.read()
+    version = db.save_tailored_cv(conn, args.app_id, str(path), note, args.to)
+    log.info("tailored cv v%s saved for application %s", version, args.app_id)  # never the CV or the note
+    print(f"Saved tailored CV v{version} for #{args.app_id}; the note is in the thread"
+          + (f" as the reply to message {args.to}." if args.to else "."))
+    words = research.word_count(body)
+    print(f"  {words} words" + (f": WARNING, over {research.TAILOR_MAX_WORDS:,} (about two pages); cut older "
+                                "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
+    return 0
+
+
 def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     if args.thread_cmd == "pending":
         waiting = db.pending_messages(conn)
@@ -587,7 +636,17 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
         note = f", score {fit['score']}/5" if fit else ""
         print(f"  CV fit: {fit_path} ({'exists' if fit_path.is_file() else 'missing'}{note})")
         cv = private_dir / research.CV_FILE
-        print(f"  CV: {cv} ({'exists' if cv.is_file() else 'missing'})")
+        print(f"  CV: {cv} ({'exists' if cv.is_file() else 'missing'}; the master CV: never edit it here)")
+        tailored = db.tailored_cv(conn, app["id"])
+        if tailored:
+            path = Path(tailored["file_path"])
+            print(f"  tailored CV: {path} ({'exists' if path.is_file() else 'missing'}, version {tailored['version']})")
+            print(f"    after revising it: python -m prep.cli tailor save {app['id']} --to MSG "
+                  "with what changed on stdin (this is the reply)")
+            style = research.style_file(private_dir)
+            print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
+        if app.get("cv_sent"):
+            print(f"  CV sent: {app['cv_sent']} (version {app['cv_sent_version']}, frozen)")
     else:
         print("  private_dir is not set: no research, CV fit or CV files")
     _print_job_description(settings, app)
@@ -706,14 +765,14 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")
     p.set_defaults(func=cmd_feedback)
 
-    p = sub.add_parser("queue", help="read-only: open research / CV fit requests (counts and ids)")
+    p = sub.add_parser("queue", help="read-only: open research / CV fit / tailoring requests (counts and ids)")
     p.set_defaults(func=cmd_queue, read_only=True)
 
     p = sub.add_parser("research", help="company research and CV fit queue (used by /research)")
     rsub = p.add_subparsers(dest="research_cmd", required=True)
     r = rsub.add_parser("next", help="claim the next application's requests and print what to do")
     r.add_argument("app_id", type=int, nargs="?")
-    r = rsub.add_parser("queue", help="queue research and/or a CV fit for an application")
+    r = rsub.add_parser("queue", help="queue research and a CV fit (or one --kind, tailor too) for an application")
     r.add_argument("app_id", type=int)
     r.add_argument("--kind", choices=db.REQUEST_KINDS)
     r.add_argument("--redo", action="store_true", help="research again even if the profile is fresh")
@@ -728,6 +787,14 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("app_id", type=int)
     f.add_argument("--file", help="default: private_dir/fit/<app-id>-<slug>.md")
     p.set_defaults(func=cmd_fit)
+
+    p = sub.add_parser("tailor", help="tailored CV copies (used by /research and /ask)")
+    tsub = p.add_subparsers(dest="tailor_cmd", required=True)
+    t = tsub.add_parser("save", help="record cv-tailored/<app-id>-<slug>.md; the thread note comes on stdin")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--to", type=int, help="the user message this revision answers")
+    t.add_argument("--file", help="default: private_dir/cv-tailored/<app-id>-<slug>.md")
+    p.set_defaults(func=cmd_tailor)
 
     p = sub.add_parser("thread", help="the Agent thread on an application's panel (used by /ask)")
     hsub = p.add_subparsers(dest="thread_cmd", required=True)

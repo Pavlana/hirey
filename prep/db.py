@@ -8,10 +8,14 @@ Dates are ISO strings: YYYY-MM-DD for days, YYYY-MM-DDTHH:MM:SSZ for timestamps.
 """
 
 import json
+import logging
 import re
+import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+log = logging.getLogger("prep.db")
 
 APPLICATION_STATUSES = (
     "to_apply", "applied", "recruiter_call", "technical", "system_design",
@@ -55,8 +59,11 @@ RETIRED_STAGE_TASKS = {"to_apply": (("Research the company", "prep", 2), ("Check
 REVIEW_TASK = ("Review research and apply", "apply", 2)
 AUTO_COMMENT = "auto: no reply in {days} days"
 # Agent work queued for an application (done by the /research skill, never by the dashboard).
-REQUEST_KINDS = ("research", "cv_fit")
-REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit"}
+# tailor: a copy of cv.md tailored to this job (cv-tailored/), revised later through the thread (/ask).
+REQUEST_KINDS = ("research", "cv_fit", "tailor")
+REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": "Tailored CV"}
+# The two kinds entering Interested queues and the Research / CV fit buttons handle; tailor is asked for on its own.
+RESEARCH_KINDS = ("research", "cv_fit")
 # claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
 REQUEST_STATUSES = ("pending", "claimed", "done")
 CLAIM_HOURS = 6
@@ -164,7 +171,7 @@ CREATE TABLE IF NOT EXISTS application_comments (
 CREATE TABLE IF NOT EXISTS agent_requests (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL REFERENCES applications(id),
-    kind           TEXT NOT NULL,       -- research / cv_fit
+    kind           TEXT NOT NULL,       -- research / cv_fit / tailor
     status         TEXT NOT NULL DEFAULT 'pending',
     force          INTEGER NOT NULL DEFAULT 0,  -- 1: Redo, research again even if the profile is fresh
     requested_at   TEXT NOT NULL,
@@ -203,6 +210,15 @@ CREATE TABLE IF NOT EXISTS cv_fits (
     checked_at     TEXT NOT NULL
 );
 
+-- The latest tailored copy of cv.md per application; the text is private_dir/cv-tailored/<app-id>-<slug>.md.
+-- version goes up by one on every save (first pass and each revision through the thread).
+CREATE TABLE IF NOT EXISTS tailored_cvs (
+    application_id INTEGER PRIMARY KEY REFERENCES applications(id),
+    file_path      TEXT NOT NULL,
+    version        INTEGER NOT NULL,
+    updated_at     TEXT NOT NULL
+);
+
 -- The Agent thread on an application's side panel. Bodies are private: never logged.
 CREATE TABLE IF NOT EXISTS application_messages (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -229,6 +245,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "status_history": {"comment": "TEXT"},  # the comment given with a stage change
     "tasks": {"stage": "TEXT"},             # the stage whose STAGE_TASKS created it; NULL if hand-made
     "gaps": {"application_id": "INTEGER REFERENCES applications(id)"},  # e.g. a gap found by a CV fit
+    # The tailored CV sent with the application: a frozen copy (cv-tailored/<id>-<slug>.sent-v<N>.md),
+    # its version and when it was recorded. NULL when no tailored copy existed (the master CV was used).
+    "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -415,7 +434,9 @@ def record_application(
         return app_id, True
     new_status = fields.pop("status")
     update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
-    move_application(conn, existing["id"], new_status, today)
+    moved = move_application(conn, existing["id"], new_status, today)
+    if moved and not existing["date_applied"] and new_status not in ("to_apply", "withdrawn"):
+        record_cv_sent(conn, existing["id"])  # date_applied was set above, so the move did not count it as sent
     return existing["id"], False
 
 
@@ -473,7 +494,38 @@ def move_application(
                      (app_id, interview_date, status))
     conn.commit()
     stage_tasks(conn, app_id, status, today, interview_date)
+    if sent:
+        record_cv_sent(conn, app_id)
     return True
+
+
+def sent_copy_path(path: Path, version: int) -> Path:
+    """Where the tailored copy is frozen when it is sent: <app-id>-<slug>.sent-v<N>.md next to it."""
+    return path.with_name(f"{path.stem}.sent-v{version}{path.suffix}")
+
+
+def record_cv_sent(conn: sqlite3.Connection, app_id: int) -> str | None:
+    """The application was just sent: freeze its tailored CV (a copy next to it, so later revisions
+    never change the record) and store that copy's path, version and time in applications.cv_sent.
+    Does nothing without a tailored copy, when its file is missing or when the copy fails (logged
+    with ids only; the move itself stands). Returns the frozen path."""
+    row = tailored_cv(conn, app_id)
+    if row is None:
+        return None
+    source = Path(row["file_path"])
+    if not source.is_file():
+        return None
+    target = sent_copy_path(source, row["version"])
+    try:
+        shutil.copyfile(source, target)
+    except OSError as e:
+        log.warning("could not freeze the tailored CV of application %s (%s); cv_sent not recorded",
+                    app_id, type(e).__name__)
+        return None
+    conn.execute("UPDATE applications SET cv_sent = ?, cv_sent_version = ?, cv_sent_at = ? WHERE id = ?",
+                 (str(target), row["version"], now_iso(), app_id))
+    conn.commit()
+    return str(target)
 
 
 def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | None = None,
@@ -779,6 +831,7 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM tailored_cvs WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM agent_requests WHERE application_id = :id AND status != 'pending')
         """,
         {"id": app_id},
@@ -1168,11 +1221,50 @@ def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
     return d
 
 
+def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
+                     reply_to: int | None = None) -> int:
+    """Record a saved tailored CV for an application: version + 1, its open tailor request done, and
+    `note` (what was done or changed, and any questions) posted in the thread as an agent message,
+    all in one transaction. With `reply_to` (a revision asked for in the thread) the note answers
+    that user message, as reply_message does. Returns the new version."""
+    note = _message_body(note)
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    if reply_to is not None:
+        _check_user_message(conn, app_id, reply_to)
+    stamp = now_iso()
+    with conn:
+        row = conn.execute("SELECT version FROM tailored_cvs WHERE application_id = ?", (app_id,)).fetchone()
+        version = (row["version"] if row else 0) + 1
+        conn.execute(
+            "INSERT OR REPLACE INTO tailored_cvs (application_id, file_path, version, updated_at) VALUES (?, ?, ?, ?)",
+            (app_id, file_path, version, stamp),
+        )
+        conn.execute(
+            "UPDATE agent_requests SET status = 'done', done_at = ? WHERE application_id = ? AND kind = 'tailor' "
+            "AND status IN ('pending', 'claimed')",
+            (stamp, app_id),
+        )
+        _agent_message(conn, app_id, note, stamp, reply_to)
+    return version
+
+
+def tailored_cv(conn: sqlite3.Connection, app_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM tailored_cvs WHERE application_id = ?", (app_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def fit_scores(conn: sqlite3.Connection) -> dict[int, int]:
+    """CV fit score by application id (Job Offers rows of tracked jobs)."""
+    return {r[0]: r[1] for r in conn.execute("SELECT application_id, score FROM cv_fits")}
+
+
 def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
     """For the board, by application id: {"profile": dict | None, "fit": dict | None,
-    "open": set of kinds with an open request}."""
+    "tailored": dict | None, "open": set of kinds with an open request}."""
     profiles = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM company_profiles")}
     fits = {r["application_id"]: dict(r) for r in conn.execute("SELECT * FROM cv_fits")}
+    tailored = {r["application_id"]: dict(r) for r in conn.execute("SELECT * FROM tailored_cvs")}
     open_kinds: dict[int, set[str]] = {}
     for r in conn.execute("SELECT application_id, kind FROM agent_requests WHERE status IN ('pending', 'claimed')"):
         open_kinds.setdefault(r[0], set()).add(r[1])
@@ -1182,16 +1274,17 @@ def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
         if fit:
             fit["top_gaps"] = json.loads(fit["top_gaps"] or "[]")
         view[a["id"]] = {"profile": profiles.get(company_slug(a["company"])), "fit": fit,
-                         "open": open_kinds.get(a["id"], set())}
+                         "tailored": tailored.get(a["id"]), "open": open_kinds.get(a["id"], set())}
     return view
 
 
 def board_applications(conn: sqlite3.Connection) -> list[dict]:
     """Every application for the Applications board, oldest first: id, company, role, link,
-    tier, status and since (the day of its last stage change, as last_change_day). Never pay."""
+    tier, status, the tailored CV sent (version and time) and since (the day of its last stage
+    change, as last_change_day). Never pay."""
     rows = conn.execute(
         """
-        SELECT a.id, a.company, a.role, a.link, a.tier, a.status,
+        SELECT a.id, a.company, a.role, a.link, a.tier, a.status, a.cv_sent_version, a.cv_sent_at,
                substr(COALESCE((SELECT MAX(changed_at) FROM status_history WHERE application_id = a.id),
                                a.date_applied, a.created_at), 1, 10) AS since
         FROM applications a ORDER BY a.id
@@ -1287,13 +1380,24 @@ def reply_message(conn: sqlite3.Connection, app_id: int, to_id: int, body: str) 
     message answered, in one transaction, only while the message is still open (pending or
     claimed). Returns the reply's id."""
     body = _message_body(body)
+    _check_user_message(conn, app_id, to_id)
+    stamp = now_iso()
+    with conn:
+        return _agent_message(conn, app_id, body, stamp, to_id)
+
+
+def _check_user_message(conn: sqlite3.Connection, app_id: int, to_id: int) -> None:
     row = conn.execute(
         "SELECT application_id, author, status FROM application_messages WHERE id = ?", (to_id,)
     ).fetchone()
     if row is None or row["application_id"] != app_id or row["author"] != "user":
         raise LookupError(f"no user message {to_id} on application {app_id}")
-    stamp = now_iso()
-    with conn:
+
+
+def _agent_message(conn: sqlite3.Connection, app_id: int, body: str, stamp: str, to_id: int | None) -> int:
+    """Insert an agent message inside the caller's transaction. With `to_id` it answers that user
+    message, only while it is still open (ValueError otherwise, which rolls the transaction back)."""
+    if to_id is not None:
         cursor = conn.execute(
             "UPDATE application_messages SET status = 'answered', answered_at = ? "
             "WHERE id = ? AND status IN ('pending', 'claimed')",
@@ -1301,9 +1405,9 @@ def reply_message(conn: sqlite3.Connection, app_id: int, to_id: int, body: str) 
         )
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
-        cursor = conn.execute(
-            "INSERT INTO application_messages (application_id, author, body, reply_to, created_at) "
-            "VALUES (?, 'agent', ?, ?, ?)",
-            (app_id, body, to_id, stamp),
-        )
+    cursor = conn.execute(
+        "INSERT INTO application_messages (application_id, author, body, reply_to, created_at) "
+        "VALUES (?, 'agent', ?, ?, ?)",
+        (app_id, body, to_id, stamp),
+    )
     return cursor.lastrowid

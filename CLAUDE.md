@@ -41,7 +41,7 @@ a committed file.
 - Pay/salary is stored only in the local database: `applications.pay`, and agent-thread messages
   (`application_messages`) as the user pasted them. Never in committed files, fixtures, examples,
   logs, commit messages, the dev3 ping, or anything an agent writes (comments, tasks, replies,
-  research or fit files) unless the user asks.
+  research, fit or tailored CV files) unless the user asks.
 - Nothing here applies to jobs, sends email or posts anywhere.
 - Committed docs are impersonal (no "you/your") and say nothing about private files' contents.
 - Allowed values for status/kind/tier columns are validated in Python (`prep/db.py`), not by
@@ -53,7 +53,7 @@ a committed file.
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
@@ -91,4 +91,5 @@ data/        local databases (gitignored)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Agent thread (used by /ask): `python -m prep.cli thread show APP [--claim]`, `thread reply APP --to MSG`, `thread pending`
+- Tailored CV (used by /research and /ask): `python -m prep.cli tailor save APP [--to MSG]` (note on stdin)
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`
