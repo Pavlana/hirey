@@ -1,5 +1,6 @@
 """SQLite storage for applications, their status history and comments, interviews, tasks,
-gaps, job decisions, and the agent's research queue and results (prep.db).
+gaps, job decisions, the agent's research queue and results, and each application's message
+thread with the agent (prep.db).
 
 Allowed values for enum-like columns are checked in Python, not with CHECK
 constraints: later phases may add values, and SQLite cannot alter a CHECK in place.
@@ -63,6 +64,12 @@ RECOGNITION = ("well_known", "niche", "little_known")
 RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
 SIZE_BANDS = ("1-50", "51-250", "251-1000", "1001-5000", "5000+")
 FIT_GAP_SESSION = "cv fit"
+# The panel's Agent thread: the user writes, the standing assistant (/ask) replies. A user message
+# is pending until an /ask session claims it (claims older than CLAIM_HOURS count as pending
+# again) and answered once a reply names it. Agent replies have no status.
+MESSAGE_AUTHORS = ("user", "agent")
+MESSAGE_STATUSES = ("pending", "claimed", "answered")
+MAX_MESSAGE = 20_000  # characters: room for a pasted recruiter email
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -196,10 +203,24 @@ CREATE TABLE IF NOT EXISTS cv_fits (
     checked_at     TEXT NOT NULL
 );
 
+-- The Agent thread on an application's side panel. Bodies are private: never logged.
+CREATE TABLE IF NOT EXISTS application_messages (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    author         TEXT NOT NULL,       -- user / agent
+    body           TEXT NOT NULL,
+    status         TEXT,                -- user messages: pending / claimed / answered; NULL for agent
+    reply_to       INTEGER REFERENCES application_messages(id),  -- agent replies: the user message answered
+    created_at     TEXT NOT NULL,
+    claimed_at     TEXT,
+    answered_at    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
 CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_id);
+CREATE INDEX IF NOT EXISTS idx_messages_app ON application_messages(application_id);
 """
 
 # Columns added after a table was first created: {table: {column: definition}}.
@@ -741,7 +762,7 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
 def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
     """Undo Interested on a job: delete the decision and the to_apply application it created, with
     its queued requests, so the job is new again. Only while nothing else has happened to it: still
-    to_apply with one history row, no tasks, comments, interviews, gaps, CV fit or tier, and no
+    to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, CV fit or tier, and no
     request taken by the agent. Raises ValueError otherwise. Returns the deleted application id."""
     app = find_by_job(conn, getjo_job_id)
     if app is None:
@@ -754,6 +775,7 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
         SELECT (SELECT COUNT(*) FROM status_history WHERE application_id = :id) != 1
             OR EXISTS (SELECT 1 FROM tasks WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM application_comments WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM application_messages WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
@@ -1176,3 +1198,112 @@ def board_applications(conn: sqlite3.Connection) -> list[dict]:
         """
     )
     return [dict(r) for r in rows]
+
+
+# --- agent thread ---------------------------------------------------------------------
+
+def _message_body(body: str) -> str:
+    """Line breaks as \n (a plain form post sends \r\n, which the browser's maxlength counts as
+    one character), stripped, within MAX_MESSAGE."""
+    body = body.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not body:
+        raise ValueError("a message needs some text")
+    if len(body) > MAX_MESSAGE:
+        raise ValueError(f"a message can be at most {MAX_MESSAGE:,} characters; this one has {len(body):,}")
+    return body
+
+
+def add_message(conn: sqlite3.Connection, app_id: int, body: str) -> int:
+    """A user message on an application's thread, pending until the agent answers it."""
+    body = _message_body(body)
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    cursor = conn.execute(
+        "INSERT INTO application_messages (application_id, author, body, status, created_at) "
+        "VALUES (?, 'user', ?, 'pending', ?)",
+        (app_id, body, now_iso()),
+    )
+    conn.commit()
+    return cursor.lastrowid
+
+
+def thread(conn: sqlite3.Connection, app_id: int) -> list[dict]:
+    """An application's messages, oldest first: id, author, body, status, reply_to, created_at."""
+    rows = conn.execute(
+        "SELECT id, author, body, status, reply_to, created_at FROM application_messages "
+        "WHERE application_id = ? ORDER BY id",
+        (app_id,),
+    )
+    return [dict(r) for r in rows]
+
+
+def pending_messages(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
+    """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
+    claimed now: `claimed` is True for a live claim), oldest first, with company and role."""
+    where = "WHERE m.author = 'user' AND m.status IN ('pending', 'claimed')"
+    if app_id is not None:
+        where += " AND m.application_id = ?"
+    rows = conn.execute(
+        f"""
+        SELECT m.id, m.application_id, m.status, m.created_at, m.claimed_at, a.company, a.role
+        FROM application_messages m JOIN applications a ON a.id = m.application_id
+        {where} ORDER BY m.id
+        """,
+        (app_id,) if app_id is not None else (),
+    )
+    cutoff = _claim_cutoff()
+    found = []
+    for r in rows:
+        d = dict(r)
+        d["claimed"] = d["status"] == "claimed" and (d["claimed_at"] or "") >= cutoff
+        found.append(d)
+    return found
+
+
+def claim_messages(conn: sqlite3.Connection, app_id: int) -> list[int]:
+    """Take an application's waiting user messages for this session; returns their ids, oldest
+    first. Only one caller wins each: the update applies while it is still pending (or its claim
+    has gone stale)."""
+    stamp, cutoff = now_iso(), _claim_cutoff()
+    ids = [r[0] for r in conn.execute(
+        "SELECT id FROM application_messages WHERE application_id = ? AND author = 'user' "
+        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?)) ORDER BY id",
+        (app_id, cutoff))]
+    won = []
+    for msg_id in ids:
+        cursor = conn.execute(
+            "UPDATE application_messages SET status = 'claimed', claimed_at = ? "
+            "WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
+            (stamp, msg_id, cutoff),
+        )
+        if cursor.rowcount == 1:
+            won.append(msg_id)
+    conn.commit()
+    return won
+
+
+def reply_message(conn: sqlite3.Connection, app_id: int, to_id: int, body: str) -> int:
+    """The agent's reply to user message `to_id` on this application: stores it and marks that
+    message answered, in one transaction, only while the message is still open (pending or
+    claimed). Returns the reply's id."""
+    body = _message_body(body)
+    row = conn.execute(
+        "SELECT application_id, author, status FROM application_messages WHERE id = ?", (to_id,)
+    ).fetchone()
+    if row is None or row["application_id"] != app_id or row["author"] != "user":
+        raise LookupError(f"no user message {to_id} on application {app_id}")
+    stamp = now_iso()
+    with conn:
+        cursor = conn.execute(
+            "UPDATE application_messages SET status = 'answered', answered_at = ? "
+            "WHERE id = ? AND status IN ('pending', 'claimed')",
+            (stamp, to_id),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError(f"message {to_id} is already answered")
+        cursor = conn.execute(
+            "INSERT INTO application_messages (application_id, author, body, reply_to, created_at) "
+            "VALUES (?, 'agent', ?, ?, ?)",
+            (app_id, body, to_id, stamp),
+        )
+    return cursor.lastrowid

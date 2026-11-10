@@ -86,7 +86,8 @@ def build_getjo_db(path: Path, jobs: list[dict]) -> None:
 
 
 def build_prep_db(path: Path, data: dict) -> None:
-    """Create prep.db at `path` from fixture applications, tasks and gaps (replaces any existing file)."""
+    """Create prep.db at `path` from fixture applications, tasks, gaps and Agent thread messages
+    (replaces any existing file)."""
     path.unlink(missing_ok=True)
     conn = db.connect(path)
     try:
@@ -106,6 +107,9 @@ def build_prep_db(path: Path, data: dict) -> None:
                 db.complete_task(conn, task_id)
                 conn.execute("UPDATE tasks SET done_at = ? WHERE id = ?", (task["done_at"], task_id))
                 conn.commit()
+        for m in data.get("messages", []):  # an Agent thread: a question and the agent's reply
+            msg_id = db.add_message(conn, m["application"], m["question"])
+            db.reply_message(conn, m["application"], msg_id, m["reply"])
     finally:
         conn.close()
 

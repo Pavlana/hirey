@@ -28,5 +28,9 @@
   ],
   "gaps": [
     {"date": "2026-01-15", "session": "mock", "gap": "Explain a load balancer health check end to end"}
+  ],
+  "messages": [
+    {"application": 1, "question": "What's their interview process? Any London office?",
+     "reply": "4 stages: recruiter call, live coding (Python, 60 min), system design, panel with the hiring manager.\nLondon office in Shoreditch, hybrid 2 days a week; the role is listed as London or remote (UK).\nSources: https://careers.acme-rockets.example/process https://acme-rockets.example/offices"}
   ]
 }

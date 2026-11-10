@@ -34,10 +34,14 @@ a committed file.
   Paths to getjo and private data are absolute. Never use relative paths such as
   `../getjo`: the code runs from dev3 worktrees, where relative paths point elsewhere.
 - getjo's database is opened with SQLite URI `mode=ro`. Never write to it.
-- Logging with `logging` to stdout. Never log CV text, personal notes, pay or request bodies.
-- The dashboard never renders `pay`, escapes every database value, and binds to loopback only.
-- Pay/salary may be stored only in the local database (`applications.pay`); never in
-  committed files, fixtures, examples, logs or commit messages.
+- Logging with `logging` to stdout. Never log CV text, personal notes, pay, agent-thread messages
+  or request bodies.
+- The dashboard never renders `applications.pay`, escapes every database value, and binds to
+  loopback only. Agent-thread messages are shown verbatim, so they may contain pay the user pasted.
+- Pay/salary is stored only in the local database: `applications.pay`, and agent-thread messages
+  (`application_messages`) as the user pasted them. Never in committed files, fixtures, examples,
+  logs, commit messages, the dev3 ping, or anything an agent writes (comments, tasks, replies,
+  research or fit files) unless the user asks.
 - Nothing here applies to jobs, sends email or posts anywhere.
 - Committed docs are impersonal (no "you/your") and say nothing about private files' contents.
 - Allowed values for status/kind/tier columns are validated in Python (`prep/db.py`), not by
@@ -62,8 +66,8 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
              research.py (agent result files), assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, stage/, task/, research/ — each SKILL.md calls python -m prep.cli <command>
-.claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, ids only)
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/ — each SKILL.md calls python -m prep.cli <command>
+.claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
@@ -86,4 +90,5 @@ data/        local databases (gitignored)
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
+- Agent thread (used by /ask): `python -m prep.cli thread show APP [--claim]`, `thread reply APP --to MSG`, `thread pending`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

@@ -17,8 +17,9 @@ so tests call it directly. Every value from a database is HTML-escaped. The pay 
 never read for display.
 
 The dashboard never runs the agent: Research / CV fit buttons and Interested only queue
-requests (db.agent_requests) for the /research skill. When assistant_task is set, newly queued
-requests are also sent to that dev3 agent (prep.assistant), in the background.
+requests (db.agent_requests) for the /research skill, and the panel's Agent thread only stores
+the user's message (db.application_messages) for the /ask skill. When assistant_task is set,
+new work is also sent to that dev3 agent (prep.assistant), in the background, by id only.
 """
 
 import argparse
@@ -26,11 +27,12 @@ import html
 import ipaddress
 import json
 import logging
+import re
 import sqlite3
 import sys
 from collections.abc import Callable, Mapping
 from contextlib import closing
-from datetime import date
+from datetime import date, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
@@ -46,7 +48,7 @@ STATIC_FILES = {
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
 }
 LOOPBACK_NAMES = ("localhost", "127.0.0.1")
-MAX_BODY = 64 * 1024
+MAX_BODY = 256 * 1024  # a 20,000-character pasted email URL-encodes to up to ~180 KB
 RECENT_DONE = 10
 MAX_COMMENT = 1000
 # Applications: the funnel order (Next stage follows it) and the closed outcomes.
@@ -92,6 +94,7 @@ MESSAGES = {
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
     "tier_set": "Tier saved.",
+    "message_sent": "Sent to the agent. Its reply shows in the thread.",
 }
 
 SECURITY_HEADERS = [
@@ -196,6 +199,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
     if path in renamed:
         target = renamed[path] + (f"?{urlencode(query, doseq=True)}" if query else "")
         return 303, [("Location", target)], b""
+    if path == "/applications/thread":
+        return thread_json(settings, query, today)
     pages = {
         "/": dashboard_page,
         "/offers": lambda s, c, t: offers_page(s, c, t, query),
@@ -429,6 +434,20 @@ def comment_application(settings: Settings, conn: sqlite3.Connection, form: dict
     return {"redirect": _here(app_id)}
 
 
+def send_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The panel's Agent thread: store the user's message (author is always user, whatever the
+    form says) and ping the standing assistant with `/ask <app> <message>`, ids only, in the
+    background. The message stays pending until /ask replies through the CLI."""
+    app_id = _app_id(conn, form)
+    body = form.get("body", "")
+    if not body:
+        raise BadRequest("Type a question or paste an email first.")
+    msg_id = db.add_message(conn, app_id, body)  # checks the length after normalising line breaks
+    log.info("message %s added to application %s's thread from the dashboard", msg_id, app_id)  # never the text
+    assistant.notify_message_in_background(settings, app_id, msg_id)
+    return {"redirect": _here(app_id), "html": _thread(db.thread(conn, app_id), bool(settings.assistant_task))}
+
+
 def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """Research / CV fit button: queue the request (Redo when a result exists). A second click
     while it is pending changes nothing. The agent does the work, never the dashboard."""
@@ -487,6 +506,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/comment": (comment_application, "/applications", "commented"),
     "/applications/research": (queue_research, "/applications", "research_queued"),
     "/applications/tier": (set_tier, "/applications", "tier_set"),
+    "/applications/message": (send_message, "/applications", "message_sent"),
     "/tasks/add": (add_task, "/applications", "task_added"),
     "/tasks/done": (complete_task, "/applications", "task_done"),
     "/tasks/reopen": (reopen_task, "/applications", "task_reopened"),
@@ -858,7 +878,7 @@ def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
     else:
         main = (_stage_strip(rows, f) + _board(shown, f, card)
                 + _app_list(shown, f, today) + _move_dialog())
-    panel = _panel(conn, focus, today, f) if focus else ""
+    panel = _panel(conn, focus, today, f, bool(settings.assistant_task)) if focus else ""
     layout = (f'<div class="apps" data-view="{f["view"]}">'
               f'<div class="apps-main">{_card("Pipeline", main, count=open_count, cls="card-board")}</div>'
               f"{panel}</div>")
@@ -995,9 +1015,10 @@ def _app_list(rows: list[dict], f: dict, today: str) -> str:
     return f'<div class="app-list" data-list{" hidden" if f["view"] != "list" else ""}>{table}</div>'
 
 
-def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
+def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, assistant_on: bool = False) -> str:
     """The side panel for one application: tasks, Next stage and Move to, company research,
-    CV fit and tier, comments and history. Every form posts and comes back to this panel."""
+    CV fit and tier, the Agent thread, comments and history. Every form posts and comes back to
+    this panel."""
     app = r["app"]
     here = apps_url(app["id"], f["view"], f["stage"])
     keep = (f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
@@ -1049,7 +1070,8 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
     close = apps_url(None, f["view"], f["stage"])
     return (
-        f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}">'
+        f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}" '
+        f'data-status="{h(app["status"])}">'
         f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
         f'<p class="panel-sub">{h(app["role"])}</p>'
         f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
@@ -1060,10 +1082,90 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
         + f'<section><h3>Tasks</h3>{task_list}{add}</section>'
         f'<section><h3>Stage</h3>{next_form}{move}</section>'
         f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"], buttons=not interested)}</section>'
+        + _agent_section(app["id"], db.thread(conn, app["id"]), keep, assistant_on) +
         f'<section><h3>Comments and history</h3>{comment}'
         + (f'<ul class="timeline">{history}</ul>' if history else "")
         + "</section></div></aside>"
     )
+
+
+def _agent_section(app_id: int, messages: list[dict], keep: str, assistant_on: bool) -> str:
+    """The Agent thread (newest at the bottom) and a box to ask a question or paste an email.
+    `keep` is the panel's trusted hidden app_id/return fields."""
+    ask = (
+        f'<form method="post" action="/applications/message" class="ask" data-ajax="thread">{keep}'
+        f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
+        'placeholder="Ask about the company or the CV fit, or paste a recruiter email…" '
+        'aria-label="Message to the agent"></textarea>'
+        '<div class="ask-foot"><span class="muted">Pasted emails update the stage.</span>'
+        + _button("Send", size="sm") + "</div></form>"
+    )
+    return (f'<section class="agent" aria-labelledby="agent-{h(app_id)}"><h3 id="agent-{h(app_id)}">Agent</h3>'
+            f'{_thread(messages, assistant_on)}{ask}</section>')
+
+
+def _thread(messages: list[dict], assistant_on: bool) -> str:
+    """The thread itself, swapped in whole by the page script after Send and while polling.
+    data-pending marks a user message still waiting for its reply."""
+    items = "".join(
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}">'
+        f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
+        f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
+        f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
+        for m in messages
+    )
+    pending = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
+    if not messages:
+        state = '<p class="muted thread-empty">No messages yet.</p>'
+    elif pending and assistant_on:
+        state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Agent is working…</p>'
+    elif pending:
+        state = ('<p class="thread-state" role="status">Waiting for the agent: run /ask in a Claude Code session '
+                 "(no standing assistant is set).</p>")
+    else:
+        state = ""
+    return (f'<div class="thread" data-thread{" data-pending" if pending else ""}>'
+            + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
+
+
+_URL = re.compile(r"(https?://[^\s<>\"']+)")
+
+
+def _linkify(text: str) -> str:
+    """Plain text with its http(s) URLs as links. The raw text is split first, then every piece is
+    escaped, so nothing in a message can add markup."""
+    out = []
+    for i, part in enumerate(_URL.split(text)):
+        if i % 2 == 0:
+            out.append(h(part))
+            continue
+        url = part.rstrip(".,;:!?)]")
+        out.append(_link(url, url) + h(part[len(url):]))
+    return "".join(out)
+
+
+def _local_time(stamp: str) -> str:
+    """A stored UTC timestamp as the server's local "Jan 20, 14:05"."""
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).astimezone().strftime("%b %d, %H:%M")
+    except ValueError:
+        return stamp
+
+
+def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
+    """GET /applications/thread?app=ID for the panel's polling: whether a message is still
+    pending, the application's status (the agent may have moved it) and the thread's HTML."""
+    raw = (query.get("app") or [""])[0]
+    if not raw.isdigit():
+        return _json(400, {"ok": False, "message": "app must be an application id."})
+    with closing(_connect(settings, today)) as conn:
+        app = db.get_application(conn, int(raw))
+        if app is None:
+            return _json(404, {"ok": False, "message": "No such application."})
+        messages = db.thread(conn, app["id"])
+    pending = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
+    return _json(200, {"ok": True, "pending": pending, "status": app["status"],
+                       "html": _thread(messages, bool(settings.assistant_task))})
 
 
 def _move_dialog() -> str:

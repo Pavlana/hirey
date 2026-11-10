@@ -15,6 +15,9 @@
     python -m prep.cli research queue APP_ID [--kind research|cv_fit] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
+    python -m prep.cli thread show APP_ID [--claim]      (the Agent thread and its context; used by /ask)
+    python -m prep.cli thread reply APP_ID --to MSG_ID [--file PATH]   (reply text from the file or stdin)
+    python -m prep.cli thread pending
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
@@ -92,6 +95,9 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
         print()
 
     line = _queue_line(db.open_requests(conn))
+    if line:
+        print(line + "\n")
+    line = _thread_line(db.pending_messages(conn))
     if line:
         print(line + "\n")
 
@@ -349,25 +355,46 @@ def _queue_line(requests: list[dict]) -> str:
     return f"Agent work pending: {counts} (applications {apps}){busy}. Run /research to do it."
 
 
+def _thread_line(messages: list[dict]) -> str:
+    """One line: thread messages waiting for the agent, with application ids only (never text)."""
+    if not messages:
+        return ""
+    apps = ", ".join(str(a) for a in sorted({m["application_id"] for m in messages}))
+    claimed = sum(1 for m in messages if m.get("claimed"))
+    busy = f"; {claimed} already being answered by another session" if claimed else ""
+    noun = "message" if len(messages) == 1 else "messages"
+    return f"Agent thread: {len(messages)} {noun} waiting (applications {apps}){busy}. Run /ask to answer."
+
+
 def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
     """Read-only (the SessionStart hook runs it in every session): prep.db is opened with
-    mode=ro and nothing is created; a missing database or table prints nothing."""
+    mode=ro and nothing is created; a missing database or table prints nothing. Each table is
+    read on its own, so an older database without the thread still reports research."""
     path = settings.prep_db
     if not path.is_file():
         return 0
+    cutoff = db._claim_cutoff()
+    lines = []
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
-            rows = conn.execute(
-                "SELECT application_id, kind, status, claimed_at FROM agent_requests "
-                "WHERE status IN ('pending', 'claimed') ORDER BY id").fetchall()
+            for query, line in (
+                ("SELECT application_id, kind, status, claimed_at FROM agent_requests "
+                 "WHERE status IN ('pending', 'claimed') ORDER BY id", _queue_line),
+                ("SELECT application_id, 'message', status, claimed_at FROM application_messages "
+                 "WHERE author = 'user' AND status IN ('pending', 'claimed') ORDER BY id", _thread_line),
+            ):
+                try:
+                    rows = conn.execute(query).fetchall()
+                except sqlite3.Error:
+                    continue
+                found = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff}
+                         for r in rows if r[1] in (*db.REQUEST_KINDS, "message")]
+                lines.append(line(found))
     except sqlite3.Error:
         return 0
-    cutoff = db._claim_cutoff()
-    requests = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff}
-                for r in rows if r[1] in db.REQUEST_KINDS]
-    line = _queue_line(requests)
-    if line:
-        print("inter_prep: " + line + " Offer it to the user, or run it at once if this is the "
+    text = " ".join(line for line in lines if line)
+    if text:
+        print("inter_prep: " + text + " Offer it to the user, or run it at once if this is the "
               "standing assistant session.")
     return 0
 
@@ -450,6 +477,11 @@ def _print_fit_step(settings: Settings, private_dir: Path, app: dict, slug: str)
     print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before the fit check'})")
     print(f"  file: {research.fit_file(private_dir, app['id'], slug)}")
     print(f"  then: python -m prep.cli fit save {app['id']}")
+    _print_job_description(settings, app)
+
+
+def _print_job_description(settings: Settings, app: dict) -> None:
+    """The job description from getjo (read-only), indented, or why there is none."""
     description = None
     if app.get("getjo_job_id"):
         try:
@@ -512,6 +544,83 @@ def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
     print(f"Saved CV fit for #{args.app_id}: {fit['score']}/5, {len(fit['gaps'])} gaps "
           f"({len(new_gaps)} new in the gaps list)")
     _print_review_tasks(conn, mark)
+    return 0
+
+
+def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.thread_cmd == "pending":
+        waiting = db.pending_messages(conn)
+        for m in waiting:
+            busy = ", being answered by another session" if m["claimed"] else ""
+            print(f"message {m['id']} on #{m['application_id']} {m['company']} — {m['role']} "
+                  f"(sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
+        if not waiting:
+            print("No thread messages waiting.")
+        return 0
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    if args.thread_cmd == "reply":
+        return _thread_reply(args, conn, app)
+    return _thread_show(args, settings, conn, app)
+
+
+def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    """The application (never pay), the files and commands /ask may need, and the thread."""
+    claimed = db.claim_messages(conn, app["id"]) if args.claim else []
+    slug = db.company_slug(app["company"])
+    print(f"Application #{app['id']}: {app['company']} — {app['role']} [{db.status_label(app['status'])}]")
+    if app["link"]:
+        print(f"  link: {app['link']}")
+    if app["contact"]:
+        print(f"  contact: {app['contact']}")
+
+    print("\nContext (read what the message needs):")
+    private_dir = settings.private_dir
+    profile, fit = db.company_profile(conn, slug), db.cv_fit(conn, app["id"])
+    if private_dir:
+        company = Path(profile["file_path"]) if profile else research.company_file(private_dir, slug)
+        note = f", researched {profile['researched_at']}, suggested tier {profile['suggested_tier'] or '–'}" if profile else ""
+        print(f"  company research: {company} ({'exists' if company.is_file() else 'missing'}{note})")
+        print(f"    after updating it: python -m prep.cli research save {app['id']}")
+        fit_path = Path(fit["file_path"]) if fit else research.fit_file(private_dir, app["id"], slug)
+        note = f", score {fit['score']}/5" if fit else ""
+        print(f"  CV fit: {fit_path} ({'exists' if fit_path.is_file() else 'missing'}{note})")
+        cv = private_dir / research.CV_FILE
+        print(f"  CV: {cv} ({'exists' if cv.is_file() else 'missing'})")
+    else:
+        print("  private_dir is not set: no research, CV fit or CV files")
+    _print_job_description(settings, app)
+
+    messages = db.thread(conn, app["id"])
+    print(f"\nThread ({len(messages)} message{'' if len(messages) == 1 else 's'}, oldest first):")
+    for m in messages:
+        who = f"agent, reply to {m['reply_to']}" if m["author"] == "agent" else f"user, {m['status']}"
+        print(f"\n  [message {m['id']} · {who} · {m['created_at'][:16].replace('T', ' ')} UTC]")
+        print("\n".join(f"    {line}" for line in m["body"].splitlines()))
+    if not messages:
+        print("  none")
+    waiting = [m for m in db.pending_messages(conn, app["id"])]
+    print()
+    if args.claim:
+        if claimed:
+            print(f"Claimed for this session: message{'s' if len(claimed) > 1 else ''} {', '.join(map(str, claimed))}. "
+                  "Answer each, oldest first.")
+        elif waiting:
+            print("Nothing claimed: another session is already answering this thread. Leave it alone.")
+        else:
+            print("Nothing waiting on this thread.")
+    for msg_id in claimed or [m["id"] for m in waiting]:
+        print(f"To answer message {msg_id}: python -m prep.cli thread reply {app['id']} --to {msg_id} "
+              "with the text on stdin (or --file PATH)")
+    return 0
+
+
+def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection, app: dict) -> int:
+    text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    reply_id = db.reply_message(conn, app["id"], args.to, text)
+    print(f"Reply {reply_id} saved on #{app['id']} {app['company']}; message {args.to} answered. "
+          "The dashboard panel shows it.")
     return 0
 
 
@@ -619,6 +728,18 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("app_id", type=int)
     f.add_argument("--file", help="default: private_dir/fit/<app-id>-<slug>.md")
     p.set_defaults(func=cmd_fit)
+
+    p = sub.add_parser("thread", help="the Agent thread on an application's panel (used by /ask)")
+    hsub = p.add_subparsers(dest="thread_cmd", required=True)
+    t = hsub.add_parser("show", help="the application, its context files and its thread")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--claim", action="store_true", help="take the waiting messages for this session first")
+    t = hsub.add_parser("reply", help="reply to a user message (text from --file or stdin)")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--to", type=int, required=True, help="the user message id being answered")
+    t.add_argument("--file", help="a file holding the reply (default: stdin)")
+    hsub.add_parser("pending", help="user messages waiting for the agent")
+    p.set_defaults(func=cmd_thread)
     return parser
 
 

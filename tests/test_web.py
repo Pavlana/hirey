@@ -271,7 +271,7 @@ class OffersTest(WebTestCase):
         self.assertIn("Recorded as applied", body)
         self.assertIn("Chase if no reply", body)
         self.assertIn(f'<a class="app-card is-focus" id="app-{app["id"]}"', body)
-        self.assertIn(f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{app["id"]}">', body)
+        self.assertIn(f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{app["id"]}" data-status="applied">', body)
         self.assertNotIn("Globex Labs", self.get("/offers")[2])
 
     def test_mark_applied_twice_does_not_duplicate(self) -> None:

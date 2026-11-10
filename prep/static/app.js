@@ -202,6 +202,77 @@
     if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
 
+  // --- Agent thread -----------------------------------------------------------------------
+  // While a message in the open panel's thread is pending, poll /applications/thread every few
+  // seconds (for at most a few minutes). When the reply is in, refresh the panel (the agent may
+  // have added tasks or comments), or the whole page when it moved the stage. Only one poll runs,
+  // tied to one panel: opening another panel or closing it stops it.
+  const POLL_MS = 4000;
+  const POLL_FOR_MS = 5 * 60 * 1000;
+  const REPLIED_KEY = "agent-replied"; // survives the reload after a stage move: show the reply
+  let poll = null;
+  let refreshPanel = () => location.reload(); // the board below swaps in the panel alone
+
+  function stopPoll() {
+    if (poll) clearTimeout(poll.timer);
+    poll = null;
+  }
+
+  function watchThread(panel) {
+    stopPoll();
+    const thread = panel?.querySelector("[data-thread]");
+    if (!thread || !thread.hasAttribute("data-pending") || !window.fetch) return;
+    const me = { timer: null, started: Date.now() };
+    const { app, status } = panel.dataset;
+    poll = me;
+    const tick = async () => {
+      if (poll !== me) return;
+      try {
+        const res = await fetch(`/applications/thread?app=${encodeURIComponent(app)}`, {
+          headers: { Accept: "application/json" }, credentials: "same-origin",
+        });
+        const reply = await res.json();
+        if (poll !== me) return; // the panel changed while waiting
+        if (reply.ok && !reply.pending) {
+          poll = null;
+          if (reply.status !== status) {
+            try { sessionStorage.setItem(REPLIED_KEY, app); } catch { /* the reply still shows */ }
+            location.reload(); // the agent moved the stage: the board changes too
+          } else {
+            toast("The agent replied.");
+            refreshPanel();
+          }
+          return;
+        }
+      } catch { /* the server restarted or is busy: try again */ }
+      if (Date.now() - me.started > POLL_FOR_MS) {
+        poll = null;
+        const state = panel.querySelector(".thread-state");
+        if (state) state.textContent = "Still waiting. The reply shows here when the agent answers; reload to check.";
+        return;
+      }
+      me.timer = setTimeout(tick, POLL_MS);
+    };
+    me.timer = setTimeout(tick, POLL_MS);
+  }
+  const openPanel = document.getElementById("panel");
+  watchThread(openPanel);
+  let replied = null;
+  try { replied = sessionStorage.getItem(REPLIED_KEY); sessionStorage.removeItem(REPLIED_KEY); } catch { /* none */ }
+  if (openPanel && replied === openPanel.dataset.app) {
+    openPanel.querySelector(".agent")?.scrollIntoView({ block: "end" });
+    toast("The agent replied and updated the stage.");
+  }
+
+  // Cmd/Ctrl+Enter sends the message.
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" || !(e.metaKey || e.ctrlKey)) return;
+    const form = e.target.closest?.("form.ask");
+    if (!form) return;
+    e.preventDefault();
+    form.requestSubmit ? form.requestSubmit() : form.submit();
+  });
+
   // --- Applications board ---------------------------------------------------------------
   // The server renders every state from the query string (?app=ID side panel, ?view=, ?stage=),
   // so this only adds: the panel opens without a reload, Esc closes it, the Board | List choice
@@ -240,7 +311,7 @@
       document.querySelector(`.app-list tr[data-app="${CSS.escape(appId)}"]`)?.classList.add("is-focus");
     }
 
-    async function showPanel(url, push) {
+    async function showPanel(url, push, { toThread = false } = {}) {
       const current = document.getElementById("panel");
       current?.classList.add("is-loading");
       try {
@@ -252,9 +323,15 @@
           const panel = document.importNode(next, true);
           if (current) current.replaceWith(panel); else apps.append(panel);
           syncMoveForms(panel);
-          panel.querySelector(".panel-close")?.focus({ preventScroll: true });
+          watchThread(panel);
+          if (toThread) {
+            panel.querySelector(".agent")?.scrollIntoView({ block: "end" });
+          } else {
+            panel.querySelector(".panel-close")?.focus({ preventScroll: true });
+          }
         } else {
           current?.remove();
+          stopPoll();
         }
         markFocus(next ? next.dataset.app : null);
         if (push) history.pushState(null, "", url);
@@ -264,9 +341,12 @@
       }
     }
 
+    refreshPanel = () => showPanel(location.href, false, { toThread: true });
+
     function closePanel() {
       const panel = document.getElementById("panel");
       if (!panel) return;
+      stopPoll();
       const href = panel.querySelector("[data-close-panel]").getAttribute("href");
       const appId = panel.dataset.app;
       panel.remove();
@@ -516,6 +596,13 @@
           .catch((err) => toast(err.message, { error: true }));
         // Undo only for an application this click created (never one that existed before).
         toast(reply.message, reply.created ? { action: { label: "Undo", run: undoIt } } : {});
+      } else if (mode === "thread") {
+        // The panel's Agent thread: swap in the server-built, escaped thread and wait for the reply.
+        const thread = form.closest(".agent")?.querySelector("[data-thread]");
+        if (thread && reply.html) thread.outerHTML = reply.html;
+        form.reset();
+        watchThread(form.closest(".panel"));
+        toast(reply.message);
       } else if (mode === "add-row") {
         const table = document.getElementById(form.dataset.target);
         if (!table || !reply.html) { location.reload(); return; } // was an empty state

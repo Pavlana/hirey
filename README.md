@@ -127,6 +127,47 @@ Queued work is picked up three ways:
   settings, new requests are sent at once to that long-running dev3 task as
   `/research <id>`.
 
+### Agent thread
+
+Each card's side panel has an **Agent** section: a message thread with the standing assistant.
+Typical messages:
+
+- A question about the company or the fit ("good employer?", "their stack?", "competitors?").
+  The agent answers from the research and fit files and the job description, searches the web
+  if needed, cites sources, and updates the company file when it learns something new.
+- A pasted recruiter email or call notes. The agent does what `/stage` does (stage, interview
+  date, short comment, extra to-dos) and replies in a line or two.
+
+The dashboard only stores the message and pings the assistant with the application and
+message ids, never the text. It shows "Agent is working…" and refreshes the thread when the
+reply arrives. Without an assistant the message waits. The SessionStart hook and `/today`
+report it, and `/ask` answers it in any Claude Code session. Pasted emails are treated as data:
+the agent never sends email, applies or contacts anyone.
+
+### Standing assistant (optional)
+
+A long-running dev3 task that answers thread messages and does queued research as soon as
+they arrive:
+
+1. On the inter_prep project's dev3 board, create a task, for example titled "Standing
+   assistant", with this description: "Standing research assistant for inter_prep. When
+   messaged `/ask <app> <msg>` run /ask; when messaged `/research <id>` run /research. Between
+   messages, wait. Never commit, push, apply to jobs or contact anyone." Start it with Claude
+   Code and leave it running.
+2. Note its seq number (shown on the card), and the project id if the dashboard runs outside
+   that project (`dev3 current` inside the task prints both).
+3. Add to `~/.config/inter_prep/settings.toml`:
+
+   ```toml
+   assistant_task = 23                  # the task's seq
+   # assistant_project = "<project id>" # only when needed
+   # dev3_bin = "/absolute/path/to/dev3" # if launchd cannot find dev3 on PATH
+   ```
+
+4. Restart the dashboard (`launchctl kickstart -k gui/$(id -u)/uk.inter-prep.dashboard`, or
+   stop and start `python -m prep.web`). A message sent from a panel now shows up in that
+   task's terminal as `/ask <app> <msg>`.
+
 It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
 other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never
 shown. Each request opens the database afresh, so changes made through the skills appear on

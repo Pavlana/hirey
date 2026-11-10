@@ -528,7 +528,42 @@ form.move > *, form.move input { height: 30px; font-size: 13px; }
 .card-general .table-wrap { margin: 0 calc(-1 * var(--space-5)); }
 .recent { margin-top: var(--space-3); }
 
+/* Agent thread in the panel: the user's messages and the agent's replies, newest at the bottom.
+   Bodies keep their line breaks; a long pasted email scrolls inside its own bubble. */
+.thread { display: grid; gap: var(--space-2); }
+.msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.msg { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; }
+.msg-user { background: var(--accent-soft); border-color: transparent; }
+.msg-meta { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--text-faint); }
+.msg-who { font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.msg-agent .msg-who { color: var(--accent-text); }
+.msg-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; max-height: 18em; overflow-y: auto; }
+.thread-state { display: flex; align-items: center; gap: 8px; color: var(--accent-text); font-weight: 500; }
+.thread-empty { font-size: 12.5px; }
+.spinner { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent;
+  animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+form.ask { display: grid; gap: 6px; margin: 0; }
+form.ask textarea {
+  width: 100%; min-height: 76px; max-height: 50vh; resize: vertical; padding: 8px 10px; font-size: 13px; line-height: 1.45;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--bg);
+}
+form.ask textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+form.ask textarea::placeholder { color: var(--text-faint); }
+.ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 12px; }
+
 /* --- responsive ---------------------------------------------------------------- */
+/* Laptop widths: with the panel open, four columns, the Closed strip and the panel fit side by
+   side without the board scrolling sideways. Up to 1599px, so a 1440px window with a classic
+   scrollbar keeps some room; wider screens fit at the normal sizes. */
+@media (min-width: 801px) and (max-width: 1599px) {
+  main { padding-left: var(--space-6); padding-right: var(--space-6); }
+  .apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) 320px; }
+  .apps:has(> .panel) .card-board > .card-body { padding: var(--space-3); }
+  .apps:has(> .panel) .board:not(.is-filtered) { grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: var(--space-2); }
+  .apps:has(> .panel) .panel-body { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .apps:has(> .panel) .col h2 { letter-spacing: .02em; padding: 4px; }
+}
 @media (max-width: 800px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .sidebar {
