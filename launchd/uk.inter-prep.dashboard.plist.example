@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
-  launchd agent for the inter_prep dashboard (http://localhost:8765).
+  launchd agent for the inter_prep dashboard (http://localhost:8765/ opens Applications;
+  the Dashboard is at /dashboard).
   Copy to ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist and replace both placeholders:
     /ABSOLUTE/PATH/TO/python3    a Python 3.11+ interpreter (output of: command -v python3)
     /ABSOLUTE/PATH/TO/inter_prep the MAIN checkout, never a dev3 worktree (worktrees are deleted)

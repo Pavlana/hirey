@@ -19,7 +19,7 @@ class TodayTest(IsolatedTestCase):
         self.assertEqual(code, 0)
         self.assertIn("Tasks due today or overdue (0)", out)
         self.assertNotIn("No response", out)
-        self.assertIn("matches ≥7 not yet applied or skipped (3)", out)
+        self.assertIn("matches ≥7 not yet applied or skipped, closed and expired left out (3)", out)
         self.assertIn("Initech Cloud — DevOps Engineer", out)
         self.assertNotIn("Hooli Data", out)  # score 6
 

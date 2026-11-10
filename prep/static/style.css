@@ -153,6 +153,10 @@ small, .muted, .card-note { color: var(--text-muted); }
   border-radius: 0 3px 3px 0; background: var(--accent);
 }
 .icon { flex: none; }
+.nav-count {
+  margin-left: auto; min-width: 20px; padding: 0 6px; border-radius: var(--radius-full); background: var(--accent); color: var(--on-accent);
+  font-size: 11.5px; font-weight: 600; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums;
+}
 .sidebar-foot { margin: auto 0 0; padding: 0 var(--space-2); color: var(--text-faint); font-size: 12px; display: flex; align-items: center; gap: var(--space-2); }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--success-soft); }
 
@@ -274,11 +278,8 @@ form.inline { display: flex; gap: 6px; flex-wrap: nowrap; margin: 0; justify-con
 form.add { display: flex; gap: var(--space-2); flex-wrap: wrap; margin: 0; }
 form.add input[name="title"] { flex: 1 1 280px; }
 form.add select[name="application_id"] { flex: 0 1 260px; }
-form.filters input[type="search"] { flex: 1 1 160px; }
 .checks { display: inline-flex; align-items: center; gap: var(--space-3); }
 .check { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.offer-actions { display: flex; gap: 6px; justify-content: flex-end; align-items: center; }
-.offer-state { font-size: 12.5px; color: var(--accent-text); white-space: nowrap; }
 a.btn:hover { text-decoration: none; }
 
 /* Skipped pop-up (Job Offers): a native <dialog>, opened by app.js. */
@@ -385,6 +386,35 @@ main:has(.apps) { max-width: 1880px; }
 .card-pipeline .stage-pills { gap: 4px; }
 .card-pipeline :is(.stage-pill, .view-btn) { height: 26px; font-size: 12.5px; padding: 0 8px 0 10px; gap: 4px; }
 .card-pipeline .empty { padding-bottom: var(--space-4); }
+.card-pipeline > .card-body > .warning { margin: 0 var(--space-4) var(--space-4); }
+/* The switch at the top of the left column: Pipeline N · New offers M (links, ?view=). */
+.card-list > .card-head { padding-top: var(--space-3); padding-bottom: var(--space-3); }
+.card-list > .card-head .view-btn { height: 26px; font-size: 12.5px; }
+.view-switch { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--radius-full); background: var(--surface-2);
+  border: 1px solid var(--border); }
+.view-tab { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 14px; border-radius: var(--radius-full);
+  color: var(--text-muted); font-size: 14px; font-weight: 500; font-family: var(--font-display); }
+.view-tab:hover { color: var(--text); text-decoration: none; }
+.view-tab.is-active { background: var(--accent-soft); color: var(--accent-text); box-shadow: inset 0 0 0 1px var(--accent); }
+.view-tab.is-active .count { background: var(--accent); color: var(--on-accent); }
+/* New offers: compact filters in the list header (the Filter button only without the script). */
+.offer-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--space-3); margin: 0; padding: 0 var(--space-4); }
+.offer-filters select, .offer-filters input[type="search"] { height: 28px; font-size: 12.5px; padding-top: 0; padding-bottom: 0; }
+.offer-filters input[type="search"] { flex: 1 1 140px; min-width: 120px; }
+.offer-filters .checks { gap: var(--space-2); font-size: 12.5px; }
+.has-js .offer-filters > .btn { display: none; }
+.app-list.offer-list .col-score { width: 64px; }
+.app-list.offer-list .col-company { width: 28%; }
+.app-list.offer-list .col-role { width: auto; }
+.app-list.offer-list :is(.col-location, .col-skipped) { width: 24%; }
+.app-list.offer-list .col-undo { width: 96px; }
+.chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+/* Open/closed chips read as written ("expires in 4 days"), not title-cased like stage badges. */
+.chips .badge, .panel-sub .badge-warning, .panel-sub .badge-neutral { text-transform: none; }
+.app-list .chips .badge { font-size: 10.5px; padding: 0 6px; }
+/* The offer panel's job description: getjo's text, paragraphs keep their line breaks. */
+.description { max-width: 78ch; line-height: 1.55; font-size: 13.5px; display: grid; gap: var(--space-3); }
+.description p { white-space: pre-line; overflow-wrap: anywhere; }
 /* Layout A (laptop and up): the Applications page is exactly the viewport's height and never
    scrolls. The title stays at the top; below it the left column holds the pipeline (what it
    needs, at most 45%; its rows scroll inside while the stage strip and the column headings stay)
@@ -401,7 +431,7 @@ main:has(.apps) { max-width: 1880px; }
   .apps-main > .card > .card-head { flex: none; }
   .card-pipeline { flex: 0 1 auto; max-height: 45%; }
   .card-pipeline > .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: var(--space-3); }
-  .card-pipeline .stage-strip { flex: none; }
+  .card-pipeline .stage-strip, .card-pipeline .offer-filters { flex: none; }
   .card-pipeline .app-list.table-wrap { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
   .card-agent { flex: 1 1 0; min-height: 220px; }
   .card-agent > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -615,6 +645,7 @@ form.ask textarea::placeholder { color: var(--text-faint); }
   .app-list :is(th, td), .app-list :is(th, td):first-child, .app-list :is(th, td):last-child { padding: 0; }
   .app-list td:first-child, .app-list td:nth-child(4), .app-list td:nth-child(5) { flex: 1 1 100%; }
   .app-list td:nth-child(4):has(.muted) { display: none; }
+  .offer-list td:nth-child(2), .offer-list td:nth-child(3) { flex: 1 1 60%; }
 }
 @media (max-width: 480px) {
   .sidebar nav a .icon { display: none; }

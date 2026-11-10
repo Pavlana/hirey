@@ -91,7 +91,7 @@ class EndpointTest(WebTestCase):
             db.add_message(conn, ACME, "Pending question")
 
     def test_agent_box_under_the_list_not_in_the_panel(self) -> None:
-        _, _, body = self.get(f"/applications?app={ACME}")
+        _, _, body = self.get(f"/?app={ACME}")
         box = body[body.index('<section class="card card-agent agent" id="agent"'):body.index('<aside class="panel"')]
         self.assertGreater(body.index('id="agent"'), body.index('<table id="app-list">'))  # under the list
         panel = body[body.index('<aside class="panel"'):]
@@ -99,13 +99,13 @@ class EndpointTest(WebTestCase):
         self.assertNotIn('action="/applications/message"', panel)
         q, a = box.index("Any London office?"), box.index("4 stages: recruiter call")
         self.assertLess(q, a)  # newest at the bottom
-        self.assertIn(f'<a class="msg-about" href="/applications?app={ACME}">Acme Rockets</a>', box)
+        self.assertIn(f'<a class="msg-about" href="/?app={ACME}">Acme Rockets</a>', box)
         self.assertIn(f'name="app_id" value="{ACME}" checked> About Acme Rockets', box)
         self.assertIn('data-filter-chat="job"', box)
         self.assertIn('href="#agent" data-ask-agent>Ask the agent</a>', panel)  # phones: from the sheet to the box
         css = self.get("/static/style.css")[2]
         self.assertIn("body.is-asking .panel { display: none; }", css)
-        body = self.get("/applications")[2]  # no panel: about the whole search
+        body = self.get("/")[2]  # no panel: about the whole search
         box = body[body.index('id="agent"'):body.index("<dialog")]
         self.assertIn("About: the whole search", box)
         self.assertNotIn('name="app_id"', box)
@@ -121,20 +121,20 @@ class EndpointTest(WebTestCase):
         with self.conn() as conn:
             [m] = db.pending_messages(conn)
         self.assertIsNone(m["application_id"])
-        bg.assert_called_once_with(self.settings, None, m["id"])
+        bg.assert_called_once_with(self.settings, None, m["id"], job=False)
         self.assertIn('<span class="msg-about">all jobs</span>', json.loads(out)["html"])
 
     def test_send_stores_a_user_message_and_redirects_to_the_panel(self) -> None:
         with mock.patch.object(assistant, "notify_message_in_background") as bg:
             status, headers, _ = self.post("/applications/message", {
                 "app_id": STARK, "body": "Good employer?", "author": "agent",
-                "return": f"/applications?app={STARK}&view=list"})
+                "return": f"/?app={STARK}"})
         self.assertEqual(status, 303)
-        self.assertEqual(headers["Location"], f"/applications?app={STARK}&view=list&msg=message_sent")
+        self.assertEqual(headers["Location"], f"/?app={STARK}&msg=message_sent")
         [m] = self.thread_rows(STARK)
         self.assertEqual((m["author"], m["status"], m["body"]), ("user", "pending", "Good employer?"),
                          "the form's author field is ignored")
-        bg.assert_called_once_with(self.settings, STARK, m["id"])
+        bg.assert_called_once_with(self.settings, STARK, m["id"], job=False)
 
     def test_send_as_json_returns_the_escaped_thread(self) -> None:
         with mock.patch.object(assistant, "notify_message_in_background"):
@@ -200,11 +200,11 @@ class EndpointTest(WebTestCase):
     def test_working_state_depends_on_the_assistant(self) -> None:
         with self.conn() as conn:
             db.add_message(conn, ACME, "Pending question")
-        _, _, body = self.get(f"/applications?app={ACME}")
+        _, _, body = self.get(f"/?app={ACME}")
         self.assertIn("data-pending", body)
         self.assertIn("Waiting for the agent: run /ask", body)
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 42})
-        _, _, body = self.get(f"/applications?app={ACME}")
+        _, _, body = self.get(f"/?app={ACME}")
         self.assertIn("Agent is working…", body)
 
     def test_linkify_escapes_and_keeps_only_http_links(self) -> None:
@@ -216,7 +216,7 @@ class EndpointTest(WebTestCase):
 
     def test_no_pay_in_panel_or_json(self) -> None:
         self.with_pay()
-        self.assertNotIn(PAY, self.get(f"/applications?app={ACME}")[2])
+        self.assertNotIn(PAY, self.get(f"/?app={ACME}")[2])
         self.assertNotIn(PAY, self.get(f"/applications/thread?app={ACME}")[2])
 
     def test_message_text_is_never_logged(self) -> None:
@@ -243,8 +243,8 @@ class PingTest(IsolatedTestCase):
         threads = []
         background = assistant.notify_message_in_background
 
-        def keep(*args):  # the real background call, kept so the test can wait for it
-            threads.append(background(*args))
+        def keep(*args, **kwargs):  # the real background call, kept so the test can wait for it
+            threads.append(background(*args, **kwargs))
 
         with mock.patch.object(assistant, "dev3_path", return_value="/bin/dev3"), \
                 mock.patch.object(assistant, "notify_message_in_background", side_effect=keep), \
@@ -437,3 +437,135 @@ class ReviewOrderTest(IsolatedTestCase):
         self.assertIn("  4. [", out)
         self.assertNotIn("more (python", out)
         self.assertIn("The agent is working on (not waiting on you): company research for #", out)
+
+
+GLOBEX_JOB = "lever:globex-labs:abc"  # a fixture getjo job nobody tracks yet
+
+
+class JobMessagesTest(WebTestCase):
+    """Messages about a job offer not yet tracked (the offer panel's About tick, getjo_job_id), the
+    `/ask job` ping and CLI, and their move to the application when the job is marked Interested."""
+    JSON = {**HOST, "Accept": "application/json"}
+
+    def send(self, form: dict) -> tuple[int, dict, mock.Mock]:
+        with mock.patch.object(assistant, "notify_message_in_background") as bg:
+            status, _, out = self.post("/applications/message", form, self.JSON)
+        return status, json.loads(out), bg
+
+    def ask(self, body: str = "Is this remote?") -> int:
+        status, _, bg = self.send({"job_id": GLOBEX_JOB, "body": body})
+        self.assertEqual(status, 200)
+        return bg.call_args.args[2]
+
+    def app_id(self) -> int | None:
+        with self.conn() as conn:
+            app = db.find_by_job(conn, GLOBEX_JOB)
+        return app["id"] if app else None
+
+    def test_send_about_a_job_offer(self) -> None:
+        status, reply, bg = self.send({"job_id": GLOBEX_JOB, "body": "Is this remote?"})
+        self.assertEqual(status, 200)
+        with self.conn() as conn:
+            [m] = db.pending_messages(conn)
+            self.assertEqual(db.message_subject(conn, m["id"]), (None, GLOBEX_JOB))
+            self.assertEqual(db.claim_messages(conn, None), [], "not a message about the whole search")
+        self.assertEqual((m["application_id"], m["getjo_job_id"]), (None, GLOBEX_JOB))
+        bg.assert_called_once_with(self.settings, None, m["id"], job=True)
+        html = reply["html"]
+        self.assertIn(f'data-app="" data-job="{GLOBEX_JOB}"', html)
+        self.assertIn('<a class="msg-about msg-about-job" href="/?view=offers&amp;job=lever%3Aglobex-labs%3Aabc" '
+                      'title="Job offer">Globex Labs</a>', html)
+        self.assertIsNone(self.app_id(), "asking tracks nothing")
+        self.assertEqual(self.send({"job_id": "no:such:job", "body": "Hi"})[0], 400)
+        status, _, bg = self.send({"job_id": "greenhouse:acme-rockets:1001", "body": "Any news?"})  # tracked: app 1
+        self.assertEqual(status, 200)
+        bg.assert_called_once()
+        self.assertEqual(bg.call_args.args[1], ACME)
+        status, _, bg = self.send({"app_id": STARK, "job_id": GLOBEX_JOB, "body": "Both"})  # the application wins
+        self.assertEqual(bg.call_args.args[1:3][0], STARK)
+
+    def test_reply_keeps_the_tag_and_the_panel_filter_sees_it(self) -> None:
+        msg = self.ask()
+        with self.conn() as conn:
+            reply = db.reply_message(conn, None, msg, "Remote within the UK.")
+            [_, agent] = db.thread(conn, job_id=GLOBEX_JOB)
+        self.assertEqual((agent["id"], agent["getjo_job_id"], agent["application_id"]), (reply, GLOBEX_JOB, None))
+        js = self.get("/static/app.js")[2]
+        self.assertIn('panel?.dataset.job ? ["job", panel.dataset.job]', js)
+
+    def test_interested_moves_the_messages_and_undo_hands_them_back(self) -> None:
+        msg = self.ask()
+        self.post("/offers/interested", {"job_id": GLOBEX_JOB})
+        app_id = self.app_id()
+        with self.conn() as conn:
+            self.assertEqual([m["id"] for m in db.thread(conn, app_id)], [msg])
+            self.assertEqual(db.message_subject(conn, msg), (app_id, GLOBEX_JOB))
+        box = self.get(f"/?app={app_id}")[2]
+        self.assertIn(f'<a class="msg-about" href="/?app={app_id}">Globex Labs</a>', box)
+        self.assertEqual(self.post("/offers/uninterested", {"job_id": GLOBEX_JOB})[0], 303)  # the job's own messages: allowed
+        self.assertIsNone(self.app_id())
+        with self.conn() as conn:
+            self.assertEqual(db.message_subject(conn, msg), (None, GLOBEX_JOB))
+        self.post("/offers/interested", {"job_id": GLOBEX_JOB})
+        with self.conn() as conn:
+            db.add_message(conn, self.app_id(), "A question after Interested")
+        self.assertEqual(self.post("/offers/uninterested", {"job_id": GLOBEX_JOB})[0], 400)
+
+    def test_cli_applied_moves_them_too(self) -> None:
+        msg = self.ask()
+        self.assertEqual(self.run_cli("applied", "--job-id", GLOBEX_JOB, "--status", "to_apply")[0], 0)
+        with self.conn() as conn:
+            self.assertEqual(db.message_application(conn, msg), self.app_id())
+
+    def test_cli_show_claim_and_reply_for_a_job(self) -> None:
+        msg = self.ask("How does my CV fit?")
+        out = self.run_cli("thread", "pending")[1]
+        self.assertIn(f"message {msg} about job offer {GLOBEX_JOB} (/ask job {msg})", out)
+        line = self.run_cli("queue")[1]
+        self.assertIn("Agent thread: 1 message waiting (applications job offers).", line)
+        self.assertNotIn(GLOBEX_JOB, line, "the hook line holds no getjo ids")
+        code, out, _ = self.run_cli("thread", "show", "--message", str(msg), "--claim")
+        self.assertEqual(code, 0)
+        for part in (f"Job offer {GLOBEX_JOB}: Globex Labs — Cloud Security Engineer (not tracked",
+                     "score 8 · Remote", "link: https://jobs.example.com/globex-labs/abc",
+                     "companies/globex-labs.md (missing", "cv.md (missing", "job description (from getjo, read-only):",
+                     "Fictional job.", f"Messages about job {GLOBEX_JOB} (1 message", "How does my CV fit?",
+                     f"Claimed for this session: message {msg}", f"thread reply --to {msg}"):
+            self.assertIn(part, out)
+        self.assertIn("another session is already answering",
+                      self.run_cli("thread", "show", "--job", GLOBEX_JOB, "--claim")[1])
+        with mock.patch("sys.stdin", io.StringIO("Strong on cloud security; no Go.")):
+            code, out, _ = self.run_cli("thread", "reply", "--to", str(msg))
+        self.assertEqual(code, 0)
+        self.assertIn(f"about job offer {GLOBEX_JOB}; message {msg} answered", out)
+        self.assertEqual(self.run_cli("thread", "show", "--job", "no:such:job")[0], 2)
+        self.assertEqual(self.run_cli("thread", "show", "1", "--job", GLOBEX_JOB)[0], 2)
+        # once tracked, --job and --message show the application
+        self.post("/offers/interested", {"job_id": GLOBEX_JOB})
+        out = self.run_cli("thread", "show", "--message", str(msg))[1]
+        self.assertIn(f"Application #{self.app_id()}: Globex Labs", out)
+        self.assertIn("How does my CV fit?", out)
+
+    def test_general_view_leaves_job_messages_out(self) -> None:
+        msg = self.ask()
+        with self.conn() as conn:
+            general = db.add_message(conn, None, "Which tasks need me?")
+        out = self.run_cli("thread", "show", "--claim")[1]
+        self.assertIn(f"Claimed for this session: message {general}.", out)
+        self.assertNotIn(f"To answer message {msg}:", out)
+        self.assertIn(f"job {GLOBEX_JOB}", out)  # the conversation still shows it, tagged
+
+    def test_queue_on_a_database_from_before_the_job_column(self) -> None:
+        with self.conn() as conn:
+            conn.execute("ALTER TABLE agent_messages DROP COLUMN getjo_job_id")
+            conn.execute("INSERT INTO agent_messages (application_id, author, body, status, created_at) "
+                         "VALUES (NULL, 'user', 'Old general question', 'pending', '2026-01-20T09:00:00Z')")
+            conn.commit()
+        out = self.run_cli("queue")[1]  # read-only: it must not add the column
+        self.assertIn("Agent thread: 1 message waiting (applications general).", out)
+
+    def test_ask_command_for_a_job(self) -> None:
+        settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 42})
+        self.assertEqual(assistant.ask_command(settings, None, 31, "/bin/dev3", job=True), [
+            "/bin/dev3", "message", "--task", "seq:42", "--subject", "Question on a job offer", "/ask job 31"])
+        self.assertEqual(assistant.ask_command(settings, 5, 31, "/bin/dev3", job=True)[-1], "/ask 5 31")

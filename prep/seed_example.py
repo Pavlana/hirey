@@ -29,7 +29,8 @@ EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
 log = logging.getLogger("prep.seed")
 
 # Fixture keys holding a date (YYYY-MM-DD) or a timestamp starting with one.
-DATE_KEYS = ("date_applied", "last_contact", "next_action_date", "due_date", "done_at", "date", "first_seen")
+DATE_KEYS = ("date_applied", "last_contact", "next_action_date", "due_date", "done_at", "date", "first_seen",
+             "posted_at", "expires_at", "last_seen", "closed_at")
 
 # Same shape as getjo's jobs table (getjo/core/store.py), copied rather than imported.
 GETJO_SCHEMA = """
@@ -46,6 +47,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     score_attempts INTEGER NOT NULL DEFAULT 0
 );
 """
+# getjo's newer columns (docs/design.md there, "Open and closed jobs"); left out for an older jobs.db.
+GETJO_STATE_COLUMNS = ("posted_at", "expires_at", "last_seen", "closed_at")
 
 
 def load_fixtures(path: Path = FIXTURES) -> dict:
@@ -66,19 +69,22 @@ def shift_dates(data: dict, days: int) -> dict:
     return shifted
 
 
-def build_getjo_db(path: Path, jobs: list[dict]) -> None:
-    """Create a getjo-shaped jobs.db at `path` holding `jobs` (replaces any existing file)."""
+def build_getjo_db(path: Path, jobs: list[dict], old_schema: bool = False) -> None:
+    """Create a getjo-shaped jobs.db at `path` holding `jobs` (replaces any existing file). With
+    `old_schema` the table has no open/closed columns, as before getjo added them."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.unlink(missing_ok=True)
     conn = sqlite3.connect(path)
+    columns = ["id", "source", "company", "title", "location", "url", "description", "first_seen", "score"]
     try:
         conn.executescript(GETJO_SCHEMA)
+        if not old_schema:
+            for column in GETJO_STATE_COLUMNS:
+                conn.execute(f"ALTER TABLE jobs ADD COLUMN {column} TEXT")
+            columns += GETJO_STATE_COLUMNS
         conn.executemany(
-            """
-            INSERT INTO jobs (id, source, company, title, location, url, description, first_seen, score)
-            VALUES (:id, :source, :company, :title, :location, :url, :description, :first_seen, :score)
-            """,
-            jobs,
+            f"INSERT INTO jobs ({', '.join(columns)}) VALUES ({', '.join(':' + c for c in columns)})",
+            [{c: job.get(c) for c in columns} for job in jobs],
         )
         conn.commit()
     finally:

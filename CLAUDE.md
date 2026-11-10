@@ -2,13 +2,15 @@
 
 A personal job-search and interview-prep workspace. It tracks applications, tasks and
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
-skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`).
+skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`: Applications,
+with Pipeline and New offers views, at `/`; Dashboard at `/dashboard`).
 Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,
 scores each job against a CV with Claude, stores jobs in its own SQLite database
 (`data/jobs.db`) and sends strong matches to Telegram. inter_prep reads getjo's database
-**read-only** to surface matches that are not yet tracked as applications. It never writes
+**read-only** to surface matches that are not yet tracked as applications (and, when getjo has
+them, its `expires_at` / `last_seen` / `closed_at` columns to hide closed jobs). It never writes
 to it and never imports getjo code.
 
 The repository is public. Personal data (CV, notes, sessions, databases, pay) never goes into
@@ -91,7 +93,8 @@ data/        local databases (gitignored)
   `PREP_ASSISTANT_TASK=` keeps it from messaging the real standing assistant)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
-- Agent box (used by /ask): `python -m prep.cli thread show [APP] [--claim]` (no APP: the whole search),
+- Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
+  (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin); `cv sent APP FILE_NAME`

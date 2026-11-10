@@ -1,13 +1,14 @@
 ---
 name: ask
-description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit, answers and change requests for the tailored CV, requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id or general] [message id], when the standing assistant receives "/ask <app> <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), answers and change requests for the tailored CV, requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
 
 The dashboard's Applications page has one **Agent** box under the pipeline list: a single
 conversation for the whole search. Each message is about one application (the job whose panel
-was open, shown as a tag) or about the whole search ("all jobs"). The panel has no forms for
+was open, shown as a tag), one job offer not yet tracked (a New offers panel was open), or the
+whole search ("all jobs"). The panel has no forms for
 editing the application: the user asks here, and this skill does the edit and answers. The
 dashboard only stores the message (status pending) and pings the standing assistant; the list,
 the panel and the conversation refresh on their own once the reply is in. Run every command from
@@ -27,15 +28,26 @@ fit files) unless the user's own words in the thread ask for it. When they do, s
 
 - `/ask APP MSG` or `/ask APP`: a message about that application.
 - `/ask general MSG` or `/ask general`: a message about the whole search (no application).
+- `/ask job MSG`: a message about a job offer that is not tracked yet (no application, no tasks,
+  no CV fit file). The ping carries only the message id.
 - `/ask` with nothing: `python -m prep.cli thread pending` lists the waiting messages ("about the
-  whole search" for the general ones). Answer each in turn, oldest first.
+  whole search" for the general ones, "about job offer <id>" for a job). Answer each in turn,
+  oldest first.
 
 ## 2. Claim and read it
 
 ```bash
-python -m prep.cli thread show APP --claim     # a message about one application
-python -m prep.cli thread show --claim         # general: no application id
+python -m prep.cli thread show APP --claim            # a message about one application
+python -m prep.cli thread show --message MSG --claim  # a job offer (/ask job MSG), or any message
+python -m prep.cli thread show --claim                # general: no application id
 ```
+
+For a job offer the output is the job (company, role, score, location, link, whether getjo says
+it is open, closed or may be closed), the company research file if one exists from another role
+at that company, `cv.md`, the job description and that job's messages. Answer questions such as
+"is this remote?" or "how does my CV fit?" from the description, `cv.md` and the web, without
+writing a fit file (that comes once the job is marked Interested). If the job has been marked
+Interested since, `--message` shows its application instead.
 
 The general form prints the open applications (stage, tier, next task, latest comment), the
 tasks in review order (as `review` below) and the latest 30 messages of the conversation; for a
@@ -164,7 +176,7 @@ The reply text.
 REPLY
 ```
 
-The reply goes with the message's application (or the whole search) by itself. Use plain text:
+The reply goes with the message's application, job offer or the whole search by itself. Use plain text:
 short paragraphs, `-` bullets or `1.` numbers, and URLs as they are (the Agent box makes http(s)
 links clickable). Markdown is not rendered. The dashboard picks the reply up within seconds.
 

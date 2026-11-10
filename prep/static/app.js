@@ -1,10 +1,26 @@
 // getjo dashboard enhancements: sortable tables, filtering, forms without a reload,
-// toasts with undo, the Applications panel and its refresh. Every page and form works without
-// this file; it only adds to them.
+// toasts with undo, the Applications panels (application or job offer) and their refresh. Every
+// page and form works without this file; it only adds to them.
 // No external requests: fetch goes to this page's own origin only (relative URLs).
 "use strict";
 
 (() => {
+  // --- remembered view ------------------------------------------------------------
+  // The Applications page's left column shows the pipeline or New offers (?view=). A bare "/"
+  // (the nav link, a bookmark) opens the view last picked with the switch in this browser. Any
+  // other URL says what to show (a message's job link, a filter), so it is never redirected.
+  const VIEW_KEY = "apps-view";
+  if (location.pathname === "/" && !location.search && document.querySelector(".view-switch")) {
+    let view = null;
+    try { view = localStorage.getItem(VIEW_KEY); } catch { /* storage blocked: the default view */ }
+    if (view === "offers") { location.replace("/?view=offers"); return; }
+  }
+  document.addEventListener("click", (e) => {
+    const tab = e.target.closest(".view-switch a[data-view]");
+    if (tab) try { localStorage.setItem(VIEW_KEY, tab.dataset.view); } catch { /* not remembered */ }
+  });
+  document.documentElement.classList.add("has-js");
+
   const toasts = document.querySelector(".toasts");
 
   // --- toasts -------------------------------------------------------------------
@@ -130,67 +146,55 @@
     });
   });
 
-  // "/" focuses the first filter box, as in many web apps.
+  // "/" focuses the first filter box (New offers' search on Applications), as in many web apps.
   document.addEventListener("keydown", (e) => {
     if (e.key !== "/" || e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target.closest("input, select, textarea, [contenteditable]")) return;
-    const input = Array.from(filters).find((f) => !f.hidden);
+    const input = document.querySelector('form[data-live-filters] input[type="search"]')
+      || Array.from(filters).find((f) => !f.hidden);
     if (input) { e.preventDefault(); input.focus(); }
   });
 
-  // --- Job Offers filters -----------------------------------------------------------
-  // The filter bar is a GET form, so every view has a URL. Selects and checkboxes reload
-  // with the new query; company and role narrow the loaded rows as you type and keep the
-  // URL (and the forms' return fields) in step. Widening a search needs rows that were not
-  // loaded, so it reloads after a pause and puts the cursor back in the box.
-  const live = document.querySelector("form[data-live-filters]");
-  if (live) {
-    const FOCUS_KEY = "offers-focus";
-    const table = document.getElementById("offers");
-    const value = (name) => live.elements[name].value.trim().toLowerCase();
-    const loaded = { company: value("company"), role: value("role") };
-    let timer = null;
-
-    const submit = () => (live.requestSubmit ? live.requestSubmit() : live.submit());
-    live.querySelector("button")?.setAttribute("hidden", "");
-    live.addEventListener("change", (e) => { if (e.target.type !== "search") submit(); });
-
-    function narrow(name) {
-      const company = value("company");
-      const role = value("role");
-      clearTimeout(timer);
-      if (!company.includes(loaded.company) || !role.includes(loaded.role)) {
-        timer = setTimeout(() => {
-          try { sessionStorage.setItem(FOCUS_KEY, name); } catch { /* storage blocked: lose focus only */ }
-          submit();
-        }, 500);
-        return;
-      }
-      if (table) {
-        for (const row of table.tBodies[0].rows) {
-          if (row.classList.contains("no-results")) continue;
-          row.hidden = !(row.dataset.company || "").includes(company) || !(row.dataset.role || "").includes(role);
-        }
-        refreshCount("offers");
-      }
-      const url = new URL(location.href);
-      url.searchParams.delete("msg");
-      for (const key of ["company", "role"]) {
-        const v = live.elements[key].value.trim();
-        if (v) url.searchParams.set(key, v); else url.searchParams.delete(key);
-      }
-      history.replaceState(null, "", url);
-      document.querySelectorAll('input[name="return"]').forEach((i) => { i.value = url.pathname + url.search; });
+  // --- New offers filters ------------------------------------------------------------
+  // The filter bar is a GET form, so every view has a URL. Selects and checkboxes reload with the
+  // new query; the search narrows the loaded rows (company or role) as you type and keeps the URL
+  // (and the forms' return fields) in step. Widening a search needs rows that were not loaded, so
+  // it reloads after a pause and puts the cursor back in the box. Listeners sit on the document:
+  // the list is swapped in again after each change (refreshApps).
+  const FOCUS_KEY = "offers-focus";
+  let searchTimer = null;
+  const liveForm = (el) => el.closest?.("form[data-live-filters]");
+  const submitForm = (form) => (form.requestSubmit ? form.requestSubmit() : form.submit());
+  document.addEventListener("change", (e) => {
+    const form = liveForm(e.target);
+    if (form && e.target.type !== "search") submitForm(form);
+  });
+  document.addEventListener("input", (e) => {
+    const form = liveForm(e.target);
+    if (!form || e.target.name !== "q") return;
+    const q = e.target.value.trim().toLowerCase();
+    clearTimeout(searchTimer);
+    // The rows on the page were loaded for the search the server rendered (the box's defaultValue).
+    if (!q.includes(e.target.defaultValue.trim().toLowerCase())) { // wider than that: ask the server
+      searchTimer = setTimeout(() => {
+        try { sessionStorage.setItem(FOCUS_KEY, "q"); } catch { /* storage blocked: lose focus only */ }
+        submitForm(form);
+      }, 500);
+      return;
     }
-
-    for (const name of ["company", "role"]) {
-      live.elements[name].addEventListener("input", () => narrow(name));
-    }
-    let refocus = null;
-    try { refocus = sessionStorage.getItem(FOCUS_KEY); sessionStorage.removeItem(FOCUS_KEY); } catch { /* none */ }
-    const box = refocus && live.elements[refocus];
-    if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
-  }
+    document.querySelectorAll("#offer-list tbody tr").forEach((row) => {
+      row.hidden = q !== "" && !(row.dataset.company || "").includes(q) && !(row.dataset.role || "").includes(q);
+    });
+    const url = new URL(location.href);
+    url.searchParams.delete("msg");
+    if (e.target.value.trim()) url.searchParams.set("q", e.target.value.trim()); else url.searchParams.delete("q");
+    history.replaceState(null, "", url);
+    document.querySelectorAll('input[name="return"]').forEach((i) => { i.value = url.pathname + url.search; });
+  });
+  let refocus = null;
+  try { refocus = sessionStorage.getItem(FOCUS_KEY); sessionStorage.removeItem(FOCUS_KEY); } catch { /* none */ }
+  const box = refocus && document.querySelector('form[data-live-filters] input[name="q"]');
+  if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
 
   // --- Agent box --------------------------------------------------------------------------
   // One conversation under the pipeline list. While a message waits for the agent, or the open
@@ -203,6 +207,7 @@
   const CHAT_KEY = "agent-filter";
   let poll = null;
   let refreshApps = () => location.reload(); // the Applications block below swaps the parts instead
+  let showPanelAt = (url) => { location.href = url; return Promise.resolve(); }; // likewise, without a reload
   let chatFilter = "all";
   try { chatFilter = localStorage.getItem(CHAT_KEY) === "job" ? "job" : "all"; } catch { /* default */ }
 
@@ -211,15 +216,17 @@
     poll = null;
   }
 
-  // Show only the open job's messages ("This job") or all of them; the switch shows with a panel.
+  // Show only the open panel's messages ("This job": its application's, or a job offer's) or all of
+  // them; the switch shows with a panel.
   function applyChatFilter() {
     const box = document.getElementById("agent");
     if (!box) return;
-    const app = document.getElementById("panel")?.dataset.app || "";
-    const only = chatFilter === "job" && app;
-    box.querySelector(".agent-filter").hidden = !app;
+    const panel = document.getElementById("panel");
+    const key = panel?.dataset.app ? ["app", panel.dataset.app] : panel?.dataset.job ? ["job", panel.dataset.job] : null;
+    const only = chatFilter === "job" && key;
+    box.querySelector(".agent-filter").hidden = !key;
     box.querySelectorAll("[data-filter-chat]").forEach((b) => b.classList.toggle("is-active", b.dataset.filterChat === (only ? "job" : "all")));
-    box.querySelectorAll("li.msg").forEach((li) => { li.hidden = only && li.dataset.app !== app; });
+    box.querySelectorAll("li.msg").forEach((li) => { li.hidden = Boolean(only) && li.dataset[key[0]] !== key[1]; });
     const msgs = box.querySelector(".msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight; // the newest at the bottom, in view
   }
@@ -280,14 +287,21 @@
   });
 
   // --- Applications ---------------------------------------------------------------------
-  // The server renders every state from the query string (?app=ID side panel, ?stage=, ?closed=),
-  // so this only adds: the panel opens without a reload, Esc closes it, and after any change the
-  // list and the panel are fetched again and swapped in (refreshApps), keeping the scroll position.
+  // The server renders every state from the query string (?view=, ?app=ID or ?job=ID side panel,
+  // the filters), so this only adds: a panel opens without a reload, Esc closes it, and after any
+  // change the list and the panel are fetched again and swapped in (refreshApps), keeping the
+  // scroll position. getjo job ids hold ":" and other characters, so selectors escape them.
   const apps = document.querySelector(".apps");
   if (apps) {
-    function markFocus(appId) {
+    function rowFor(panel) {
+      if (!panel) return null;
+      return panel.dataset.app ? document.getElementById(`app-${panel.dataset.app}`)
+        : document.querySelector(`.app-list tr[data-job="${CSS.escape(panel.dataset.job || "")}"]`);
+    }
+
+    function markFocus(panel) {
       document.querySelectorAll(".app-list tr.is-focus").forEach((el) => el.classList.remove("is-focus"));
-      if (appId) document.getElementById(`app-${appId}`)?.classList.add("is-focus");
+      rowFor(panel)?.classList.add("is-focus");
     }
 
     // Fetch `url` and swap in its panel and the Agent box's "About" line (and with `list`, the
@@ -313,14 +327,18 @@
           const pipeline = swap(doc, ".card-pipeline");
           if (pipeline) makeSortable(pipeline);
           swap(doc, "#agent [data-thread]");
+          swap(doc, ".page-head .subtitle");
+          swap(doc, ".sidebar nav"); // the new offers count
         }
         swap(doc, "#agent .agent-about");
         const back = document.querySelector('#agent input[name="return"]');
         if (back) back.value = new URL(url, location.href).pathname + new URL(url, location.href).search;
         const next = doc.getElementById("panel");
+        let panel = null;
         if (next) {
-          const panel = document.importNode(next, true);
-          const scroll = current ? current.scrollTop : 0;
+          panel = document.importNode(next, true);
+          const same = current && current.dataset.app === panel.dataset.app && current.dataset.job === panel.dataset.job;
+          const scroll = same ? current.scrollTop : 0;
           if (current) current.replaceWith(panel); else apps.append(panel);
           if (list) {
             panel.scrollTop = scroll; // a refresh keeps the reader's place
@@ -330,7 +348,7 @@
         } else {
           current?.remove();
         }
-        markFocus(next ? next.dataset.app : null);
+        markFocus(panel);
         if (push) history.pushState(null, "", url);
         applyChatFilter();
         watchThread();
@@ -341,14 +359,15 @@
     }
 
     refreshApps = () => showPanel(location.href, false, { list: true });
+    showPanelAt = (url) => showPanel(url, true, { list: true });
 
     function closePanel() {
       const panel = document.getElementById("panel");
       if (!panel) return;
       const href = panel.querySelector("[data-close-panel]").getAttribute("href");
-      const appId = panel.dataset.app;
+      const row = rowFor(panel);
       showPanel(href, true); // the page without a panel: About goes back to the whole search
-      document.querySelector(`#app-${CSS.escape(appId)} a`)?.focus({ preventScroll: true });
+      row?.querySelector("a")?.focus({ preventScroll: true });
     }
 
     document.addEventListener("click", (e) => {
@@ -378,12 +397,15 @@
         }
         return;
       }
-      const link = e.target.closest(".app-list a, a.msg-about");
-      const row = !link && e.target.closest(".app-list tr[data-href]");
+      const link = e.target.closest(".app-list td a:not([target]), a.msg-about");
+      const row = !link && !e.target.closest("form, button") && e.target.closest(".app-list tr[data-href]");
       if (!link && !row) return;
       e.preventDefault();
       document.body.classList.remove("is-asking"); // a chosen job opens as the sheet again on phones
-      showPanel(link ? link.getAttribute("href") : row.dataset.href, true);
+      const href = link ? link.getAttribute("href") : row.dataset.href;
+      // A message's tag may point at the other view (a job offer from the pipeline): swap the list too.
+      const viewOf = (u) => new URL(u, location.href).searchParams.get("view") || "pipeline";
+      showPanel(href, true, { list: viewOf(href) !== viewOf(location.href) });
     });
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
@@ -397,14 +419,6 @@
   }
 
   // --- forms without a reload --------------------------------------------------------
-  function refreshCount(tableId) {
-    const table = document.getElementById(tableId);
-    const chip = document.querySelector(`[data-count-for="${CSS.escape(tableId)}"]`);
-    if (table && chip) {
-      chip.textContent = Array.from(table.tBodies[0].rows).filter((r) => !r.classList.contains("no-results") && !r.hidden).length;
-    }
-  }
-
   // POST urlencoded (what the server parses) and ask for JSON. Anything that is not a JSON
   // reply (403/404/413 come back as plain text) becomes a generic error.
   async function post(url, data) {
@@ -421,46 +435,25 @@
     return reply;
   }
 
-  function removeRow(row, tableId) {
-    const place = { parent: row.parentNode, next: row.nextSibling };
-    row.classList.add("is-leaving");
-    place.timer = setTimeout(() => { row.remove(); refreshCount(tableId); }, 200);
-    return place;
-  }
-
-  // Undo a removal: post `url` with `params`, then put the row back where it was.
-  function undo(row, place, url, params, tableId) {
-    post(url, new URLSearchParams(params))
-      .then((reply) => {
-        clearTimeout(place.timer); // a fast undo can land before the fade-out removes the row
-        row.classList.remove("is-leaving");
-        row.classList.add("is-new");
-        place.parent.insertBefore(row, place.next && place.next.parentNode === place.parent ? place.next : null);
-        refreshCount(tableId);
-        toast(reply.message);
-      })
-      .catch((err) => toast(err.message, { error: true }));
-  }
-
   // --- Skip pop-up -----------------------------------------------------------------------
-  // A Skip link opens the dialog instead of the skip page. Clicking a reason posts the skip. Job
-  // Offers: on the New and All views the row leaves with an Undo toast, elsewhere the page reloads.
-  // Applications (data-after="refresh"): the list and the panel are refreshed.
+  // A Skip link opens the dialog instead of the skip page. The link names where the dialog posts and
+  // which field it fills (an offer: /offers/skip and job_id; an application: /applications/skip and
+  // app_id). Clicking a reason posts the skip, then the list and the panel are refreshed; a skipped
+  // offer gets Undo in the toast.
   const dialog = document.getElementById("skip-dialog");
   if (dialog && dialog.showModal && window.fetch) {
     const form = dialog.querySelector("form");
-    let opener = null;
     document.addEventListener("click", (e) => {
       const link = e.target.closest("a[data-skip]");
       if (!link) return;
       e.preventDefault();
-      opener = link;
-      const row = link.closest("tr");
       form.reset();
-      form.elements[form.dataset.field].value = link.dataset.skip; // job_id on Job Offers, app_id on Applications
+      form.action = link.dataset.skipAction || "/applications/skip";
+      form.elements.app_id.value = "";
+      form.elements.job_id.value = "";
+      form.elements[link.dataset.skipField || "app_id"].value = link.dataset.skip;
       form.elements.return.value = location.pathname + location.search;
-      dialog.querySelector("[data-skip-job]").textContent = link.dataset.skipLabel
-        || (row ? `${row.cells[1].textContent.trim()} — ${row.cells[2].textContent.trim()}` : "");
+      dialog.querySelector("[data-skip-job]").textContent = link.dataset.skipLabel || "";
       dialog.showModal();
       form.elements.comment.focus();
     });
@@ -469,19 +462,17 @@
       e.preventDefault();
       if (!e.submitter || e.submitter.name !== "reason") return; // Enter in the comment: pick a reason
       const data = new URLSearchParams(new FormData(form, e.submitter)); // includes the clicked reason
-      const link = opener;
       const buttons = form.querySelectorAll("button");
       buttons.forEach((b) => { b.disabled = true; });
       try {
         const reply = await post(form.action, data);
         dialog.close();
-        if (link?.dataset.after === "refresh") { await refreshApps(); toast(reply.message); return; }
-        const row = link && link.closest("tr");
-        if (!row || !("remove" in link.dataset)) { location.reload(); return; }
-        const tableId = row.closest("table").id;
-        const place = removeRow(row, tableId);
-        const params = { job_id: data.get("job_id") };
-        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/offers/unskip", params, tableId) } });
+        await refreshApps();
+        const jobId = data.get("job_id");
+        const undoSkip = () => post("/offers/unskip", new URLSearchParams({ job_id: jobId }))
+          .then((r) => refreshApps().then(() => toast(r.message)))
+          .catch((err) => toast(err.message, { error: true }));
+        toast(reply.message, jobId ? { action: { label: "Undo", run: undoSkip } } : {});
       } catch (err) {
         toast(err.message || "Not saved.", { error: true });
       } finally {
@@ -497,25 +488,21 @@
     const button = form.querySelector("button");
     if (button) button.disabled = true;
     const mode = form.dataset.ajax;
-    const row = form.closest("tr");
-    const tableId = row ? row.closest("table").id : form.dataset.target;
     try {
       const reply = await post(form.action, new URLSearchParams(new FormData(form)));
-      if (mode === "remove-row" && row) {
-        removeRow(row, tableId);
-        toast(reply.message);
-      } else if (mode === "interested" && row) {
-        // Job Offers: the row stays, its actions cell becomes "Interested · research queued".
-        const cell = form.closest("td");
-        const before = Array.from(cell.childNodes);
-        cell.innerHTML = reply.html; // a cell the server built and escaped
-        row.classList.add("is-new");
+      if (mode === "interested") {
+        // An offer's Interested: its application panel opens in the pipeline (Interested).
+        const back = location.pathname + location.search;
         const params = new URLSearchParams({ job_id: form.elements.job_id.value });
+        await showPanelAt(reply.redirect);
         const undoIt = () => post("/offers/uninterested", params)
-          .then((r) => { cell.replaceChildren(...before); toast(r.message); })
+          .then((r) => showPanelAt(back).then(() => toast(r.message)))
           .catch((err) => toast(err.message, { error: true }));
         // Undo only for an application this click created (never one that existed before).
         toast(reply.message, reply.created ? { action: { label: "Undo", run: undoIt } } : {});
+      } else if (mode === "refresh") {
+        await refreshApps();
+        toast(reply.message);
       } else if (mode === "applied") {
         // Mark applied: done at once; Undo moves it back to Interested.
         const params = new URLSearchParams({ app_id: form.elements.app_id.value });

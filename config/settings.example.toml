@@ -37,6 +37,10 @@ private_dir = "/absolute/path/to/inter_prep"
 # role at that company is queued (Redo on the card always researches again).
 # research_max_age_days = 90
 
+# Optional. A getjo job its last poll did not list for more than this many days reads
+# "may be closed" in New offers and /today (needs getjo's last_seen column).
+# stale_days = 3
+
 # Optional. The seq number of a long-running dev3 task acting as a standing assistant. When set,
 # newly queued research / CV fit requests (Interested, or the card's buttons) are also sent to it
 # as "/research <application id>" with `dev3 message`. Unset: requests wait for the next Claude

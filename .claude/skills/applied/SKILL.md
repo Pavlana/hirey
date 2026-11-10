@@ -6,7 +6,9 @@ description: Record a job application in inter_prep from a getjo job id, a job U
 # /applied
 
 Records an application. It never submits anything anywhere. Same rules as the Interested button
-on the dashboard's Job Offers page and the Apply button in an Interested card's panel.
+in a job offer's panel (Applications → New offers) and Mark applied in an Interested card's panel.
+Questions the user asked in the Agent box about that job before tracking it move to the new
+application.
 
 1. Work out what identifies the job:
    - a getjo id (`source:company:job_id`, as shown by `/today`) → `--job-id`

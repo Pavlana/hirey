@@ -25,9 +25,10 @@ description: Daily job-search brief from inter_prep — applications that moved 
      summary per application.
    - **Due now**: tasks due today or overdue, oldest first, with the company when the task
      belongs to an application. One line each.
-   - **New matches** (jobs already applied for or skipped on the Job Offers page are left out):
-     company, role, score, link. Keep the getjo id visible: it is what
-     `/applied` needs.
+   - **New matches** (jobs already tracked or skipped in the dashboard's New offers are left
+     out, and so are jobs getjo marks closed or expired): company, role, score, link, and the
+     "may be closed" / "expires in N days" flag when the line has one. Keep the getjo id
+     visible: it is what `/applied` needs.
    - One suggested first step for the day.
 
    If a section is empty, say so in one line. If getjo matches were skipped, mention the

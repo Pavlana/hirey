@@ -278,6 +278,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # version and when that was recorded; NULL until then. Older rows may hold a frozen copy's path.
     # role_short: the short role name in tailored CV file names (FDE, AIEng), chosen once by the agent.
     "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT"},
+    # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
+    # carries it too. Interested moves these messages to the new application and keeps the id.
+    "agent_messages": {"getjo_job_id": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -481,12 +484,23 @@ def record_application(
     fields.update(_status_fields(existing, status, date_applied, today))
     if existing is None:
         app_id = add_application(conn, company, role, **fields)
+        _adopt_job_messages(conn, app_id, fields.get("getjo_job_id"))
         stage_tasks(conn, app_id, fields["status"], today)
         return app_id, True
     new_status = fields.pop("status")
     update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
+    _adopt_job_messages(conn, existing["id"], existing["getjo_job_id"] or fields.get("getjo_job_id"))
     move_application(conn, existing["id"], new_status, today)
     return existing["id"], False
+
+
+def _adopt_job_messages(conn: sqlite3.Connection, app_id: int, getjo_job_id: str | None) -> None:
+    """Messages asked about the job before it was tracked now belong to its application (they keep
+    the job id, so Undo Interested can hand them back)."""
+    if getjo_job_id:
+        conn.execute("UPDATE agent_messages SET application_id = ? WHERE getjo_job_id = ? AND application_id IS NULL",
+                     (app_id, getjo_job_id))
+        conn.commit()
 
 
 def _status_fields(existing: dict | None, status: str | None, date_applied: str | None, today: str) -> dict:
@@ -969,7 +983,8 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
     """Undo Interested on a job: delete the decision and the to_apply application it created, with
     its queued requests, so the job is new again. Only while nothing else has happened to it: still
     to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, CV fit or tier, and no
-    request taken by the agent. Raises ValueError otherwise. Returns the deleted application id."""
+    request taken by the agent. Messages asked about the job before Interested (they carry its id) do
+    not count: they go back to the job. Raises ValueError otherwise. Returns the deleted application id."""
     app = find_by_job(conn, getjo_job_id)
     if app is None:
         raise LookupError(f"no application for job {getjo_job_id}")
@@ -981,18 +996,20 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
         SELECT (SELECT COUNT(*) FROM status_history WHERE application_id = :id) != 1
             OR EXISTS (SELECT 1 FROM tasks WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM application_comments WHERE application_id = :id)
-            OR EXISTS (SELECT 1 FROM agent_messages WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM agent_messages WHERE application_id = :id
+                       AND (getjo_job_id IS NULL OR getjo_job_id != :job))
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM tailored_cvs WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM agent_requests WHERE application_id = :id AND status != 'pending')
         """,
-        {"id": app_id},
+        {"id": app_id, "job": getjo_job_id},
     ).fetchone()[0]
     if used:
         raise ValueError("It has moved on since; withdraw it from its card instead.")
     with conn:  # one transaction: all or nothing
+        conn.execute("UPDATE agent_messages SET application_id = NULL WHERE application_id = ?", (app_id,))
         for table in ("agent_requests", "status_history"):
             conn.execute(f"DELETE FROM {table} WHERE application_id = ?", (app_id,))
         conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
@@ -1557,35 +1574,44 @@ def _message_body(body: str) -> str:
     return body
 
 
-def add_message(conn: sqlite3.Connection, app_id: int | None, body: str) -> int:
-    """A user message, about application `app_id` or (None) the whole search, pending until the
-    agent answers it."""
+def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id: str | None = None) -> int:
+    """A user message, about application `app_id`, getjo job `job_id` (not yet tracked; a tracked
+    job's message goes to its application) or neither (the whole search), pending until the agent
+    answers it."""
     body = _message_body(body)
+    if app_id is not None and job_id is not None:
+        raise ValueError("a message is about an application or a job, not both")
     if app_id is not None and get_application(conn, app_id) is None:
         raise LookupError(f"no application with id {app_id}")
+    if job_id is not None:
+        tracked = find_by_job(conn, job_id)
+        app_id = tracked["id"] if tracked else None
     cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, author, body, status, created_at) "
-        "VALUES (?, 'user', ?, 'pending', ?)",
-        (app_id, body, now_iso()),
+        "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, status, created_at) "
+        "VALUES (?, ?, 'user', ?, 'pending', ?)",
+        (app_id, job_id, body, now_iso()),
     )
     conn.commit()
     return cursor.lastrowid
 
 
-def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None) -> list[dict]:
-    """Messages oldest first: id, application_id, company, author, body, status, reply_to,
-    created_at. With `app_id` only that application's; otherwise the whole conversation (with
-    `limit`, its latest messages)."""
-    where = "WHERE m.application_id = ?" if app_id is not None else ""
+def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None,
+           job_id: str | None = None) -> list[dict]:
+    """Messages oldest first: id, application_id, getjo_job_id, company, author, body, status,
+    reply_to, created_at. With `app_id` only that application's, with `job_id` only that job's
+    (before and after it was tracked); otherwise the whole conversation (with `limit`, its latest
+    messages). company is None for a message about an untracked job."""
+    where = "WHERE m.application_id = ?" if app_id is not None else "WHERE m.getjo_job_id = ?" if job_id else ""
     rows = conn.execute(
         f"""
         SELECT * FROM (
-            SELECT m.id, m.application_id, a.company, m.author, m.body, m.status, m.reply_to, m.created_at
+            SELECT m.id, m.application_id, m.getjo_job_id, a.company, m.author, m.body, m.status, m.reply_to,
+                   m.created_at
             FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
             {where} ORDER BY m.id DESC {'LIMIT ?' if limit else ''}
         ) ORDER BY id
         """,
-        tuple(x for x in (app_id, limit) if x is not None),
+        tuple(x for x in (app_id if app_id is not None else job_id, limit) if x is not None),
     )
     return [dict(r) for r in rows]
 
@@ -1594,20 +1620,24 @@ def message_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM agent_messages").fetchone()[0]
 
 
-def pending_messages(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
+def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None) -> list[dict]:
     """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
-    claimed now: `claimed` is True for a live claim), oldest first, with company and role (None for
-    a message about the whole search). With `app_id` only that application's."""
+    claimed now: `claimed` is True for a live claim), oldest first, with getjo_job_id, company and
+    role (None for a message about an untracked job or the whole search). With `app_id` only that
+    application's, with `job_id` only that untracked job's."""
     where = "WHERE m.author = 'user' AND m.status IN ('pending', 'claimed')"
+    params: tuple = ()
     if app_id is not None:
-        where += " AND m.application_id = ?"
+        where, params = where + " AND m.application_id = ?", (app_id,)
+    elif job_id is not None:
+        where, params = where + " AND m.application_id IS NULL AND m.getjo_job_id = ?", (job_id,)
     rows = conn.execute(
         f"""
-        SELECT m.id, m.application_id, m.status, m.created_at, m.claimed_at, a.company, a.role
+        SELECT m.id, m.application_id, m.getjo_job_id, m.status, m.created_at, m.claimed_at, a.company, a.role
         FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
         {where} ORDER BY m.id
         """,
-        (app_id,) if app_id is not None else (),
+        params,
     )
     cutoff = _claim_cutoff()
     found = []
@@ -1618,16 +1648,21 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None) -> lis
     return found
 
 
-def claim_messages(conn: sqlite3.Connection, app_id: int | None) -> list[int]:
-    """Take the waiting user messages about an application (or, with None, about the whole search)
-    for this session; returns their ids, oldest first. Only one caller wins each: the update
-    applies while it is still pending (or its claim has gone stale)."""
+def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | None = None) -> list[int]:
+    """Take the waiting user messages about an application (or an untracked job with `job_id`, or,
+    with neither, the whole search) for this session; returns their ids, oldest first. Only one
+    caller wins each: the update applies while it is still pending (or its claim has gone stale)."""
     stamp, cutoff = now_iso(), _claim_cutoff()
-    match = "application_id = ?" if app_id is not None else "application_id IS NULL"
+    if app_id is not None:
+        match, params = "application_id = ?", (app_id,)
+    elif job_id is not None:
+        match, params = "application_id IS NULL AND getjo_job_id = ?", (job_id,)
+    else:
+        match, params = "application_id IS NULL AND getjo_job_id IS NULL", ()
     ids = [r[0] for r in conn.execute(
         f"SELECT id FROM agent_messages WHERE {match} AND author = 'user' "
         "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?)) ORDER BY id",
-        (*((app_id,) if app_id is not None else ()), cutoff))]
+        (*params, cutoff))]
     won = []
     for msg_id in ids:
         cursor = conn.execute(
@@ -1642,11 +1677,18 @@ def claim_messages(conn: sqlite3.Connection, app_id: int | None) -> list[int]:
 
 
 def message_application(conn: sqlite3.Connection, msg_id: int) -> int | None:
-    """The application a message is about (None: the whole search). LookupError if there is none."""
-    row = conn.execute("SELECT application_id FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+    """The application a message is about (None: an untracked job or the whole search). LookupError
+    if there is none."""
+    return message_subject(conn, msg_id)[0]
+
+
+def message_subject(conn: sqlite3.Connection, msg_id: int) -> tuple[int | None, str | None]:
+    """(application id, getjo job id) of a message: (id, job or None) for an application, (None, job)
+    for a job not yet tracked, (None, None) for the whole search. LookupError if there is none."""
+    row = conn.execute("SELECT application_id, getjo_job_id FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
     if row is None:
         raise LookupError(f"no message {msg_id}")
-    return row[0]
+    return row[0], row[1]
 
 
 def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body: str) -> int:
@@ -1657,7 +1699,7 @@ def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body
     _check_user_message(conn, app_id, to_id)
     stamp = now_iso()
     with conn:
-        return _agent_message(conn, app_id, body, stamp, to_id)
+        return _agent_message(conn, app_id, body, stamp, to_id, message_subject(conn, to_id)[1])
 
 
 def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int) -> None:
@@ -1669,9 +1711,11 @@ def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int
         raise LookupError(f"no user message {to_id} {where}")
 
 
-def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stamp: str, to_id: int | None) -> int:
+def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stamp: str, to_id: int | None,
+                   job_id: str | None = None) -> int:
     """Insert an agent message inside the caller's transaction. With `to_id` it answers that user
-    message, only while it is still open (ValueError otherwise, which rolls the transaction back)."""
+    message, only while it is still open (ValueError otherwise, which rolls the transaction back).
+    `job_id` tags it with the getjo job its question was about."""
     if to_id is not None:
         cursor = conn.execute(
             "UPDATE agent_messages SET status = 'answered', answered_at = ? "
@@ -1681,8 +1725,8 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
     cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, author, body, reply_to, created_at) "
-        "VALUES (?, 'agent', ?, ?, ?)",
-        (app_id, body, to_id, stamp),
+        "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, reply_to, created_at) "
+        "VALUES (?, ?, 'agent', ?, ?, ?)",
+        (app_id, job_id, body, to_id, stamp),
     )
     return cursor.lastrowid

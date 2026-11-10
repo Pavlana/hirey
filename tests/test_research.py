@@ -286,7 +286,7 @@ class DashboardTest(WebTestCase):
         self.private = self.tmp / "private"
 
     def panel(self, app_id: int) -> str:
-        body = self.get(f"/applications?app={app_id}")[2]
+        body = self.get(f"/?app={app_id}")[2]
         start = body.index('<aside class="panel"')
         return body[start:body.index("</aside>", start)]
 
@@ -299,7 +299,7 @@ class DashboardTest(WebTestCase):
         self.assertIn(">Research company</button>", self.shortcuts(panel))
         self.assertNotIn('id="card-research"', panel)  # no card before a result
         status, headers, _ = self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
-        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={self.MDE}&msg=research_queued"))
+        self.assertEqual((status, headers["Location"]), (303, f"/?app={self.MDE}&msg=research_queued"))
         self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})  # again: no change
         with self.conn() as conn:
             self.assertEqual(len(db.open_requests(conn, self.MDE)), 1)
@@ -347,9 +347,9 @@ class DashboardTest(WebTestCase):
 
     def test_apply_from_the_panel(self) -> None:
         status, headers, _ = self.post("/applications/apply", {
-            "app_id": self.MDE, "return": f"/applications?app={self.MDE}&view=list"})
+            "app_id": self.MDE, "return": f"/?app={self.MDE}"})
         self.assertEqual((status, headers["Location"]),
-                         (303, f"/applications?app={self.MDE}&view=list&msg=applied_today"))
+                         (303, f"/?app={self.MDE}&msg=applied_today"))
         with self.conn() as conn:
             app = db.get_application(conn, self.MDE)
             titles = [t["title"] for t in db.app_tasks(conn)[self.MDE]]

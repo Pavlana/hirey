@@ -3,7 +3,7 @@
 A local, single-user workspace for a job search: tracking applications, follow-ups and
 tasks, and (in later phases) interview practice. Data lives in one SQLite database on the
 local machine. It is driven by a set of Claude Code skills in this repo and a local web
-dashboard at `http://localhost:8765`; both read and write the same database.
+dashboard at `http://localhost:8765` (it opens on Applications); both read and write the same database.
 
 It is designed to sit next to **getjo** (job-radar), a separate project that polls job
 boards, scores jobs against a CV and stores them in SQLite. inter_prep reads getjo's database
@@ -76,25 +76,34 @@ standard library's `http.server`, plain HTML/CSS and one small optional script f
 filtering and saving without a reload (no build step, no external requests; one dark theme;
 charts are server-rendered SVG):
 
-- **Dashboard** (`/`): applied in the last 7 days against `weekly_target`, total applications,
+- **Applications** (`/`, the landing page; `/applications` and `/tasks` redirect here): the
+  left column switches between **Pipeline N** and **New offers M** (`?view=pipeline|offers`,
+  remembered per browser; a bare `/` opens the view picked last). The nav shows the new offers
+  count next to Applications. The Agent box sits under the list in both views; the panel on the
+  right shows the selected application or job offer. Details below.
+- **Dashboard** (`/dashboard`): applied in the last 7 days against `weekly_target`, total applications,
   reply rate (with a warning below 10% after 25 applications), and charts:
   applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
   applications per week (columns with the target). It counts applications only; tasks are a
   to-do list on the Applications page.
   `/progress` redirects here.
-- **Job Offers** (`/offers`; `/matches` redirects): every getjo match, filtered by minimum
-  score (New only), company, role, location (London / Remote / Other) and New / Interested
-  / Applied / Skipped / All;
-  filters live in the URL, so a view can be bookmarked. The flow is triage first, the agent's
-  homework next, apply last, so each new job has two actions: **Interested** (application
-  recorded with status `to_apply`, which queues company research and a CV fit) and
-  **Skipped** (a pop-up with the skip reasons and an optional comment; without JavaScript a
-  plain form page). Interested keeps the page: the row changes to "Interested · research
-  queued" with an Undo toast (without JavaScript the page reloads with its filters and a
-  banner). Undo deletes the application it created while nothing else has happened to it.
-  Interested jobs link to their card; applying happens there. A skip can be undone. Decided
-  jobs also drop out of `/today`.
-- **Applications** (`/applications`; `/tasks` redirects): the pipeline list on the left with
+- **New offers** (`/?view=offers`; the old Job Offers page, `/offers` and `/matches` redirect
+  here with their filters): open getjo jobs not yet tracked or skipped, newest day first, then
+  highest score. Rows: score, company, role, location, with chips "may be closed" (getjo has not
+  listed it for more than `stale_days` days) and "expires in N days" (a week or less). Closed and
+  expired jobs are left out. Filters in the list header: minimum score (default 7), London /
+  Remote / Other and a search on company or role; they live in the URL. **Show skipped** lists
+  the skipped jobs at any score with their reason and **Undo skip**. Clicking a row opens the
+  offer panel: company, role, score, location, seen date, the posting link, the chips,
+  **Interested · Skip**, and the job description from getjo (read-only). **Interested** records
+  the application (status `to_apply`, which queues company research and a CV fit), moves it to
+  Pipeline → Interested and opens its panel, with an Undo toast that deletes it again while
+  nothing else has happened to it. **Skip** asks for a reason and an optional comment (a pop-up;
+  without JavaScript a plain form page) and offers Undo. The Agent box's "About" tick works here
+  too: a question about a job not yet tracked ("is this remote?", "how does my CV fit?") goes to
+  the agent tagged with that job, and follows the job into its application if it is marked
+  Interested. Decided jobs also drop out of `/today`.
+- **Pipeline** (the default view of `/`): the pipeline list on the left with
   the Agent box under it (below), and the selected application on the right (halves on a
   laptop, a third and two thirds from 1600px wide, a full-screen sheet on phones). On a laptop the page fits the screen: the list (at most
   45% of the left column) scrolls inside with its stage filters and headings kept, and the Agent
@@ -110,8 +119,10 @@ charts are server-rendered SVG):
   one done, with Undo), the agent's results (company research with the tier and why, CV fit,
   every tailored CV version with Open and Redo) and the stage history. Mark applied records
   Applied today at once and offers Undo, which moves it back to Interested. Skip asks for a
-  reason (the Job Offers reasons) and an optional comment, closes the application as Skipped
-  and lists the job under Job Offers → Skipped. Everything else (tasks, comments, stage,
+  reason (the same reasons as an offer's Skip) and an optional comment, closes the application as
+  Skipped and lists the job under New offers → Show skipped. An Interested or Applied application
+  whose getjo job has since closed or expired keeps its place, with a "closed" badge on the row
+  and in the panel. Everything else (tasks, comments, stage,
   interview dates, tier, which CV was sent) is asked of the agent in the Agent box. Esc or ✕
   closes the panel. Every task is added, changed or removed through the agent; tasks with no
   application are listed by `/task` and `/today`.
@@ -217,7 +228,7 @@ sed -e "s|/ABSOLUTE/PATH/TO/python3|$(command -v python3)|" \
     launchd/uk.inter-prep.dashboard.plist.example > ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 plutil -lint ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
-open http://localhost:8765
+open http://localhost:8765    # Applications; the Dashboard is at /dashboard
 ```
 
 (`cp` the template and edit the two placeholders by hand if preferred.) The interpreter must

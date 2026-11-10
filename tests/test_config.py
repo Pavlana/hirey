@@ -85,6 +85,18 @@ class LoadSettingsTest(unittest.TestCase):
         with mock.patch.dict(os.environ, {"PREP_NO_RESPONSE_DAYS": "10"}):
             self.assertEqual(load_settings(path).no_response_days, 10)
 
+    def test_stale_days_from_file_and_env(self) -> None:
+        self.assertEqual(load_settings(self.write("")).stale_days, 3)
+        path = self.write("stale_days = 5\n")
+        self.assertEqual(load_settings(path).stale_days, 5)
+        with mock.patch.dict(os.environ, {"PREP_STALE_DAYS": "7"}):
+            self.assertEqual(load_settings(path).stale_days, 7)
+        with mock.patch.dict(os.environ, {"PREP_STALE_DAYS": ""}):
+            self.assertEqual(load_settings(path).stale_days, 5)  # an empty override is ignored
+        for text in ("stale_days = 0\n", "stale_days = 366\n"):
+            with self.subTest(text=text), self.assertRaises(ConfigError):
+                load_settings(self.write(text))
+
     def test_bad_dashboard_keys_rejected(self) -> None:
         for text in ('dashboard_port = "x"\n', "dashboard_port = 0\n", "weekly_target = true\n",
                      "no_response_days = 0\n", "no_response_days = 400\n"):

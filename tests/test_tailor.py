@@ -221,14 +221,14 @@ class DashboardTest(WebTestCase):
         self.path = write(research.tailored_file(self.private, "Massive Dynamic Example", "AISE", TODAY, 1), TAILORED)
 
     def panel(self) -> str:
-        body = self.get(f"/applications?app={self.MDE}")[2]
+        body = self.get(f"/?app={self.MDE}")[2]
         start = body.index('<aside class="panel"')
         return body[start:body.index("</aside>", start)]
 
     def test_tailor_button_then_tailoring_then_versions(self) -> None:
         self.assertIn(">Tailor CV</button>", self.panel())
         status, headers, _ = self.post("/applications/research", {"app_id": self.MDE, "kind": "tailor"})
-        self.assertEqual((status, headers["Location"]), (303, f"/applications?app={self.MDE}&msg=research_queued"))
+        self.assertEqual((status, headers["Location"]), (303, f"/?app={self.MDE}&msg=research_queued"))
         panel = self.panel()
         self.assertIn("Tailoring…</button>", panel)
         self.assertIn("data-busy", panel, "the page polls until the note is in")
@@ -244,7 +244,7 @@ class DashboardTest(WebTestCase):
         self.assertIn(self.path.name, panel)
         self.assertIn(">New from cv.md</button>", panel)
         self.assertNotIn("Have you used", panel, "the note goes to the Agent box, not the card")
-        self.assertIn("Have you used &lt;Terraform&gt;?", self.get(f"/applications?app={self.MDE}")[2])
+        self.assertIn("Have you used &lt;Terraform&gt;?", self.get(f"/?app={self.MDE}")[2])
         self.assertNotIn("data-busy", panel)
         self.assertIn('"pending": false', self.get(f"/applications/thread?app={self.MDE}")[2])
         self.post("/applications/apply", {"app_id": self.MDE})
@@ -275,14 +275,6 @@ class DashboardTest(WebTestCase):
             db.update_application(conn, self.MDE, pay=PAY)
             db.save_tailored_cv(conn, self.MDE, str(self.path), "v1")
         self.assertNotIn(PAY, self.panel())
-
-    def test_fit_badge_on_job_offers(self) -> None:
-        with self.conn() as conn:
-            app = db.find_by_job(conn, "greenhouse:acme-rockets:1001")["id"]
-            db.save_cv_fit(conn, app, 4, ["Go"], str(write(self.private / "fit" / f"{app}-acme-rockets.md", FIT)), TODAY)
-        body = self.get("/offers?show=all")[2]
-        self.assertIn('<span class="badge s9" title="CV fit">fit 4/5</span>', body)
-        self.assertEqual(body.count('title="CV fit"'), 1, "only rows with a fit result")
 
     def test_tailor_only_ping_says_so(self) -> None:
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 22})

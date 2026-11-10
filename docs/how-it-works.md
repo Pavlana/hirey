@@ -13,7 +13,7 @@
                    ▼
 ┌─────────────────────────────────────┐        ┌───────────────────────────┐
 │ inter_prep                          │        │ private_dir (gitignored)  │
-│ prep/getjo.py   matches, locations  │        │ cv.md, notes/, sessions/, │
+│ prep/getjo.py   matches, open/closed│        │ cv.md, notes/, sessions/, │
 │ prep/db.py      prep.db             │        │ companies/, fit/,         │
 │   applications, status_history,     │        │ cv-tailored/ (written by  │
 │   application_comments, interviews, │        │ /research and /ask); read │
@@ -41,7 +41,9 @@
    the applications it moved in the last 7 days (from their `auto:` history rows, so a move
    already made by the dashboard still shows) and the open tasks due today or earlier with
    their application, then opens getjo's database read-only and lists jobs scored at or above 7 whose
-   id is neither in `applications.getjo_job_id` nor in `job_decisions` (`db.excluded_job_ids`).
+   id is neither in `applications.getjo_job_id` nor in `job_decisions` (`db.excluded_job_ids`),
+   leaving out closed and expired jobs and flagging the rest "may be closed" or "expires in N days"
+   (step 19).
 3. `/applied` records an application. Given a getjo id, URL, or company and role, it looks the
    job up in getjo and stores the link (`getjo_job_id`), so the job drops out of the match list.
    The status is `applied` with `date_applied` today (unless `--date`), or `to_apply` (shown as
@@ -116,13 +118,14 @@
    before `status_history` existed have no history rows; their current status is the only
    known point.
 10. The dashboard (`python -m prep.web`) reads and writes the same `prep.db`. Each request
-   opens a fresh connection (and a fresh read-only getjo connection for the Job Offers page),
-   so the skills and the browser see each other's writes on the next request, without a
-   restart. Interested on the Job Offers page, `/applied --job-id` and the old `/offers/apply`
-   endpoint (no button any more) all go through `db.record_application`, so they behave the same way (one application per getjo
-   job, never moved back to an earlier stage; an explicit `to_apply` never replaces a later
-   status).
-11. Job Offers triage writes `job_decisions`: one row per getjo job, `interested`, `applied`
+   opens a fresh connection (and a fresh read-only getjo connection: New offers, the pipeline's
+   closed badges, the nav count), so the skills and the browser see each other's writes on the
+   next request, without a restart. Interested in an offer's panel, `/applied --job-id` and the
+   old `/offers/apply` endpoint (no button any more) all go through `db.record_application`, so
+   they behave the same way (one application per getjo job, never moved back to an earlier stage;
+   an explicit `to_apply` never replaces a later status). It also moves the job's Agent box
+   messages to the application (step 15).
+11. New offers triage writes `job_decisions`: one row per getjo job, `interested`, `applied`
    or `skipped` with a reason (`db.SKIP_REASONS`: location, seniority, role_type, stack, company, pay,
    contract_type, other) and an optional comment. The row copies the job's company, title, location, score,
    url and source at decision time, so the label still reads correctly after getjo drops the
@@ -153,7 +156,7 @@
    `agent_requests` (kind `research` or `cv_fit`, status `pending` → `claimed` → `done`,
    `force` for Redo). A partial unique index allows one open request per application and kind,
    so a double click never queues twice. Requests come from entering Interested
-   (`db.stage_tasks`, so the Job Offers button, `/applied --status to_apply` and a move to
+   (`db.stage_tasks`, so an offer's Interested button, `/applied --status to_apply` and a move to
    Interested all queue them), from the side panel's Research / CV fit buttons, and from
    `prep.cli research queue`. The `/research` skill loops on `prep.cli research next`, which
    claims one application's requests atomically (a claim older than 6 hours counts as pending
@@ -188,10 +191,20 @@
    `dev3_bin`, then PATH, then `~/.dev3.0/bin/dev3`. A failure is logged and the requests stay
    queued for the hook or /today.
 15. Agent box. One conversation with the standing assistant for the whole search, in a box under
-   the pipeline list (not in an application's panel). Each message is about one application
-   (`agent_messages.application_id`) or about the whole search (NULL): with a panel open the
-   form's "About <company>" box is ticked and sends that application's id; unticked, or with no
-   panel, the message is general ("which tasks need me?"). Messages show oldest first, the latest
+   the list (not in a panel). Each message is about one application
+   (`agent_messages.application_id`), one job offer not yet tracked (`application_id` NULL,
+   `agent_messages.getjo_job_id` set) or the whole search (both NULL): with a panel open the
+   form's "About <company>" box is ticked and sends that application's id (`app_id`) or that
+   offer's getjo id (`job_id`; a job tracked since goes to its application, an unknown one is
+   refused); unticked, or with no panel, the message is general ("which tasks need me?").
+   "General" means both columns are NULL everywhere it is read (claims, the general `thread show`,
+   the `queue` and `today` lines). A job message is tagged with the company (looked up in getjo,
+   else a skip's stored copy, else "job offer") and links to its offer panel. The agent's reply
+   carries the job id too. When the job is marked Interested (`db.record_application`, from the
+   dashboard or `/applied`), its messages get the new `application_id` and keep the job id, so
+   Undo Interested hands them back to the job (`application_id` NULL again) in the same
+   transaction; those moved messages do not block the undo, while one written after Interested
+   (no job id) still does. Messages show oldest first, the latest
    `web.AGENT_MESSAGES` (60), each tagged with its job (a link to its panel) or "all jobs"; with a
    panel open the script adds an All / This job filter (remembered in `localStorage`). Send posts
    `/applications/message`, which stores a row (author `user`, status `pending`). The author is
@@ -200,7 +213,8 @@
    `assistant_task` set, the dashboard then sends `/ask <app id> <message id>`, or
    `/ask general <message id>`, through `dev3 message` (`assistant.ask_command`), in a background
    thread. The ping holds ids only, never the text. A failure is logged and the message stays
-   pending. Rows from the earlier per-application threads (`application_messages`, no longer
+   pending. A job message is pinged as `/ask job <message id>`: the getjo id never goes in the
+   command. Rows from the earlier per-application threads (`application_messages`, no longer
    written) are copied into `agent_messages` with their ids on connect
    (`db._copy_application_messages`, `INSERT OR IGNORE`), so `reply_to` still holds.
    The `/ask` skill runs `prep.cli thread show APP --claim` for a message about an application,
@@ -209,7 +223,11 @@
    description from getjo and that application's messages. For a general message it runs
    `prep.cli thread show --claim`, which prints the open applications (stage, tier, next task,
    latest comment), the tasks in review order (step 18) and the latest 30 messages of the
-   conversation. Both claim the waiting messages they are about (`pending` → `claimed`, atomic
+   conversation. `thread show --job ID` (or `--message MSG`, which resolves any message to its
+   application, job or the whole search) prints a job offer not yet tracked: company, role,
+   score, location, link, open/closed state, the company file if one exists, cv.md, the job
+   description and that job's messages; no tasks, fit file or tailored CV (those come with an
+   application). All three claim the waiting messages they are about (`pending` → `claimed`, atomic
    per message; a claim older than 6 hours counts as pending again), so the hook, /today and the
    ping never answer one twice.
    A question is answered from those files or the web, with sources. Something new about the
@@ -273,7 +291,7 @@
    `db.SKIP_REASONS` and an optional comment, moves the application to `skipped` with the
    comment "skipped: <reason>[ — comment]", closes its open tasks and agent requests, and for a
    getjo job updates (or adds) its `job_decisions` row to skipped with the reason and comment,
-   keeping the snapshot, so the job shows under Job Offers → Skipped. Skipped is closed: never
+   keeping the snapshot, so the job shows under New offers → Show skipped. Skipped is closed: never
    submitted, never a reply (stats).
 18. Review order. `prep.cli review` (read-only; also inside the general `thread show`) prints
    the top 3 open tasks (`cli.REVIEW_TOP`; `--all` for every one) and how many more there are,
@@ -285,6 +303,18 @@
    (research, CV fit, tailored CV), which wait on the agent, not the user. /ask answers "which
    tasks need me?" with those 3 in that order, each with its task id, so "done 1 and 3" maps
    back, and lists the rest when asked.
+19. Open and closed jobs. getjo adds `posted_at`, `expires_at`, `last_seen` and `closed_at` to its
+   `jobs` table (getjo docs/design.md, "Open and closed jobs"; all `YYYY-MM-DDTHH:MM:SSZ` UTC).
+   `prep/getjo.py` builds its select list per connection from `PRAGMA table_info(jobs)`: on an
+   older jobs.db the missing columns read as NULL, so every job reads as open and nothing else
+   changes. `getjo.matches` (New offers, `/today`, the counts) leaves out a job with `closed_at`
+   set or `expires_at` not after now, compared as text in the same stamp format (the dashboard
+   uses noon UTC on a test's `today`). `getjo.get_job` and `jobs_by_id` return closed jobs too.
+   `getjo.job_state` gives `closed`, `may_be_closed` (`last_seen` more than `stale_days`, default
+   3, days before now) and `expires_in` (days left when 7 or fewer, `getjo.EXPIRES_SOON_DAYS`),
+   shown as chips in New offers and the offer panel, and as flags in `/today`. An Interested or
+   Applied application whose job has closed or expired stays in the pipeline with a "closed"
+   badge on its row and in its panel (interview stages show none: the process goes on).
 
 ## Dashboard
 
@@ -297,8 +327,8 @@ are shown verbatim (step 15), so they may contain pay the user pasted. Statuses 
 (`db.STATUS_LABELS`): `to_apply` reads "Interested" in badges, charts and CLI output; the stored
 value and the `--status` choice stay `to_apply`. Two static files are
 served from `prep/static/`: `style.css` (design tokens; one dark grey theme where each page has
-its own muted hue: Dashboard sage (dark olive to pale lime), Job Offers dusty blue, Applications ochre;
-five more themes (eucalyptus, slate indigo, dusty violet, mauve rose, terracotta) are ready for new pages,
+its own muted hue: Applications ochre, Dashboard sage (dark olive to pale lime);
+six more themes (dusty blue, eucalyptus, slate indigo, dusty violet, mauve rose, terracotta) are ready for new pages,
 each as ten shades `s1`–`s10` set by a `theme-*` class on `<body>` and used by badges, charts,
 buttons and meters; installed Helvetica Neue-style fonts only; responsive down to phone
 width) and `app.js`. Charts come from `prep/charts.py`: server-rendered inline SVG (donut,
@@ -307,49 +337,56 @@ style, and every label is escaped. The site is branded "getjo" in the page title
 Content-Security-Policy allows only these same-origin files (`script-src 'self'`, no inline
 script or style), and nothing is fetched from another host (no CDN, fonts or chart libraries).
 
-`app.js` is an enhancement only: it makes table headers sortable, opens the Applications side
-panel without a reload (it fetches the `?app=ID` page, swaps in its panel and the Agent box's
+`app.js` is an enhancement only. On a bare `/` (no query at all) it opens the view last picked
+with the switch in this browser (`localStorage` `apps-view`, read and written in try/catch; one
+`location.replace`, never a loop); any URL with a query says what to show and is left alone. It
+makes table headers sortable and opens a side panel (an application's or a job offer's) without a
+reload: it fetches the `?app=ID` or `?job=ID` page, swaps in its panel and the Agent box's
 "About" line, and pushes the URL; a message being typed stays; Esc and ✕ close it, which also
-turns About back to the whole search; a message's job tag opens that job's panel), and after
-any change on that page (an agent reply, finished agent work, Mark applied, Skip, a ticked
-task, an Undo) fetches the page again and swaps in the pipeline list, the panel and the
-conversation (`refreshApps`), keeping the panel's scroll position. A done shortcut button
-scrolls to its result card. It sends the Agent box's message with `fetch` (Cmd/Ctrl+Enter also
-sends), swaps in the returned conversation, filters it to the open job when This job is
-chosen, and while a message is pending, or the open panel's application has open agent
-requests (research, CV fit, tailored CV: the panel's `data-busy`), polls
-`GET /applications/thread[?app=ID]` every 4 seconds for at most 5 minutes (one poll; opening or
-closing a panel restarts it); when nothing is pending any more it refreshes everything ("The
-agent replied." when the message count changed, else "The agent's work is in."). It makes the Job Offers filters live (selects and checkboxes
-reload with the new query; company and role narrow the loaded rows as you type and update the
-URL), and sends forms marked `data-ajax` with `fetch` and `Accept: application/json`. For such
-requests the POST endpoints answer JSON (`{"ok": true, "message": …, "html": …}` or
-`{"ok": false, "message": …}` with status 400) instead of a redirect; `html` is
-server-rendered and escaped (the Agent thread, or a Job Offers actions cell). Results show as
-toasts; ticking a panel task offers Undo, which posts `/tasks/reopen`, and a
-skip offers Undo, which posts `/offers/unskip`. Interested on Job Offers swaps the row's
-actions cell for the reply's `html` ("Interested · research queued" and an Open card link) and
-offers Undo, which posts `/offers/uninterested` and puts the old cell back; Undo is offered
-only when the reply says `created` (never for an application that existed before). Mark applied
-offers Undo (`/applications/unapply`) and a ticked panel task offers Undo (`/tasks/reopen`). A
-Skip link (a Job Offers row's Skipped, the panel's Skip) opens a `<dialog>` with one button per
-skip reason and a comment box; the dialog's `data-field` names the hidden field the link's
-`data-skip` fills (`job_id` on Job Offers, `app_id` on Applications), and it posts `/offers/skip`
-or `/applications/skip` with the clicked reason (`FormData(form, submitter)`). Without
-JavaScript the link opens `GET /offers/skip` or `GET /applications/skip`, a plain form (reason
-select + comment) that changes nothing until posted, and every form posts normally and
-redirects.
+turns About back to the whole search. A message's tag opens its application or offer panel, and
+swaps the list too when the tag points at the other view. getjo ids hold ":" and other
+characters, so rows are found with `CSS.escape`d attribute selectors. After any change on the
+page (an agent reply, finished agent work, Interested, Mark applied, Skip, Undo skip, a ticked
+task, an Undo) it fetches the page again and swaps in the list card, the panel, the conversation,
+the subtitle and the nav count (`refreshApps`), keeping the panel's scroll position. A done
+shortcut button scrolls to its result card. It sends the Agent box's message with `fetch`
+(Cmd/Ctrl+Enter also sends), swaps in the returned conversation, filters it to the open panel's
+application or job when This job is chosen, and while a message is pending, or the open panel's
+application has open agent requests (research, CV fit, tailored CV: the panel's `data-busy`),
+polls `GET /applications/thread[?app=ID]` every 4 seconds for at most 5 minutes (one poll;
+opening or closing a panel restarts it); when nothing is pending any more it refreshes
+everything ("The agent replied." when the message count changed, else "The agent's work is
+in."). It makes the New offers filters live (listeners on the document, since the list is swapped
+in again): a select or checkbox reloads with the new query; the search narrows the loaded rows
+(company or role) as you type and updates the URL and the forms' `return`, and a search wider
+than the one the server rendered (the box's `defaultValue`) reloads after a pause, keeping the
+cursor in the box; "/" focuses it. It sends forms marked `data-ajax` with `fetch` and `Accept:
+application/json`. For such requests the POST endpoints answer JSON (`{"ok": true, "message": …,
+…}` or `{"ok": false, "message": …}` with status 400) instead of a redirect; `html` is
+server-rendered and escaped (the Agent thread). Results show as toasts. Interested in an offer's
+panel opens the reply's `redirect` (its application panel, Pipeline view) and offers Undo, which
+posts `/offers/uninterested` and goes back to the offer; Undo is offered only when the reply says
+`created` (never for an application that existed before). Mark applied offers Undo
+(`/applications/unapply`) and a ticked panel task offers Undo (`/tasks/reopen`). A Skip link (an
+offer panel's, an Interested application panel's) opens the one `<dialog>` on the page, with a
+button per skip reason and a comment box; the link's `data-skip-action` and `data-skip-field`
+say where it posts and which hidden field its `data-skip` fills (`/offers/skip` and `job_id`, or
+`/applications/skip` and `app_id`), and it posts the clicked reason (`FormData(form,
+submitter)`), then refreshes; a skipped offer gets Undo (`/offers/unskip`). Without JavaScript the
+link opens `GET /offers/skip` or `GET /applications/skip`, a plain form (reason select + comment)
+that changes nothing until posted, and every form posts normally and redirects.
 
 | Page | Shows | Writes |
 |------|-------|--------|
-| Dashboard `/` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks. It counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here | — |
-| Job Offers `/offers` | getjo jobs filtered by query string: `score` (minimum, 1–10, default 7; applies to new jobs only, and unscored new jobs never pass; decided jobs show at any score; a tracked job whose application has a CV fit shows a `fit N/5` badge next to the company), `company` and `role` (case-insensitive substring), `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both), `show` (new default, interested, applied, skipped, all). New rows have two actions: Interested and Skipped (applying happens on the board, after the agent's research); interested and applied rows link to their card (Open card; skipping a tracked job would mean withdrawing it); skipped rows offer Undo skip. Bad values fall back to defaults. Decided jobs that getjo has dropped show from their snapshot. `/matches` redirects here with its query; a message instead if getjo's database is missing or unreadable. `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/interested`, `/offers/uninterested`, `/offers/skip`, `/offers/unskip`, and `/offers/apply` (also the old `/matches/apply`; no button, kept for old forms). Interested stays on Job Offers (plain post: back with the filters and a banner; JSON: `html`, `app_id`, `created`); `/offers/apply` redirects to `/applications?app=ID` (JSON: `redirect`), built from the application id only |
+| Dashboard `/dashboard` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks. It counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here. The nav shows the number of new offers next to Applications on every page | — |
+| New offers `/?view=offers` (the old Job Offers page) | the left column's other view on Applications (the panel, Agent box and layout below are shared). Open getjo jobs (`getjo.matches`, step 19) at or above `score` (1–10, default 7; unscored jobs never pass) that are neither tracked nor decided (`db.excluded_job_ids`; decided jobs live in the pipeline), newest day first (`first_seen`), then highest score (`web.offer_rows`). Filters in the list header, a GET form: `score`, `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both) and `q` (company or role, case-insensitive substring). `skipped=1` (Show skipped / Hide skipped) lists the skipped jobs instead, at any score, open or closed, latest skip first, with the reason, the comment and Undo skip; a skipped job getjo has dropped shows from its snapshot. Rows: score, company (a link to the offer panel), role with the chips (closed, may be closed, expires in N days) and location; the whole row opens the panel. `job=<getjo id>` opens the offer panel (a tracked job opens its application's panel instead; an unknown id is ignored): company, role, score, location, seen date, the posting link (http(s) only), the chips; Interested · Skip (a skipped job: "Skipped · reason" and Undo skip); and the job description from getjo (`getjo.job_description`, read-only, escaped, split into paragraphs on blank lines with line breaks kept, scrolling inside the panel; a job getjo no longer has says so). The switch's count and the nav count are the open new offers at the score in effect, ignoring location and search (default 7, as `/today`). A message instead of the list if getjo's database is missing or unreadable; the pipeline still works. `/offers` and `/matches` redirect here with their query mapped (`company`/`role` to `q`, `show=skipped` to `skipped=1`, `show=interested\|applied` to the pipeline's `stage`). `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/interested`, `/offers/uninterested`, `/offers/skip`, `/offers/unskip`, and `/offers/apply` (also the old `/matches/apply`; no button, kept for old forms). Interested and `/offers/apply` redirect to `/?app=ID` (JSON: `redirect`, `app_id`, `created`), built from the application id only; skip and unskip return to the `return` URL |
 | Research file `/research/file?app=ID&kind=research\|cv_fit\|tailor[&v=N]` | the application's company profile, CV fit file or tailored CV (the latest, or version N), read-only: front matter as a table (any pay/salary key left out) and the body as minimal Markdown (headings, lists, paragraphs, all escaped). Only a path recorded in prep.db that resolves inside `private_dir` is read; anything else (no record, no `private_dir`, a path outside it) is a 404. A missing file shows "File missing" | — |
-| Applications `/applications` | the pipeline list on the left with the Agent box under it (step 15: one conversation, newest at the bottom, kept line breaks, http(s) URLs made into links after escaping, each message tagged with its job or "all jobs", "Agent is working…" while one is pending with an assistant configured, "Waiting for the agent: run /ask…" without one, an "About <company>" tick with a panel open, and a textarea with Send), and the side panel for one application on the right: halves from 801 to 1599px wide, a third and two thirds from 1600px, a full-screen sheet up to 800px. From 801px the page is exactly the viewport's height and does not scroll: the pipeline takes at most 45% of the left column and scrolls its rows inside while the stage strip and the column headings stay, the Agent box fills the rest with its messages scrolling and its input always in view, and the panel scrolls inside. Up to 800px everything stacks. The page state is in the query string, so every view renders without the script: `app=ID` opens the panel (an unknown id is ignored), `stage=interested\|applied\|interviewing\|offer\|closed` filters (`web.STAGE_GROUPS`; the four interview stages share Interviewing), `closed=1` lists the closed applications too (Show closed / Hide closed); unknown values and an old `view=` are ignored. A stage strip shows the count per group and links to each filter (the active one clears it). The list (`web._app_list`) is one table with a `<tbody>` per stored stage in pipeline order (`web.PIPELINE_STAGES`, then `web.CLOSED_LANE` when shown), each with a header row and its count; within a stage, dated next tasks first (earliest first), then undated, then none, ties by days in stage (`web.list_order`). Columns: Company (a link to the panel), Role, Stage (a short label such as Coding or Sys design, the full one on hover: `web.LIST_STAGE_LABELS`), Next task and Comment (the latest, one line, with "+N" when there are more); company, role and next task wrap to two lines at most. No board, no drag and drop, no due, days, fit or tier columns. The panel, top to bottom: the header (company, role, stage badge with interview step dots, "N days in this stage", the job posting link, ✕ to the same view without `app`); the latest comment (step 8) with the number of earlier ones, read-only; the shortcut row (`web._shortcuts`): Research company, CV fit and Tailor CV queue a request (`/applications/research`), show "Researching…" / "Checking CV fit…" / "Tailoring…" while it is open, and once there is a result link to its card ("Research ✓ 2 Nov", "CV fit 4/5", "CV v2 · sent"); Mark applied and Skip while Interested (step 17), afterwards a disabled "Applied · 3 Nov" or "Skipped"; Tasks, each with a ☐ tick that posts `/tasks/done`; Results, one card per result with Open and Redo (company research with its tier and reason, CV fit with its top gaps, Tailored CV listing every version newest first with its date, Open (`kind=tailor&v=N`) and a "sent" badge on the sent one; Redo there reads "New from cv.md"); and History, the stage changes newest first in a collapsed `<details>`. The panel has no other forms: tasks, comments, stage, interview dates, tier and the sent CV are changed by the agent through the Agent box. `/tasks` redirects here with its query | POST `/applications/apply`, `/applications/unapply`, `/applications/skip`, `/applications/research`, `/applications/message` (redirect to `/applications?app=ID`; a panel form's `return` for the same application keeps its `stage` and `closed`), `/tasks/done`, `/tasks/reopen`. `/applications/message` answers JSON with the thread's `html`. GET `/applications/skip?app=ID` is the no-script Skip form. GET `/applications/thread[?app=ID]` is JSON for polling: `{ok, pending, status, messages, html}` (404 for an unknown id; `status` is the open panel's application's, null without one; `messages` is the conversation's count, so the script can tell a reply from finished work; `html` is the Agent box's conversation); `pending` is true while any message waits or (with `app`) an agent request for that application is open |
+| Applications `/` (Pipeline view) | a switch at the top of the left column, Pipeline N · New offers M (`view=pipeline\|offers`, links), then the pipeline list with the Agent box under it (step 15: one conversation, newest at the bottom, kept line breaks, http(s) URLs made into links after escaping, each message tagged with its application, its job offer or "all jobs", "Agent is working…" while one is pending with an assistant configured, "Waiting for the agent: run /ask…" without one, an "About <company>" tick with a panel open (an application's or an offer's), and a textarea with Send), and the side panel for one application on the right: halves from 801 to 1599px wide, a third and two thirds from 1600px, a full-screen sheet up to 800px. From 801px the page is exactly the viewport's height and does not scroll: the list card takes at most 45% of the left column and scrolls its rows inside while the switch, the stage strip or offer filters and the column headings stay, the Agent box fills the rest with its messages scrolling and its input always in view, and the panel scrolls inside. Up to 800px everything stacks. The page state is in the query string, so every view renders without the script: `app=ID` opens the panel (an unknown id is ignored; it wins over `job=`), `stage=interested\|applied\|interviewing\|offer\|closed` filters (`web.STAGE_GROUPS`; the four interview stages share Interviewing), `closed=1` lists the closed applications too (Show closed / Hide closed); unknown values and an old `view=board` are ignored. A stage strip shows the count per group and links to each filter (the active one clears it). The list (`web._app_list`) is one table with a `<tbody>` per stored stage in pipeline order (`web.PIPELINE_STAGES`, then `web.CLOSED_LANE` when shown), each with a header row and its count; within a stage, dated next tasks first (earliest first), then undated, then none, ties by days in stage (`web.list_order`). Columns: Company (a link to the panel), Role, Stage (a short label such as Coding or Sys design, the full one on hover: `web.LIST_STAGE_LABELS`), Next task and Comment (the latest, one line, with "+N" when there are more); an Interested or Applied row whose getjo job has closed or expired shows a "closed" badge under the role (step 19); company, role and next task wrap to two lines at most. No board, no drag and drop, no due, days, fit or tier columns. The panel, top to bottom: the header (company, role, stage badge with interview step dots, "N days in this stage", the job posting link, the "closed" badge when it applies, ✕ to the same view without `app`); the latest comment (step 8) with the number of earlier ones, read-only; the shortcut row (`web._shortcuts`): Research company, CV fit and Tailor CV queue a request (`/applications/research`), show "Researching…" / "Checking CV fit…" / "Tailoring…" while it is open, and once there is a result link to its card ("Research ✓ 2 Nov", "CV fit 4/5", "CV v2 · sent"); Mark applied and Skip while Interested (step 17), afterwards a disabled "Applied · 3 Nov" or "Skipped"; Tasks, each with a ☐ tick that posts `/tasks/done`; Results, one card per result with Open and Redo (company research with its tier and reason, CV fit with its top gaps, Tailored CV listing every version newest first with its date, Open (`kind=tailor&v=N`) and a "sent" badge on the sent one; Redo there reads "New from cv.md"); and History, the stage changes newest first in a collapsed `<details>`. The panel has no other forms: tasks, comments, stage, interview dates, tier and the sent CV are changed by the agent through the Agent box. `/applications` and `/tasks` redirect here with their query | POST `/applications/apply`, `/applications/unapply`, `/applications/skip`, `/applications/research`, `/applications/message` (redirect to `/?app=ID`; a panel form's `return` for the same application keeps its `stage` and `closed`; `/applications/message` takes `app_id` or `job_id`), `/tasks/done`, `/tasks/reopen`. `/applications/message` answers JSON with the thread's `html`. GET `/applications/skip?app=ID` is the no-script Skip form. GET `/applications/thread[?app=ID]` is JSON for polling: `{ok, pending, status, messages, html}` (404 for an unknown id; `status` is the open panel's application's, null without one; `messages` is the conversation's count, so the script can tell a reply from finished work; `html` is the Agent box's conversation); `pending` is true while any message waits or (with `app`) an agent request for that application is open |
 
-Without JavaScript, forms post and then redirect (303) back to the page (Job Offers forms carry
-a `return` field so the redirect keeps the filters; it is accepted only for the same path and
-its query is re-encoded), which shows a fixed
+Without JavaScript, forms post and then redirect (303) back to the page (forms carry a `return`
+field so the redirect keeps the view, filters and panel; it is accepted only for `/`, or an old
+`/offers`, `/matches`, `/applications` or `/tasks` URL, which is mapped as its GET redirect is,
+and its query is re-encoded), which shows a fixed
 confirmation (the script turns it into a toast); bad input gets a 400 page with the reason. Local hardening: the server binds to `127.0.0.1` and
 `serve()` refuses any other address; requests whose Host header is not `localhost` or
 `127.0.0.1` (with any port) are rejected, which blocks DNS rebinding; POSTs with a
@@ -382,20 +419,22 @@ request line and status only, never request bodies or skip comments.
 checkout with `RunAtLoad` and `KeepAlive`, so the dashboard starts at login and restarts if it
 exits. Output goes to the main checkout's `data/dashboard.log` (gitignored). launchd starts
 processes without a shell profile, so the server finds `prep_db` and `getjo_db` through
-`~/.config/inter_prep/settings.toml`. Install and uninstall steps are in the README.
+`~/.config/inter_prep/settings.toml`. `http://localhost:8765/` opens Applications; the Dashboard is at
+`/dashboard`. Install and uninstall steps are in the README.
 
 ## Configuration
 
 One TOML file holds absolute paths: `getjo_db`, `prep_db`, `private_dir`, plus the optional
 keys `dashboard_port` (default 8765), `weekly_target` (applications per week, default 10)
-`no_response_days` (default 14, from 1 to 365), `research_max_age_days` (default 90), and
+`no_response_days` (default 14, from 1 to 365), `research_max_age_days` (default 90),
+`stale_days` (default 3, from 1 to 365: a getjo job not listed for longer reads "may be closed"), and
 the standing-assistant keys `assistant_task` (a dev3 task seq), `assistant_project` (a dev3
 project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI). It is looked up as
 `$INTERPREP_SETTINGS`, then `config/settings.toml` in the checkout, then
 `~/.config/inter_prep/settings.toml`. The per-user file is the normal place, because dev3
 worktrees, launchd and the Claude app all find it without a shell environment.
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
-`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
+`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
 `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN` override single keys. Set to
 an empty string, the three assistant keys are cleared (`config.CLEARABLE`): a demo on example
 data runs with `PREP_ASSISTANT_TASK=` and never messages the assistant named in the file. An

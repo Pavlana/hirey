@@ -1,5 +1,6 @@
-"""Local dashboard over prep.db: Dashboard, Job Offers and Applications pages, plus a read-only
-view of the agent's research and CV fit files.
+"""Local dashboard over prep.db: Applications (the landing page, whose left column switches
+between the pipeline and New offers from getjo) and Dashboard, plus a read-only view of the
+agent's research and CV fit files.
 
     python -m prep.web [--port 8765]
 
@@ -17,8 +18,8 @@ so tests call it directly. Every value from a database is HTML-escaped. The pay 
 never read for display.
 
 The dashboard never runs the agent: Research / CV fit buttons and Interested only queue
-requests (db.agent_requests) for the /research skill, and the panel's Agent thread only stores
-the user's message (db.application_messages) for the /ask skill. When assistant_task is set,
+requests (db.agent_requests) for the /research skill, and the Agent box only stores the user's
+message (db.agent_messages) for the /ask skill. When assistant_task is set,
 new work is also sent to that dev3 agent (prep.assistant), in the background, by id only.
 """
 
@@ -71,11 +72,10 @@ Response = tuple[int, list[tuple[str, str]], bytes]
 
 # (href, name, icon) — icons are inline SVG bodies, so nothing is fetched.
 PAGES = (
-    ("/", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
-                       '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
-    ("/offers", "Job Offers", '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/>'),
-    ("/applications", "Applications", '<rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/>'
-                                      '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
+    ("/", "Applications", '<rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/>'
+                          '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
+    ("/dashboard", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
+                                '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
               'l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>')
@@ -83,13 +83,14 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
     "applied": "Recorded as applied. Its panel shows the first tasks.",
-    "interested": "Interested · research queued. The agent researches the company and checks the CV fit.",
-    "uninterested": "Interested undone; the job is new again.",
+    "interested": "Interested · research queued. It is in Pipeline → Interested; the agent researches the company "
+                  "and checks the CV fit.",
+    "uninterested": "Interested undone; the job is back in New offers.",
     "applied_today": "Marked as applied today. Chase if no reply is due in 7 days.",
     "unapplied": "Back to Interested; the Applied tasks are gone.",
-    "app_skipped": "Skipped and closed. Job Offers lists it under Skipped.",
-    "skipped": "Skipped. It no longer appears in new job offers.",
-    "unskipped": "Skip undone; the job is new again.",
+    "app_skipped": "Skipped and closed. New offers lists it under Show skipped.",
+    "skipped": "Skipped. It no longer appears in New offers.",
+    "unskipped": "Skip undone; the job is back in New offers.",
     "task_done": "Task marked done.",
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
@@ -112,9 +113,9 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 # Badge tones: a few semantic ones plus the shade steps of the page's hue (charts.SHADES,
 # s1 dark to s10 light); anything else falls back to "neutral". Each page has one hue.
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
-# One theme per page (defined in style.css). Spare themes for new pages: eucalyptus,
+# One theme per page (defined in style.css). Spare themes for new pages: dusty-blue, eucalyptus,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "sage", "/offers": "dusty-blue", "/applications": "ochre"}
+PAGE_THEMES = {"/": "ochre", "/dashboard": "sage"}
 # Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -184,7 +185,7 @@ def handle(settings: Settings, method: str, target: str, headers: Mapping[str, s
     except BadRequest as e:
         if method == "POST" and wants_json(headers):
             return _json(400, {"ok": False, "message": str(e)})
-        content = _banner(str(e), "warning") + '<p><a class="btn btn-secondary" href="/">Back to the dashboard</a></p>'
+        content = _banner(str(e), "warning") + '<p><a class="btn btn-secondary" href="/">Back to Applications</a></p>'
         return _page(400, "Not saved", "The form was not saved.", content, "")
 
 
@@ -192,20 +193,16 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
     if path in STATIC_FILES:
         name, content_type = STATIC_FILES[path]
         return 200, [("Content-Type", content_type), *SECURITY_HEADERS], (STATIC_DIR / name).read_bytes()
-    if path == "/progress":  # merged into the dashboard; keeps old bookmarks working
-        return 303, [("Location", "/")], b""
-    renamed = {"/matches": "/offers", "/tasks": "/applications"}  # old bookmarks (and their query) keep working
-    if path in renamed:
-        target = renamed[path] + (f"?{urlencode(query, doseq=True)}" if query else "")
-        return 303, [("Location", target)], b""
+    moved = _moved(path, query)
+    if moved:  # old bookmarks (and their query) keep working
+        return 303, [("Location", moved)], b""
     if path == "/applications/thread":
         return thread_json(settings, query, today)
     pages = {
-        "/": dashboard_page,
-        "/offers": lambda s, c, t: offers_page(s, c, t, query),
+        "/": lambda s, c, t: home_page(s, c, t, query),
+        "/dashboard": dashboard_page,
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
-        "/applications": lambda s, c, t: applications_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
     }
     if path not in pages:
@@ -216,10 +213,47 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
             title, subtitle, content = pages[path](settings, conn, today)
         except NotFound:
             return _text(404, "Not found.")
+        offers = new_offer_count(settings, conn, _now(today), offer_score(query))
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    active = {"/offers/skip": "/offers", "/research/file": "/applications",
-              "/applications/skip": "/applications"}.get(path, path)
-    return _page(200, title, subtitle, notice + content, active)
+    return _page(200, title, subtitle, notice + content, "/dashboard" if path == "/dashboard" else "/", offers)
+
+
+OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers view of Applications
+
+
+def _moved(path: str, query: dict[str, list[str]]) -> str | None:
+    """Where an old page lives now, or None: the Dashboard moved to /dashboard (with /progress, merged
+    into it earlier), Applications and /tasks to /, and Job Offers to /?view=offers with its filters."""
+    if path == "/progress":
+        return "/dashboard"
+    if path in ("/applications", "/tasks"):
+        return "/" + (f"?{urlencode(query, doseq=True)}" if query else "")
+    if path in OLD_OFFERS:
+        pairs = _old_offers_query(query)
+        return "/" + (f"?{urlencode(pairs)}" if pairs else "")
+    return None
+
+
+def _old_offers_query(query: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """An old Job Offers query as the New offers view's: score and loc kept, company or role as the
+    search, show=skipped as Show skipped. show=interested|applied lists those jobs in the pipeline."""
+    def first(key: str) -> str:
+        return (query.get(key) or [""])[0].strip()
+
+    show = first("show")
+    if show in ("interested", "applied"):
+        return [("stage", show)]
+    pairs = [("view", "offers")]
+    score = first("score")
+    if score.isdigit() and 1 <= int(score) <= 10:
+        pairs.append(("score", score))
+    pairs += [("loc", loc) for loc in getjo.LOCATIONS if loc in query.get("loc", [])]
+    search = first("q") or first("company") or first("role")
+    if search:
+        pairs.append(("q", search))
+    if show == "skipped":
+        pairs.append(("skipped", "1"))
+    return pairs
 
 
 def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_json: bool) -> Response:
@@ -237,10 +271,11 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     if as_json:
         return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
     if "redirect" in extra:  # built by the action from database ids, never from the form
-        back, target = urlsplit(form.get("return") or ""), urlsplit(extra["redirect"])
-        if back.path == target.path and parse_qs(back.query).get("app") == parse_qs(target.query).get("app"):
+        target = urlsplit(extra["redirect"])
+        back = urlsplit(_return_to(form.get("return"), target.path))  # an old /applications form counts too
+        if parse_qs(back.query).get("app") == parse_qs(target.query).get("app"):
             # the side panel's own URL with its view and stage filter, re-encoded by _return_to
-            return 303, [("Location", _return_to(form["return"], back.path, msg))], b""
+            return 303, [("Location", _return_to(form["return"], target.path, msg))], b""
         sep = "&" if "?" in extra["redirect"] else "?"
         return 303, [("Location", f"{extra['redirect']}{sep}{urlencode([('msg', msg)])}")], b""
     return 303, [("Location", _return_to(form.get("return"), page, msg))], b""
@@ -263,6 +298,9 @@ def _return_to(value: str | None, page: str, msg: str = "") -> str:
     pairs = []
     if not url.scheme and not url.netloc and url.path == page:
         pairs = [(k, v) for k, v in parse_qsl(url.query) if k != "msg"]
+    elif not url.scheme and not url.netloc and page == "/" and url.path in (*OLD_OFFERS, "/applications", "/tasks"):
+        moved = urlsplit(_moved(url.path, parse_qs(url.query)) or "")  # a form from before the merge
+        pairs = [(k, v) for k, v in parse_qsl(moved.query) if k != "msg"]
     query = urlencode([*pairs, *([("msg", msg)] if msg else [])])
     return f"{page}?{query}" if query else page
 
@@ -316,8 +354,8 @@ def mark_applied(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
 
 
 def mark_interested(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Interested: track the getjo job as to_apply (which queues the agent's research) and stay on
-    Job Offers. The JSON reply holds the row's new actions cell and whether Undo may delete it."""
+    """Interested: track the getjo job as to_apply (which queues the agent's research) and open its
+    application panel in the pipeline. The JSON reply says whether Undo may delete it (`created`)."""
     return _track_offer(settings, conn, form, today, "interested")
 
 
@@ -347,11 +385,7 @@ def _track_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     status = db.get_application(conn, app_id)["status"]
     db.record_decision(conn, job, "interested" if status == "to_apply" else "applied")
     log.info("application %s recorded from the dashboard as %s", app_id, decision)
-    if decision == "applied":
-        return {"redirect": f"/applications?app={app_id}"}
-    # Interested stays on Job Offers: a plain post returns there with its filters
-    queued = bool(db.open_requests(conn, app_id))  # a reused application may have nothing queued
-    return {"html": _tracked_cell(app_id, status, queued), "app_id": app_id, "created": created}
+    return {"redirect": _here(app_id), "app_id": app_id, "created": created}
 
 
 def skip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -405,7 +439,7 @@ def unapply_application(settings: Settings, conn: sqlite3.Connection, form: dict
 
 def skip_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """The panel's Skip: a reason and an optional comment; closes the application as skipped and marks
-    its getjo job skipped, as Job Offers does (db.skip_application)."""
+    its getjo job skipped, as an offer's Skip does (db.skip_application)."""
     app_id = _app_id(conn, form)
     reason = form.get("reason")
     if not reason:
@@ -419,19 +453,24 @@ def skip_application(settings: Settings, conn: sqlite3.Connection, form: dict[st
 
 def send_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """The Agent box: store the user's message (author is always user, whatever the form says), about
-    the application in `app_id` (the open panel's, when "About" is ticked) or the whole search, and
-    ping the standing assistant with `/ask <app or general> <message>`, ids only, in the background.
-    The message stays pending until /ask replies through the CLI. The JSON reply is the thread."""
+    the application in `app_id` or the getjo job in `job_id` (the open panel's, when "About" is
+    ticked; a tracked job's message goes to its application) or the whole search, and ping the
+    standing assistant with `/ask <app | job | general> <message>`, ids only, in the background. The
+    message stays pending until /ask replies through the CLI. The JSON reply is the thread."""
     app_id = _int_field(form, "app_id")
     if app_id is not None and db.get_application(conn, app_id) is None:
         raise BadRequest(f"No application with id {app_id}.")
+    job_id = None if app_id is not None else _optional(form, "job_id")
     body = form.get("body", "")
     if not body:
         raise BadRequest("Type a question or paste an email first.")
-    msg_id = db.add_message(conn, app_id, body)  # checks the length after normalising line breaks
-    log.info("message %s added (application %s) from the dashboard", msg_id, app_id)  # never the text
-    assistant.notify_message_in_background(settings, app_id, msg_id)
-    return {"html": _thread(conn, bool(settings.assistant_task))}
+    if job_id and db.find_by_job(conn, job_id) is None and job_id not in db.job_decisions(conn):
+        _getjo_job(settings, {"job_id": job_id})  # an unknown job is refused
+    msg_id = db.add_message(conn, app_id, body, job_id)  # checks the length after normalising line breaks
+    about, job = db.message_subject(conn, msg_id)
+    log.info("message %s added (application %s, job %s) from the dashboard", msg_id, about, bool(job))  # never the text
+    assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None)
+    return {"html": _thread(conn, settings)}
 
 
 def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -449,7 +488,7 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
 
 def _here(app_id: int | None) -> str:
     """The Applications page with a card open (redirect target built from a database id)."""
-    return f"/applications?app={app_id}" if app_id is not None else "/applications"
+    return f"/?app={app_id}" if app_id is not None else "/"
 
 
 def complete_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -469,20 +508,21 @@ def reopen_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, st
 
 
 # path -> (action, page to return to, MESSAGES key)
+# The offer actions keep their old paths (forms from before the merge still post to them).
 ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
-    "/offers/apply": (mark_applied, "/offers", "applied"),
-    "/offers/interested": (mark_interested, "/offers", "interested"),
-    "/offers/skip": (skip_offer, "/offers", "skipped"),
-    "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
-    "/offers/uninterested": (unmark_interested, "/offers", "uninterested"),
-    "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
-    "/applications/apply": (apply_application, "/applications", "applied_today"),
-    "/applications/unapply": (unapply_application, "/applications", "unapplied"),
-    "/applications/skip": (skip_application, "/applications", "app_skipped"),
-    "/applications/research": (queue_research, "/applications", "research_queued"),
-    "/applications/message": (send_message, "/applications", "message_sent"),
-    "/tasks/done": (complete_task, "/applications", "task_done"),
-    "/tasks/reopen": (reopen_task, "/applications", "task_reopened"),
+    "/offers/apply": (mark_applied, "/", "applied"),  # no button any more; kept for old forms
+    "/offers/interested": (mark_interested, "/", "interested"),
+    "/offers/skip": (skip_offer, "/", "skipped"),
+    "/offers/unskip": (unskip_offer, "/", "unskipped"),
+    "/offers/uninterested": (unmark_interested, "/", "uninterested"),
+    "/matches/apply": (mark_applied, "/", "applied"),  # old form action, before the rename
+    "/applications/apply": (apply_application, "/", "applied_today"),
+    "/applications/unapply": (unapply_application, "/", "unapplied"),
+    "/applications/skip": (skip_application, "/", "app_skipped"),
+    "/applications/research": (queue_research, "/", "research_queued"),
+    "/applications/message": (send_message, "/", "message_sent"),
+    "/tasks/done": (complete_task, "/", "task_done"),
+    "/tasks/reopen": (reopen_task, "/", "task_reopened"),
 }
 
 
@@ -540,204 +580,303 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
     return "Dashboard", f"Pipeline and progress · {today}", content
 
 
-SHOW = {"new": "New", "interested": "Interested", "applied": "Applied", "skipped": "Skipped", "all": "All"}
 LOCATION_LABELS = {"london": "London", "remote": "Remote", "other": "Other"}
 SKIP_REASON_LABELS = {
     "location": "Wrong location", "seniority": "Seniority", "role_type": "Role type", "stack": "Stack", "company": "Company",
     "pay": "Pay", "contract_type": "Contract type", "other": "Other",
 }
-DECISION_SHADES = {"interested": "s6", "applied": "s8", "skipped": "s3"}
+VIEWS = ("pipeline", "offers")
 
 
-def offer_filters(query: dict[str, list[str]]) -> dict:
-    """Job Offers filters from the query string. Unknown or bad values fall back to the defaults,
-    so an old bookmark never fails."""
+def _now(today: str) -> str:
+    """The time getjo stamps are compared with: now, or noon UTC on a `today` given by a test."""
+    return db.now_iso() if today == db.today_iso() else f"{today}T12:00:00Z"
+
+
+def offer_score(query: dict[str, list[str]]) -> int:
+    """New offers' minimum score from the query (1-10), else getjo.DEFAULT_THRESHOLD (7)."""
+    score = (query.get("score") or [""])[0].strip()
+    return int(score) if score.isdigit() and 1 <= int(score) <= 10 else getjo.DEFAULT_THRESHOLD
+
+
+def new_offer_count(settings: Settings, conn: sqlite3.Connection, now: str, threshold: int) -> int | None:
+    """How many open getjo jobs at `threshold` or more are not tracked or decided (the nav badge,
+    the switch and /today count the same); None when getjo cannot be read."""
+    try:
+        with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+            return len(getjo.matches(gconn, db.excluded_job_ids(conn), threshold, now=now))
+    except (getjo.GetjoUnavailable, sqlite3.Error):
+        return None
+
+
+def home_filters(query: dict[str, list[str]]) -> dict:
+    """Applications page state from the query string. `view` (pipeline, the default, or offers);
+    the open panel: `app` (an application id) or else `job` (a getjo job id); the pipeline's `stage`
+    (a stage group) and `closed` (1: closed applications listed too); New offers' `score` (minimum,
+    default 7), `loc` (repeatable), `q` (company or role) and `skipped` (1: the skipped jobs instead).
+    Unknown values fall back to the defaults, so an old bookmark (view=board) never fails."""
     def first(key: str) -> str:
         return (query.get(key) or [""])[0].strip()
 
-    score = first("score")
-    show = first("show")
+    app, stage, view = first("app"), first("stage"), first("view")
     return {
-        "score": int(score) if score.isdigit() and 1 <= int(score) <= 10 else getjo.DEFAULT_THRESHOLD,
-        "company": first("company"),
-        "role": first("role"),
+        "view": view if view in VIEWS else "pipeline",
+        "app": int(app) if app.isdigit() else None,
+        "job": first("job") or None,
+        "stage": stage if stage in STAGE_GROUPS else "",
+        "closed": first("closed") == "1",
+        "score": offer_score(query),
         "loc": tuple(loc for loc in getjo.LOCATIONS if loc in query.get("loc", [])),
-        "show": show if show in SHOW else "new",
+        "q": first("q"),
+        "skipped": first("skipped") == "1",
     }
 
 
-def filter_offers(new_jobs: list[dict], decided_jobs: dict[str, dict], decisions: dict[str, dict],
-                  filters: dict) -> list[tuple[dict, dict | None]]:
-    """(job, decision or None) pairs that pass the filters, newest first.
-
-    `new_jobs` are getjo jobs at the minimum score (the score filter applies to New only);
-    `decided_jobs` are the getjo rows of decided jobs, whatever their score. A decided job
-    that getjo has dropped comes from its snapshot.
-    """
-    pairs = [(job, None) for job in new_jobs if job["id"] not in decisions]
-    for job_id, d in decisions.items():
-        job = decided_jobs.get(job_id)
-        if job is None:
-            snapshot = {k: d[k] for k in ("company", "title", "location", "score", "url", "source")}
-            job = {"id": job_id, "first_seen": None, **snapshot}
-        pairs.append((job, d))
-
-    def keep(job: dict, decision: dict | None) -> bool:
-        state = decision["decision"] if decision else "new"
-        if filters["show"] != "all" and state != filters["show"]:
-            return False
-        if filters["company"].lower() not in (job["company"] or "").lower():
-            return False
-        if filters["role"].lower() not in (job["title"] or "").lower():
-            return False
-        return not filters["loc"] or bool(getjo.location_tags(job["location"]) & set(filters["loc"]))
-
-    def newest(pair: tuple[dict, dict | None]) -> str:
-        job, decision = pair
-        return job["first_seen"] or (decision["decided_at"] if decision else "") or ""
-
-    return sorted(((job, d) for job, d in pairs if keep(job, d)), key=newest, reverse=True)
+def home_url(f: dict, **changes: object) -> str:
+    """An Applications page URL for state `f` with `changes` (e.g. app=3, job=None, view="offers").
+    Only the current view's filters go in, default values are left out, and app wins over job."""
+    s = {**f, **changes}
+    pairs: list[tuple[str, object]] = []
+    if s["view"] == "offers":
+        pairs.append(("view", "offers"))
+        if s["score"] != getjo.DEFAULT_THRESHOLD:
+            pairs.append(("score", s["score"]))
+        pairs += [("loc", loc) for loc in s["loc"]]
+        if s["q"]:
+            pairs.append(("q", s["q"]))
+        if s["skipped"]:
+            pairs.append(("skipped", "1"))
+    else:
+        if s["stage"]:
+            pairs.append(("stage", s["stage"]))
+        if s["closed"]:
+            pairs.append(("closed", "1"))
+    if s["app"] is not None:
+        pairs.append(("app", s["app"]))
+    elif s["job"]:
+        pairs.append(("job", s["job"]))
+    return "/" + (f"?{urlencode(pairs)}" if pairs else "")
 
 
-def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
-                query: dict[str, list[str]]) -> tuple[str, str, str]:
-    f = offer_filters(query)
-    subtitle = f"New: getjo jobs scored {f['score']} or more; decided jobs at any score"
+def _snapshot(job_id: str, decision: dict) -> dict:
+    """A decided job getjo no longer has, from the copy stored with the decision."""
+    return {"id": job_id, "first_seen": None, "description": None,
+            **{k: decision[k] for k in ("company", "title", "location", "score", "url", "source")},
+            **{k: None for k in getjo.STATE_COLUMNS}}
+
+
+def _read_getjo(settings: Settings, conn: sqlite3.Connection, f: dict, now: str) -> dict:
+    """Everything the page needs from getjo, in one read-only connection: `new` (open jobs at the
+    minimum score, not tracked or decided), `jobs` (the rows of tracked jobs, of skipped ones when
+    listed, and of the open panel's job, open or closed), `description` (the panel job's) and
+    `error` (why getjo could not be read; the pipeline still works)."""
+    found: dict = {"new": [], "jobs": {}, "description": None, "error": None}
     decisions = db.job_decisions(conn)
+    wanted = db.linked_job_ids(conn) | ({f["job"]} if f["job"] else set())
+    if f["view"] == "offers" and f["skipped"]:
+        wanted |= {k for k, d in decisions.items() if d["decision"] == "skipped"}
     try:
         with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
-            new_jobs = getjo.matches(gconn, threshold=f["score"]) if f["show"] in ("new", "all") else []
-            decided_jobs = getjo.jobs_by_id(gconn, set(decisions))
+            found["new"] = getjo.matches(gconn, db.excluded_job_ids(conn), f["score"], now=now)
+            found["jobs"] = getjo.jobs_by_id(gconn, wanted)
+            if f["job"] in found["jobs"]:
+                found["description"] = getjo.job_description(gconn, f["job"])
     except getjo.GetjoUnavailable as e:
-        return "Job Offers", subtitle, _banner(f"getjo jobs are not available: {e}.", "warning")
+        found["error"] = f"getjo jobs are not available: {e}."
     except sqlite3.Error as e:
-        return "Job Offers", subtitle, _banner(f"Could not read the getjo database: {e}.", "warning")
-
-    found = filter_offers(new_jobs, decided_jobs, decisions, f)
-    app_ids = db.app_ids_by_job(conn)
-    fits = db.fit_scores(conn)
-    here = "/offers?" + urlencode(
-        [(k, v) for k, v in (("score", f["score"]), ("company", f["company"]), ("role", f["role"]),
-                             *(("loc", loc) for loc in f["loc"]), ("show", f["show"])) if v != ""])
-    head: tuple = (("Score", "num"), "Company", "Role", "Location", ("Seen", "date"))
-    if f["show"] != "new":
-        head += ("Decision",)
-    head += ("",)
-    rows, attrs = [], []
-    for job, decision in found:
-        fit = fits.get(app_ids.get(job["id"]))
-        cells = (
-            _score_badge(job["score"]),
-            _link(job["url"], job["company"]) + (f' {_fit_badge(fit)}' if fit else ""),
-            h(job["title"]), h(job["location"]), _mono(h((job["first_seen"] or "")[:10])),
-        )
-        if f["show"] != "new":
-            cells += (_decision_cell(decision),)
-        cells += (_offer_actions(job, decision, f["show"], here, app_ids.get(job["id"])),)
-        rows.append(cells)
-        attrs.append(f'data-company="{h((job["company"] or "").lower())}" '
-                     f'data-role="{h((job["title"] or "").lower())}"')
-    if f["company"] or f["role"] or f["loc"]:
-        empty = "Nothing matches these filters."
-    else:
-        empty = {"new": "No new job offers.", "interested": "No jobs marked interested.",
-                 "applied": "Nothing marked applied.",
-                 "skipped": "Nothing skipped.", "all": "No job offers."}[f["show"]]
-    table = _table(head, rows, empty, table_id="offers", hint="New getjo matches appear here after each poll.",
-                   row_attrs=attrs)
-    content = _offer_filter_form(f) + _card(SHOW[f["show"]], table, count=len(found), count_for="offers")
-    if any(d is None for _, d in found):  # some row has a Skipped link
-        content += _skip_dialog("/offers/skip", "job_id")
-    return "Job Offers", f"{subtitle} · {SHOW[f['show']].lower()} ({len(found)})", content
+        found["error"] = f"Could not read the getjo database: {e}."
+    found["decisions"] = decisions
+    return found
 
 
-def _offer_filter_form(f: dict) -> str:
-    """The filter bar: a GET form, so a filtered view is a bookmarkable URL. The page script
-    submits it on change and filters company/role as you type."""
+def _matches_filters(job: dict, f: dict) -> bool:
+    """New offers' location and search filters (the score filter is applied by getjo.matches)."""
+    q = f["q"].lower()
+    if q and q not in (job["company"] or "").lower() and q not in (job["title"] or "").lower():
+        return False
+    return not f["loc"] or bool(getjo.location_tags(job["location"]) & set(f["loc"]))
+
+
+def offer_rows(found: dict, f: dict) -> list[tuple[dict, dict | None]]:
+    """(job, decision) pairs for the list: the new offers (newest day first, then highest score), or
+    with `skipped` the skipped jobs at any score, open or closed (latest skip first)."""
+    if not f["skipped"]:
+        jobs = [j for j in found["new"] if _matches_filters(j, f)]
+        jobs.sort(key=lambda j: j["id"])
+        jobs.sort(key=lambda j: ((j["first_seen"] or "")[:10], j["score"] or 0), reverse=True)
+        return [(j, None) for j in jobs]
+    pairs = []
+    for job_id, d in found["decisions"].items():
+        if d["decision"] != "skipped":
+            continue
+        job = found["jobs"].get(job_id) or _snapshot(job_id, d)
+        if _matches_filters(job, f):
+            pairs.append((job, d))
+    return sorted(pairs, key=lambda p: p[1]["decided_at"] or "", reverse=True)
+
+
+def _view_switch(f: dict, pipeline: int, offers: int | None) -> str:
+    """Pipeline N · New offers M: links (the script remembers the choice), so it works without it."""
+    tabs = []
+    for view, label, n in (("pipeline", "Pipeline", pipeline), ("offers", "New offers", offers)):
+        active = f["view"] == view
+        href = home_url(f, view=view)
+        count = f' <span class="count">{n}</span>' if n is not None else ""
+        tabs.append(f'<a class="view-tab{" is-active" if active else ""}" href="{h(href)}" data-view="{view}"'
+                    f'{CURRENT if active else ""}>{label}{count}</a>')
+    return f'<nav class="view-switch" aria-label="List">{"".join(tabs)}</nav>'
+
+
+def _offer_filters(f: dict) -> str:
+    """New offers' filters in the list header: a GET form, so every filtered view is a URL. The
+    script reloads on a select or checkbox change and narrows the rows as the search is typed."""
     scores = "".join(f'<option value="{n}"{" selected" if n == f["score"] else ""}>score ≥ {n}</option>'
                      for n in range(10, 0, -1))
     locs = "".join(
         f'<label class="check"><input type="checkbox" name="loc" value="{loc}"'
         f'{" checked" if loc in f["loc"] else ""}> {label}</label>'
-        for loc, label in LOCATION_LABELS.items()
+        for loc, label in LOCATION_LABELS.items())
+    score = ("" if f["skipped"] else
+             f'<select name="score" aria-label="Minimum score">{scores}</select>')
+    return (
+        '<form method="get" action="/" class="offer-filters" data-live-filters>'
+        '<input type="hidden" name="view" value="offers">'
+        + ('<input type="hidden" name="skipped" value="1">' if f["skipped"] else "")
+        + score
+        + f'<span class="checks" role="group" aria-label="Location">{locs}</span>'
+        f'<input type="search" name="q" value="{h(f["q"])}" placeholder="Company or role…" aria-label="Search company or role">'
+        + _button("Filter", "secondary", "sm") + "</form>"
     )
-    show = "".join(f'<option value="{k}"{" selected" if k == f["show"] else ""}>{label}</option>'
-                   for k, label in SHOW.items())
-    form = (
-        '<form method="get" action="/offers" class="add filters" data-live-filters>'
-        f'<select name="score" aria-label="Minimum score">{scores}</select>'
-        f'<input type="search" name="company" value="{h(f["company"])}" placeholder="Company…" aria-label="Company">'
-        f'<input type="search" name="role" value="{h(f["role"])}" placeholder="Role…" aria-label="Role">'
-        f'<span class="checks" role="group" aria-label="Location">{locs}</span>'
-        f'<select name="show" aria-label="Show">{show}</select>'
-        + _button("Filter", "secondary") + "</form>"
-    )
-    return _card("Filters", form, cls="card-form")
 
 
-def _fit_badge(score: int) -> str:
-    """The agent's CV fit (1-5) on a tracked job's row, toned like the panel's."""
-    return f'<span class="badge {_fit_tone(score)}" title="CV fit">fit {h(score)}/5</span>'
+def _skipped_toggle(f: dict) -> str:
+    """Show skipped / Hide skipped, in the list header next to the switch (a link)."""
+    href = home_url(f, skipped=not f["skipped"], app=None, job=None)
+    return (f'<a class="view-btn{" is-active" if f["skipped"] else ""}" href="{h(href)}">'
+            f'{"Hide skipped" if f["skipped"] else "Show skipped"}</a>')
 
 
-def _fit_tone(score: int) -> str:
-    return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
+def _job_chips(state: dict) -> str:
+    """closed · may be closed · expires in N days, from getjo.job_state."""
+    if state["closed"]:
+        return _badge("closed", "warning")
+    chips = []
+    if state["may_be_closed"]:
+        chips.append('<span class="badge badge-neutral" title="getjo has not listed it for a few days">may be closed</span>')
+    if state["expires_in"] is not None:
+        days = state["expires_in"]
+        chips.append(_badge("expires today" if days <= 0 else f"expires in {days} day{'s' if days != 1 else ''}", "warning"))
+    return " ".join(chips)
 
 
-def _decision_cell(decision: dict | None) -> str:
-    if not decision:
-        return _badge("new", "s6")
-    badge = _badge(decision["decision"], DECISION_SHADES.get(decision["decision"], "neutral"))
-    reason = SKIP_REASON_LABELS.get(decision["reason"] or "", "")
-    comment = f' <span class="muted">— {h(decision["comment"])}</span>' if decision["comment"] else ""
-    return f'{badge} {h(reason)}{comment}'
+def _offer_list(rows: list[tuple[dict, dict | None]], f: dict, found: dict, now: str, stale_days: int) -> str:
+    """The New offers table: score, company (a link to the panel), role with its chips, location; with
+    Show skipped the reason and Undo skip instead of the location."""
+    if found["error"]:
+        return _banner(found["error"], "warning")
+    if not rows:
+        if f["q"] or f["loc"]:
+            return _empty("Nothing matches these filters.", "Clear the search or the location boxes.")
+        if f["skipped"]:
+            return _empty("Nothing skipped.")
+        return _empty("No new job offers.", f"getjo jobs scored {f['score']} or more appear here after each poll.")
+    here = home_url(f)
+    trs = []
+    for job, d in rows:
+        href = home_url(f, job=job["id"], app=None)
+        chips = _job_chips(getjo.job_state(job, now, stale_days))
+        role = (f'<span class="clamp" title="{h(job["title"])}">{h(job["title"])}</span>'
+                + (f'<span class="chips">{chips}</span>' if chips else ""))
+        if d is None:
+            last = (f'<span class="ellip" title="{h(job["location"])}">{h(job["location"])}</span>',)
+        else:
+            reason = SKIP_REASON_LABELS.get(d["reason"] or "", "")
+            comment = f' <span class="muted">— {h(d["comment"])}</span>' if d["comment"] else ""
+            last = (f'<span class="ellip">{h(reason)}{comment}</span>',
+                    '<form method="post" action="/offers/unskip" class="inline" data-ajax="refresh">'
+                    f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+                    + _button("Undo skip", "ghost", "sm") + "</form>")
+        cells = (_score_badge(job["score"]), f'<a href="{h(href)}">{h(job["company"])}</a>', role, *last)
+        focus = ' class="is-focus"' if job["id"] == f["job"] and f["app"] is None else ""
+        trs.append(f'<tr data-href="{h(href)}" data-job="{h(job["id"])}" data-company="{h((job["company"] or "").lower())}" '
+                   f'data-role="{h((job["title"] or "").lower())}"{focus}>' + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    cols = ("Score", "Company", "Role", "Skipped", "") if f["skipped"] else ("Score", "Company", "Role", "Location")
+    head = "".join(f'<th scope="col" class="col-{(c or "undo").lower()}">{c}</th>' for c in cols)
+    return (f'<div class="table-wrap app-list offer-list"><table id="offer-list"><thead><tr>{head}</tr></thead>'
+            f'<tbody>{"".join(trs)}</tbody></table></div>')
 
 
-def _offer_actions(job: dict, decision: dict | None, show: str, here: str, app_id: int | None) -> str:
-    """Interested · Skipped for a new job, Open card for a tracked one, Undo for a skipped one.
-    Applying happens on the Applications board, after the agent's research. Interested stays on
-    this page (the script swaps the cell and offers Undo). Skipped links to the skip form page;
-    the script opens the skip dialog instead and removes the row."""
+def _offer_panel(job: dict, decision: dict | None, description: str | None, f: dict, now: str,
+                 stale_days: int) -> str:
+    """The side panel for a job not yet tracked: header (company, role, score, location, seen date,
+    posting link, open/closed chips), Interested · Skip (or Skipped with Undo skip) and the job
+    description from getjo, read-only."""
+    here = home_url(f, job=job["id"], app=None)
+    close = home_url(f, job=None, app=None)
+    state = getjo.job_state(job, now, stale_days)
+    sub = " ".join(x for x in (
+        _score_badge(job["score"]) if job["score"] is not None else "",
+        f'<span>{h(job["location"])}</span>' if job["location"] else "",
+        f'<span class="muted">seen {h(_short_day(job["first_seen"]))}</span>' if job["first_seen"] else "",
+        f'<span>{_link(job["url"], "Job posting ↗")}</span>' if job["url"] and urlsplit(job["url"]).scheme in ("http", "https") else "",
+        _job_chips(state),
+    ) if x)
     keep = f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-    if decision is None:
-        interested = (f'<form method="post" action="/offers/interested" class="inline" data-ajax="interested">{keep}'
-                      + _button("Interested", "secondary", size="sm") + "</form>")
-        skip_url = "/offers/skip?" + urlencode([("job_id", job["id"]), ("return", here)])
-        skipped = (f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(job["id"])}"'
-                   f'{" data-remove" if show == "new" else ""}>Skipped</a>')
-        return f'<div class="offer-actions">{interested}{skipped}</div>'
-    if decision["decision"] == "skipped":
-        ajax = ' data-ajax="remove-row"' if show == "skipped" else ""
-        return (f'<form method="post" action="/offers/unskip" class="inline"{ajax}>{keep}'
-                + _button("Undo skip", "ghost", "sm") + "</form>")
-    return _open_card(app_id)
-
-
-def _open_card(app_id: int | None) -> str:
-    return f'<a class="btn btn-ghost btn-sm" href="{h(_here(app_id))}">Open card</a>' if app_id is not None else ""
-
-
-def _tracked_cell(app_id: int, status: str, queued: bool = False) -> str:
-    """A row's actions cell once its job is tracked (the Interested reply swaps it in)."""
-    if status == "to_apply":
-        label = "Interested · research queued" if queued else "Interested"
+    if decision and decision["decision"] == "skipped":
+        reason = SKIP_REASON_LABELS.get(decision["reason"] or "", "")
+        buttons = (f'<button class="btn btn-ghost btn-sm is-done" disabled>{h("Skipped · " + reason if reason else "Skipped")}</button>'
+                   f'<form method="post" action="/offers/unskip" class="inline" data-ajax="refresh">{keep}'
+                   + _button("Undo skip", "secondary", "sm") + "</form>")
     else:
-        label = _status_label(status)
-    return f'<div class="offer-actions"><span class="offer-state">{h(label)}</span>{_open_card(app_id)}</div>'
+        skip_url = "/offers/skip?" + urlencode([("job_id", job["id"]), ("return", here)])
+        buttons = (f'<form method="post" action="/offers/interested" class="inline" data-ajax="interested">{keep}'
+                   + _button("Interested", size="sm") + "</form>"
+                   f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(job["id"])}" data-skip-field="job_id" '
+                   f'data-skip-action="/offers/skip" data-skip-label="{h(job["company"])} — {h(job["title"])}" '
+                   'data-after="refresh">Skip</a>')
+    if description and description.strip():
+        text = _description(description)
+    elif description is None and not job["first_seen"]:
+        text = '<p class="muted">getjo no longer has this job; use the posting link.</p>'
+    else:
+        text = '<p class="muted">No description in getjo; use the posting link.</p>'
+    return (
+        f'<aside class="panel panel-offer" id="panel" aria-labelledby="panel-title" data-job="{h(job["id"])}">'
+        f'<header class="panel-head"><div><h2 id="panel-title">{h(job["company"])}</h2>'
+        f'<p class="panel-role">{h(job["title"])}</p><p class="panel-sub">{sub}</p></div>'
+        '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
+        'Ask the agent</a>'
+        f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
+        '<div class="panel-body">'
+        f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div></section>'
+        f'<section class="panel-description" aria-labelledby="description-title"><h3 id="description-title">Job description</h3>'
+        f'<div class="description">{text}</div></section>'
+        "</div></aside>"
+    )
 
 
+def _description(text: str) -> str:
+    """A getjo description as paragraphs: split on blank lines, single line breaks kept (CSS
+    pre-line), every piece escaped. Some boards send entities (Workday's "&#xa;" line breaks), so
+    the text is unescaped first and escaped again here, never shown as "&amp;#xa;"."""
+    text = html.unescape(text).replace("\xa0", " ")
+    parts = re.split(r"\n[ \t]*\n", text.replace("\r\n", "\n").replace("\r", "\n"))
+    return "".join(f"<p>{h(p.strip())}</p>" for p in parts if p.strip())
 
-def _skip_dialog(action: str, field: str) -> str:
-    """The Skip pop-up: one button per reason and an optional comment, posting to `action`. The page
-    script fills in `field` (job_id on Job Offers, app_id on Applications) and return when a Skip
-    link is clicked; without the script it never opens."""
+
+def _skip_dialog() -> str:
+    """The Skip pop-up: one button per reason and an optional comment. The clicked Skip link names
+    where it posts and which field it fills (`data-skip-action` and `data-skip-field`: /offers/skip
+    and job_id for an offer, /applications/skip and app_id for an application); the script sets
+    them and return. Without the script it never opens."""
     reasons = "".join(
         f'<button class="btn btn-secondary btn-sm" name="reason" value="{k}">{h(v)}</button>'
         for k, v in SKIP_REASON_LABELS.items())
     return (
         '<dialog id="skip-dialog" class="dialog" aria-labelledby="skip-title">'
-        f'<form method="post" action="{h(action)}" class="skip-form" data-field="{h(field)}">'
-        f'<input type="hidden" name="{h(field)}" value=""><input type="hidden" name="return" value="">'
+        '<form method="post" action="/applications/skip" class="skip-form">'
+        '<input type="hidden" name="app_id" value=""><input type="hidden" name="job_id" value="">'
+        '<input type="hidden" name="return" value="">'
         '<h2 id="skip-title">Skip this job?</h2><p class="muted" data-skip-job></p>'
         f'<textarea name="comment" maxlength="{MAX_COMMENT}" rows="2" placeholder="Comment (optional)" '
         'aria-label="Comment"></textarea>'
@@ -755,7 +894,7 @@ def app_skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
     app = db.get_application(conn, int(raw)) if raw.isdigit() else None
     if app is None:
         raise NotFound()
-    back = _return_to((query.get("return") or [""])[0], "/applications")
+    back = _return_to((query.get("return") or [""])[0], "/")
     reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
     form = (
         '<form method="post" action="/applications/skip" class="add">'
@@ -775,7 +914,7 @@ def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
     back = (query.get("return") or [""])[0]
     job = _getjo_job(settings, {"job_id": job_id})
     reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
-    cancel = _return_to(back, "/offers")
+    cancel = _return_to(back, "/")
     form = (
         '<form method="post" action="/offers/skip" class="add">'
         f'<input type="hidden" name="job_id" value="{h(job["id"])}"><input type="hidden" name="return" value="{h(back)}">'
@@ -784,28 +923,6 @@ def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
         + _button("Skip") + f'<a class="btn btn-ghost" href="{h(cancel)}">Cancel</a></form>'
     )
     return "Skip a job", f'{job["company"]} — {job["title"]}', _card("Why skip it?", form, cls="card-form")
-
-
-def list_filters(query: dict[str, list[str]]) -> dict:
-    """Applications page state from the query string: open panel (`app`), `stage` (a stage group)
-    and `closed` (1: closed applications listed too). Unknown values fall back to the defaults;
-    an old `view=board` is ignored."""
-    def first(key: str) -> str:
-        return (query.get(key) or [""])[0].strip()
-
-    app, stage = first("app"), first("stage")
-    return {
-        "app": int(app) if app.isdigit() else None,
-        "stage": stage if stage in STAGE_GROUPS else "",
-        "closed": first("closed") == "1",
-    }
-
-
-def apps_url(app: int | None = None, stage: str = "", closed: bool = False) -> str:
-    """An Applications page URL; default values are left out (built from ids and fixed names)."""
-    pairs = [(k, v) for k, v in (("app", app), ("stage", stage or None), ("closed", "1" if closed else None))
-             if v is not None]
-    return "/applications" + (f"?{urlencode(pairs)}" if pairs else "")
 
 
 def group_of(status: str) -> str:
@@ -838,36 +955,63 @@ def list_order(rows: list[dict]) -> list[dict]:
     return sorted(rows, key=key)
 
 
-def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
-                      query: dict[str, list[str]]) -> tuple[str, str, str]:
-    """The pipeline list on the left (grouped by stage, with a stage strip that filters it); the side panel for the application named by ?app=ID on the right (an unknown id
-    is ignored). The panel holds no forms but the shortcut buttons, task ticks and the Agent thread."""
-    f = list_filters(query)
+def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
+              query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """The landing page. Left: a switch between the pipeline (grouped by stage, with a stage strip
+    that filters it) and New offers (getjo jobs not yet tracked), with the Agent box under it.
+    Right: the side panel for the application named by ?app=ID or else the job named by ?job=ID (a
+    tracked job opens its application; an unknown id is ignored)."""
+    f = home_filters(query)
+    now = _now(today)
+    found = _read_getjo(settings, conn, f, now)
     tasks = db.app_tasks(conn, "todo")
     latest = db.latest_comments(conn)
-    found = db.research_view(conn)
+    research_found = db.research_view(conn)
     rows = []
     for a in db.board_applications(conn):
         own = tasks.get(a["id"], [])
+        job = found["jobs"].get(a["getjo_job_id"]) if a["status"] in ("to_apply", "applied") else None
         rows.append({"app": a, "group": group_of(a["status"]), "next": own[0] if own else None,
                      "tasks": own, "comment": latest.get(a["id"]),
                      "days": (date.fromisoformat(today) - date.fromisoformat(a["since"])).days,
-                     "found": found.get(a["id"]) or {"profile": None, "fit": None, "tailored": None,
-                                                     "open": set()}})
+                     "closed": bool(job) and getjo.job_state(job, now, settings.stale_days)["closed"],
+                     "found": research_found.get(a["id"]) or {"profile": None, "fit": None, "tailored": None,
+                                                              "open": set()}})
+    if f["app"] is None and f["job"]:
+        f["app"] = db.app_ids_by_job(conn).get(f["job"])  # a tracked job opens its application
     focus = next((r for r in rows if r["app"]["id"] == f["app"]), None)
+    if focus is None:
+        f["app"] = None
+    job, decision = None, None
+    if focus is None and f["job"]:
+        decision = found["decisions"].get(f["job"])
+        job = found["jobs"].get(f["job"]) or (_snapshot(f["job"], decision) if decision else None)
+    if focus is None and job is None:
+        f["job"] = None
+    else:
+        f["job"] = job["id"] if job else None
     open_count = sum(1 for r in rows if r["group"] != "closed")
     closed_count = len(rows) - open_count
-    if not rows:
-        main = _empty("No applications yet.", "Mark a job Interested on Job Offers, or use /applied.")
+    offers = None if found["error"] else len(found["new"])
+    if f["view"] == "offers":
+        body = _offer_filters(f) + _offer_list(offer_rows(found, f), f, found, now, settings.stale_days)
+    elif not rows:
+        body = _empty("No applications yet.", "Mark a job Interested in New offers, or use /applied.")
     else:
-        main = _stage_strip(rows, f) + _app_list(rows, f)
-    panel = _panel(conn, focus, today, f) if focus else ""
-    here = apps_url(f["app"] if focus else None, f["stage"], f["closed"])
-    agent = _agent_box(conn, focus, here, bool(settings.assistant_task))
-    content = (f'<div class="apps"><div class="apps-main">{_card("Pipeline", main, count=open_count, cls="card-pipeline")}'
-               f'{agent}</div>{panel}</div>'
-               + _skip_dialog("/applications/skip", "app_id"))
-    return "Applications", f"{open_count} open · {closed_count} closed · {today}", content
+        body = _stage_strip(rows, f) + _app_list(rows, f)
+    switch = _view_switch(f, open_count, offers) + (_skipped_toggle(f) if f["view"] == "offers" else "")
+    list_card = (f'<section class="card card-pipeline card-list" data-view="{f["view"]}"><header class="card-head">{switch}'
+                 f'</header><div class="card-body">{body}</div></section>')
+    if focus:
+        panel = _panel(conn, focus, today, f)
+    elif job:
+        panel = _offer_panel(job, decision, found["description"], f, now, settings.stale_days)
+    else:
+        panel = ""
+    agent = _agent_box(conn, settings, focus, job, home_url(f))
+    content = (f'<div class="apps"><div class="apps-main">{list_card}{agent}</div>{panel}</div>' + _skip_dialog())
+    new = f" · {offers} new offer{'s' if offers != 1 else ''}" if offers is not None else ""
+    return "Applications", f"{open_count} open · {closed_count} closed{new} · {today}", content
 
 
 def _stage_strip(rows: list[dict], f: dict) -> str:
@@ -877,12 +1021,12 @@ def _stage_strip(rows: list[dict], f: dict) -> str:
     for group, label in GROUP_LABELS.items():
         n = sum(1 for r in rows if r["group"] == group)
         active = f["stage"] == group
-        href = apps_url(f["app"], "" if active else group, f["closed"])
+        href = home_url(f, stage="" if active else group)
         pills.append(f'<a class="stage-pill{" is-active" if active else ""}" href="{h(href)}" data-stage="{group}"'
                      f'{CURRENT if active else ""}>{h(label)} <span class="count">{n}</span></a>')
     toggle = ""
     if f["stage"] != "closed":
-        href = apps_url(f["app"], f["stage"], not f["closed"])
+        href = home_url(f, closed=not f["closed"])
         toggle = (f'<a class="view-btn{" is-active" if f["closed"] else ""}" href="{h(href)}" data-closed-toggle>'
                   f'{"Hide closed" if f["closed"] else "Show closed"}</a>')
     return (f'<div class="stage-strip"><nav class="stage-pills" aria-label="Filter by stage">{"".join(pills)}</nav>'
@@ -915,7 +1059,7 @@ def _app_list(rows: list[dict], f: dict) -> str:
 
 def _list_row(r: dict, f: dict) -> str:
     app, nxt, comment = r["app"], r["next"], r["comment"]
-    href = apps_url(app["id"], f["stage"], f["closed"])
+    href = home_url(f, app=app["id"])
     status = app["status"]
     stage = (f'<span class="badge {STATUS_SHADES.get(status, "neutral")}" title="{h(_status_label(status).capitalize())}">'
              f'{h(LIST_STAGE_LABELS.get(status, _status_label(status).capitalize()))}</span>')
@@ -926,11 +1070,17 @@ def _list_row(r: dict, f: dict) -> str:
         body, n = comment
         more = f' <span class="count" title="{n} comments">+{n - 1}</span>' if n > 1 else ""
         comment_cell = f'<span class="comment-cell"><span class="ellip" title="{h(body)}">{h(body)}</span>{more}</span>'
+    closed = f'<span class="chips">{_job_closed_badge()}</span>' if r["closed"] else ""
     cells = (f'<a href="{h(href)}">{h(app["company"])}</a>',
-             f'<span class="clamp" title="{h(app["role"])}">{h(app["role"])}</span>', stage, next_cell, comment_cell)
+             f'<span class="clamp" title="{h(app["role"])}">{h(app["role"])}</span>{closed}', stage, next_cell, comment_cell)
     focus = ' class="is-focus"' if app["id"] == f["app"] else ""
     return (f'<tr id="app-{h(app["id"])}" data-href="{h(href)}" data-app="{h(app["id"])}"{focus}>'
             + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+
+
+def _job_closed_badge() -> str:
+    """An Interested or Applied application whose getjo job has closed or expired stays listed."""
+    return '<span class="badge badge-warning" title="getjo says the job is closed or expired">closed</span>'
 
 
 def _age_text(days: int) -> str:
@@ -942,10 +1092,10 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
     (tick to mark done), the agent's results (company research, CV fit, tailored CV versions) and
     the stage history. Everything else is asked of the agent in the Agent box under the list."""
     app, found = r["app"], r["found"]
-    here = apps_url(app["id"], f["stage"], f["closed"])
+    here = home_url(f, app=app["id"])
     link = (f'<span>{_link(app["link"], "Job posting ↗")}</span>'
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
-    close = apps_url(None, f["stage"], f["closed"])
+    close = home_url(f, app=None, job=None)
     versions = db.tailored_versions(conn, app["id"])
     busy = " data-busy" if found["open"] else ""
     return (
@@ -954,6 +1104,7 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
         f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
         f'<p class="panel-role">{h(app["role"])}</p>'
         f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
+        f'{_job_closed_badge() if r["closed"] else ""}'
         f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
         '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
         'Ask the agent</a>'
@@ -1041,6 +1192,7 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
                        + _button("Mark applied", size="sm") + "</form>")
         skip_url = "/applications/skip?" + urlencode([("app", app["id"]), ("return", here)])
         buttons.append(f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(app["id"])}" '
+                       'data-skip-field="app_id" data-skip-action="/applications/skip" '
                        f'data-skip-label="{h(app["company"])} — {h(app["role"])}" data-after="refresh">Skip</a>')
     elif app["status"] == "skipped":
         buttons.append(state("Skipped"))
@@ -1075,6 +1227,11 @@ def _open_link(app_id: int, kind: str, label: str = "Open", version: int | None 
 def _artifact(card_id: str, title: str, meta: str, actions: str, body: str) -> str:
     return (f'<section class="artifact" id="{card_id}"><div class="artifact-head"><strong>{h(title)}</strong>{meta}'
             f'<span class="artifact-actions">{actions}</span></div>{body}</section>')
+
+
+def _fit_tone(score: int) -> str:
+    """The CV fit (1-5) as a shade: 4-5 light, 3 middle, 1-2 dark."""
+    return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
 
 
 def _research_cards(app: dict, found: dict, versions: list[dict], here: str) -> str:
@@ -1132,10 +1289,10 @@ def _history(conn: sqlite3.Connection, app_id: int) -> str:
 AGENT_MESSAGES = 60  # the latest messages shown in the Agent box
 
 
-def _agent_box(conn: sqlite3.Connection, focus: dict | None, here: str, assistant_on: bool) -> str:
-    """The Agent box under the pipeline list: one conversation for every application. A new message
-    is about the open panel's application while "About" is ticked, else about the whole search
-    ("which tasks need me?"). The script adds an All / This job filter while a panel is open."""
+def _agent_box(conn: sqlite3.Connection, settings: Settings, focus: dict | None, job: dict | None, here: str) -> str:
+    """The Agent box under the list: one conversation for every application and job. A new message
+    is about the open panel's application or job offer while "About" is ticked, else about the whole
+    search ("which tasks need me?"). The script adds an All / This job filter while a panel is open."""
     return (
         f'<section class="card card-agent agent" id="agent" aria-labelledby="agent-title">'
         f'<header class="card-head"><h2 id="agent-title">Agent</h2>'
@@ -1143,9 +1300,9 @@ def _agent_box(conn: sqlite3.Connection, focus: dict | None, here: str, assistan
         '<div class="agent-filter" role="group" aria-label="Show messages" hidden>'
         '<button type="button" class="view-btn is-active" data-filter-chat="all">All</button>'
         '<button type="button" class="view-btn" data-filter-chat="job">This job</button></div></header>'
-        f'<div class="card-body">{_thread(conn, assistant_on)}'
+        f'<div class="card-body">{_thread(conn, settings)}'
         '<form method="post" action="/applications/message" class="ask" data-ajax="thread">'
-        f'<input type="hidden" name="return" value="{h(here)}">{_agent_about(focus)}'
+        f'<input type="hidden" name="return" value="{h(here)}">{_agent_about(focus, job)}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
         'placeholder="Ask anything: which tasks need me, a question about a job, a change (tasks, comments, stage, '
         'tier, CV), or paste a recruiter email…" aria-label="Message to the agent"></textarea>'
@@ -1154,26 +1311,54 @@ def _agent_box(conn: sqlite3.Connection, focus: dict | None, here: str, assistan
     )
 
 
-def _agent_about(focus: dict | None) -> str:
-    """With a panel open: a ticked "About <company>" box (untick it to ask about the whole search).
-    The script swaps it when another panel opens, so a half-typed message stays."""
-    if focus is None:
-        return '<p class="agent-about muted" data-about="">About: the whole search</p>'
-    app = focus["app"]
-    return (f'<label class="agent-about" data-about="{h(app["id"])}"><input type="checkbox" name="app_id" '
-            f'value="{h(app["id"])}" checked> About {h(app["company"])} — {h(app["role"])}</label>')
+def _agent_about(focus: dict | None, job: dict | None = None) -> str:
+    """With a panel open: a ticked "About <company>" box (untick it to ask about the whole search):
+    app_id for an application, job_id for a job offer not yet tracked. The script swaps it when
+    another panel opens, so a half-typed message stays."""
+    if focus is not None:
+        app = focus["app"]
+        return (f'<label class="agent-about" data-about="{h(app["id"])}"><input type="checkbox" name="app_id" '
+                f'value="{h(app["id"])}" checked> About {h(app["company"])} — {h(app["role"])}</label>')
+    if job is not None:
+        return (f'<label class="agent-about" data-about="job:{h(job["id"])}"><input type="checkbox" name="job_id" '
+                f'value="{h(job["id"])}" checked> About {h(job["company"])} — {h(job["title"])}</label>')
+    return '<p class="agent-about muted" data-about="">About: the whole search</p>'
 
 
-def _thread(conn: sqlite3.Connection, assistant_on: bool) -> str:
-    """The conversation, its latest AGENT_MESSAGES oldest first, each tagged with its application (a
-    link to its panel) or "all jobs". Swapped in whole by the page script after Send and while
-    polling; data-pending marks a user message still waiting for its reply."""
+def _job_names(settings: Settings, conn: sqlite3.Connection, ids: set[str]) -> dict[str, str]:
+    """Company names for messages about jobs not yet tracked: from getjo (read-only), else from a
+    skip's stored copy; a job found in neither reads "job offer"."""
+    names = {k: d["company"] for k, d in db.job_decisions(conn).items() if k in ids and d["company"]}
+    try:
+        with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+            names.update({k: j["company"] for k, j in getjo.jobs_by_id(gconn, ids - set(names)).items()})
+    except (getjo.GetjoUnavailable, sqlite3.Error):
+        pass
+    return names
+
+
+def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
+    """The conversation, its latest AGENT_MESSAGES oldest first, each tagged with its application or
+    job offer (a link to its panel) or "all jobs". Swapped in whole by the page script after Send and
+    while polling; data-pending marks a user message still waiting for its reply."""
     messages = db.thread(conn, limit=AGENT_MESSAGES)
+    untracked = {m["getjo_job_id"] for m in messages if m["application_id"] is None and m["getjo_job_id"]}
+    names = _job_names(settings, conn, untracked) if untracked else {}
+
+    def about(m: dict) -> str:
+        if m["application_id"] is not None:
+            return f'<a class="msg-about" href="{h(_here(m["application_id"]))}">{h(m["company"])}</a>'
+        if m["getjo_job_id"]:
+            href = "/?" + urlencode([("view", "offers"), ("job", m["getjo_job_id"])])
+            return (f'<a class="msg-about msg-about-job" href="{h(href)}" title="Job offer">'
+                    f'{h(names.get(m["getjo_job_id"], "job offer"))}</a>')
+        return '<span class="msg-about">all jobs</span>'
+
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}">'
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}" '
+        f'data-job="{h(m["getjo_job_id"] or "")}">'
         f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
-        + (f'<a class="msg-about" href="{h(_here(m["application_id"]))}">{h(m["company"])}</a>'
-           if m["application_id"] is not None else '<span class="msg-about">all jobs</span>')
+        + about(m)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
         f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
         for m in messages
@@ -1181,7 +1366,7 @@ def _thread(conn: sqlite3.Connection, assistant_on: bool) -> str:
     pending = bool(db.pending_messages(conn))
     if not messages:
         state = '<p class="muted thread-empty">No messages yet.</p>'
-    elif pending and assistant_on:
+    elif pending and settings.assistant_task:
         state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Agent is working…</p>'
     elif pending:
         state = ('<p class="thread-state" role="status">Waiting for the agent: run /ask in a Claude Code session '
@@ -1231,7 +1416,7 @@ def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> 
         working = bool(app and db.open_requests(conn, app["id"]))
         pending = working or bool(db.pending_messages(conn))
         payload = {"ok": True, "pending": pending, "status": app["status"] if app else None,
-                   "messages": db.message_count(conn), "html": _thread(conn, bool(settings.assistant_task))}
+                   "messages": db.message_count(conn), "html": _thread(conn, settings)}
     return _json(200, payload)
 
 
@@ -1312,10 +1497,14 @@ def render_markdown(text: str) -> str:
 # Helpers that take plain values escape them; parameters documented as HTML are trusted
 # fragments built by other helpers.
 
-def _page(status: int, title: str, subtitle: str, content: str, active: str) -> Response:
+def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None) -> Response:
+    """The app shell. `offers` is the number of new offers shown next to Applications (none when 0
+    or unknown)."""
     current = ' aria-current="page"'
     nav = "".join(
-        f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{name}</span></a>'
+        f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{name}</span>'
+        + (f'<span class="nav-count" title="New offers">{h(offers)}</span>' if href == "/" and offers else "")
+        + "</a>"
         for href, name, icon in PAGES
     )
     sub = f'<p class="subtitle">{h(subtitle)}</p>' if subtitle else ""
