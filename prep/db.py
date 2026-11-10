@@ -79,6 +79,9 @@ FIT_GAP_SESSION = "cv fit"
 MESSAGE_AUTHORS = ("user", "agent")
 MESSAGE_STATUSES = ("pending", "claimed", "answered")
 MAX_MESSAGE = 20_000  # characters: room for a pasted recruiter email
+# A message about neither an application nor a job may have a topic: "cv" is the master CV (the
+# My CV panel's "About my CV" tick). A message with no application, job or topic is general.
+MESSAGE_TOPICS = ("cv",)
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -260,6 +263,16 @@ CREATE TABLE IF NOT EXISTS agent_messages (
     answered_at    TEXT
 );
 
+-- The master CV's saved versions (private_dir/cv-history/<file_name>): each row is a state of cv.md
+-- and the note says what changed into it. Files and notes never go into git.
+CREATE TABLE IF NOT EXISTS cv_versions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,  -- shown as vN
+    file_name  TEXT NOT NULL UNIQUE,               -- cv-YYYYMMDD-HHMMSS[-N].md
+    note       TEXT NOT NULL,
+    sha256     TEXT NOT NULL,                      -- of the file's text, to tell which version is current
+    created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
@@ -280,7 +293,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT"},
     # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
     # carries it too. Interested moves these messages to the new application and keeps the id.
-    "agent_messages": {"getjo_job_id": "TEXT"},
+    # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
+    "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -1574,44 +1588,50 @@ def _message_body(body: str) -> str:
     return body
 
 
-def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id: str | None = None) -> int:
+def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id: str | None = None,
+                topic: str | None = None) -> int:
     """A user message, about application `app_id`, getjo job `job_id` (not yet tracked; a tracked
-    job's message goes to its application) or neither (the whole search), pending until the agent
-    answers it."""
+    job's message goes to its application), a `topic` (MESSAGE_TOPICS: "cv", the master CV) or none
+    of them (the whole search), pending until the agent answers it."""
     body = _message_body(body)
-    if app_id is not None and job_id is not None:
-        raise ValueError("a message is about an application or a job, not both")
+    if sum(x is not None for x in (app_id, job_id, topic)) > 1:
+        raise ValueError("a message is about an application, a job or a topic, not more than one")
+    if topic is not None and topic not in MESSAGE_TOPICS:
+        raise ValueError(f"topic must be one of {', '.join(MESSAGE_TOPICS)}")
     if app_id is not None and get_application(conn, app_id) is None:
         raise LookupError(f"no application with id {app_id}")
     if job_id is not None:
         tracked = find_by_job(conn, job_id)
         app_id = tracked["id"] if tracked else None
     cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, status, created_at) "
-        "VALUES (?, ?, 'user', ?, 'pending', ?)",
-        (app_id, job_id, body, now_iso()),
+        "INSERT INTO agent_messages (application_id, getjo_job_id, topic, author, body, status, created_at) "
+        "VALUES (?, ?, ?, 'user', ?, 'pending', ?)",
+        (app_id, job_id, topic, body, now_iso()),
     )
     conn.commit()
     return cursor.lastrowid
 
 
 def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None,
-           job_id: str | None = None) -> list[dict]:
-    """Messages oldest first: id, application_id, getjo_job_id, company, author, body, status,
+           job_id: str | None = None, topic: str | None = None) -> list[dict]:
+    """Messages oldest first: id, application_id, getjo_job_id, topic, company, author, body, status,
     reply_to, created_at. With `app_id` only that application's, with `job_id` only that job's
-    (before and after it was tracked); otherwise the whole conversation (with `limit`, its latest
-    messages). company is None for a message about an untracked job."""
-    where = "WHERE m.application_id = ?" if app_id is not None else "WHERE m.getjo_job_id = ?" if job_id else ""
+    (before and after it was tracked), with `topic` only that topic's; otherwise the whole
+    conversation (with `limit`, its latest messages). company is None for a message about an
+    untracked job or a topic."""
+    key = app_id if app_id is not None else job_id if job_id else topic
+    where = ("WHERE m.application_id = ?" if app_id is not None else "WHERE m.getjo_job_id = ?" if job_id
+             else "WHERE m.topic = ?" if topic else "")
     rows = conn.execute(
         f"""
         SELECT * FROM (
-            SELECT m.id, m.application_id, m.getjo_job_id, a.company, m.author, m.body, m.status, m.reply_to,
-                   m.created_at
+            SELECT m.id, m.application_id, m.getjo_job_id, m.topic, a.company, m.author, m.body, m.status,
+                   m.reply_to, m.created_at
             FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
             {where} ORDER BY m.id DESC {'LIMIT ?' if limit else ''}
         ) ORDER BY id
         """,
-        tuple(x for x in (app_id if app_id is not None else job_id, limit) if x is not None),
+        tuple(x for x in (key, limit) if x is not None),
     )
     return [dict(r) for r in rows]
 
@@ -1620,20 +1640,23 @@ def message_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM agent_messages").fetchone()[0]
 
 
-def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None) -> list[dict]:
+def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None,
+                     topic: str | None = None) -> list[dict]:
     """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
-    claimed now: `claimed` is True for a live claim), oldest first, with getjo_job_id, company and
-    role (None for a message about an untracked job or the whole search). With `app_id` only that
-    application's, with `job_id` only that untracked job's."""
+    claimed now: `claimed` is True for a live claim), oldest first, with getjo_job_id, topic, company
+    and role (None for a message about an untracked job, a topic or the whole search). With `app_id`
+    only that application's, with `job_id` only that untracked job's, with `topic` only that topic's."""
     where = "WHERE m.author = 'user' AND m.status IN ('pending', 'claimed')"
     params: tuple = ()
     if app_id is not None:
         where, params = where + " AND m.application_id = ?", (app_id,)
     elif job_id is not None:
         where, params = where + " AND m.application_id IS NULL AND m.getjo_job_id = ?", (job_id,)
+    elif topic is not None:
+        where, params = where + " AND m.application_id IS NULL AND m.getjo_job_id IS NULL AND m.topic = ?", (topic,)
     rows = conn.execute(
         f"""
-        SELECT m.id, m.application_id, m.getjo_job_id, m.status, m.created_at, m.claimed_at, a.company, a.role
+        SELECT m.id, m.application_id, m.getjo_job_id, m.topic, m.status, m.created_at, m.claimed_at, a.company, a.role
         FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
         {where} ORDER BY m.id
         """,
@@ -1648,17 +1671,20 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id
     return found
 
 
-def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | None = None) -> list[int]:
-    """Take the waiting user messages about an application (or an untracked job with `job_id`, or,
-    with neither, the whole search) for this session; returns their ids, oldest first. Only one
+def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | None = None,
+                   topic: str | None = None) -> list[int]:
+    """Take the waiting user messages about an application (or an untracked job with `job_id`, a
+    `topic`, or, with none of them, the whole search) for this session; returns their ids, oldest first. Only one
     caller wins each: the update applies while it is still pending (or its claim has gone stale)."""
     stamp, cutoff = now_iso(), _claim_cutoff()
     if app_id is not None:
         match, params = "application_id = ?", (app_id,)
     elif job_id is not None:
         match, params = "application_id IS NULL AND getjo_job_id = ?", (job_id,)
+    elif topic is not None:
+        match, params = "application_id IS NULL AND getjo_job_id IS NULL AND topic = ?", (topic,)
     else:
-        match, params = "application_id IS NULL AND getjo_job_id IS NULL", ()
+        match, params = "application_id IS NULL AND getjo_job_id IS NULL AND topic IS NULL", ()
     ids = [r[0] for r in conn.execute(
         f"SELECT id FROM agent_messages WHERE {match} AND author = 'user' "
         "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?)) ORDER BY id",
@@ -1691,6 +1717,14 @@ def message_subject(conn: sqlite3.Connection, msg_id: int) -> tuple[int | None, 
     return row[0], row[1]
 
 
+def message_topic(conn: sqlite3.Connection, msg_id: int) -> str | None:
+    """A message's topic ("cv"), or None. LookupError if there is no such message."""
+    row = conn.execute("SELECT topic FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no message {msg_id}")
+    return row[0]
+
+
 def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body: str) -> int:
     """The agent's reply to user message `to_id` (about application `app_id`, or None for the whole
     search): stores it and marks that message answered, in one transaction, only while the message
@@ -1699,7 +1733,8 @@ def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body
     _check_user_message(conn, app_id, to_id)
     stamp = now_iso()
     with conn:
-        return _agent_message(conn, app_id, body, stamp, to_id, message_subject(conn, to_id)[1])
+        return _agent_message(conn, app_id, body, stamp, to_id, message_subject(conn, to_id)[1],
+                              message_topic(conn, to_id))
 
 
 def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int) -> None:
@@ -1712,10 +1747,10 @@ def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int
 
 
 def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stamp: str, to_id: int | None,
-                   job_id: str | None = None) -> int:
+                   job_id: str | None = None, topic: str | None = None) -> int:
     """Insert an agent message inside the caller's transaction. With `to_id` it answers that user
     message, only while it is still open (ValueError otherwise, which rolls the transaction back).
-    `job_id` tags it with the getjo job its question was about."""
+    `job_id` tags it with the getjo job its question was about, `topic` with its topic ("cv")."""
     if to_id is not None:
         cursor = conn.execute(
             "UPDATE agent_messages SET status = 'answered', answered_at = ? "
@@ -1725,8 +1760,41 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
     cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, reply_to, created_at) "
-        "VALUES (?, ?, 'agent', ?, ?, ?)",
-        (app_id, job_id, body, to_id, stamp),
+        "INSERT INTO agent_messages (application_id, getjo_job_id, topic, author, body, reply_to, created_at) "
+        "VALUES (?, ?, ?, 'agent', ?, ?, ?)",
+        (app_id, job_id, topic, body, to_id, stamp),
     )
     return cursor.lastrowid
+
+
+# --- master CV versions ---------------------------------------------------------------
+# The files live in private_dir/cv-history (prep.cvfile writes them); prep.db keeps the notes.
+
+def add_cv_version(conn: sqlite3.Connection, file_name: str, note: str, sha256: str, created_at: str) -> int:
+    """Record a saved version of cv.md; returns its number (vN)."""
+    note = " ".join(note.split())
+    if not note:
+        raise ValueError("a CV version needs a note saying what changed")
+    with conn:
+        cursor = conn.execute("INSERT INTO cv_versions (file_name, note, sha256, created_at) VALUES (?, ?, ?, ?)",
+                              (file_name, note, sha256, created_at))
+    return cursor.lastrowid
+
+
+def cv_versions(conn: sqlite3.Connection) -> list[dict]:
+    """Every saved version of cv.md, newest first: id, file_name, note, sha256, created_at."""
+    return [dict(r) for r in conn.execute("SELECT * FROM cv_versions ORDER BY id DESC")]
+
+
+def cv_version(conn: sqlite3.Connection, version_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM cv_versions WHERE id = ?", (version_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def all_tailored_versions(conn: sqlite3.Connection) -> list[dict]:
+    """Every tailored CV version of every application, newest first: application_id, company, version,
+    file_path, created_at (for copying wording from one into the master CV)."""
+    rows = conn.execute(
+        "SELECT v.application_id, a.company, v.version, v.file_path, v.created_at FROM tailored_cv_versions v "
+        "JOIN applications a ON a.id = v.application_id ORDER BY v.created_at DESC, v.id DESC")
+    return [dict(r) for r in rows]

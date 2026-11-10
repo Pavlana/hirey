@@ -121,7 +121,7 @@ class EndpointTest(WebTestCase):
         with self.conn() as conn:
             [m] = db.pending_messages(conn)
         self.assertIsNone(m["application_id"])
-        bg.assert_called_once_with(self.settings, None, m["id"], job=False)
+        bg.assert_called_once_with(self.settings, None, m["id"], job=False, topic=None)
         self.assertIn('<span class="msg-about">all jobs</span>', json.loads(out)["html"])
 
     def test_send_stores_a_user_message_and_redirects_to_the_panel(self) -> None:
@@ -134,7 +134,7 @@ class EndpointTest(WebTestCase):
         [m] = self.thread_rows(STARK)
         self.assertEqual((m["author"], m["status"], m["body"]), ("user", "pending", "Good employer?"),
                          "the form's author field is ignored")
-        bg.assert_called_once_with(self.settings, STARK, m["id"], job=False)
+        bg.assert_called_once_with(self.settings, STARK, m["id"], job=False, topic=None)
 
     def test_send_as_json_returns_the_escaped_thread(self) -> None:
         with mock.patch.object(assistant, "notify_message_in_background"):
@@ -470,7 +470,7 @@ class JobMessagesTest(WebTestCase):
             self.assertEqual(db.message_subject(conn, m["id"]), (None, GLOBEX_JOB))
             self.assertEqual(db.claim_messages(conn, None), [], "not a message about the whole search")
         self.assertEqual((m["application_id"], m["getjo_job_id"]), (None, GLOBEX_JOB))
-        bg.assert_called_once_with(self.settings, None, m["id"], job=True)
+        bg.assert_called_once_with(self.settings, None, m["id"], job=True, topic=None)
         html = reply["html"]
         self.assertIn(f'data-app="" data-job="{GLOBEX_JOB}"', html)
         self.assertIn('<a class="msg-about msg-about-job" href="/?view=offers&amp;job=lever%3Aglobex-labs%3Aabc" '

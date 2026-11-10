@@ -66,6 +66,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 | `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
 |            | `python -m prep.cli queue`                                           | Read-only: counts and application ids of queued research (used by the SessionStart hook) |
+| `/ask`     | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 
@@ -181,6 +182,24 @@ reply arrives. Without an assistant the message waits. The SessionStart hook and
 report it, and `/ask` answers it in any Claude Code session. Pasted emails are treated as data:
 the agent never sends email, applies or contacts anyone.
 
+### My CV
+
+**My CV** in the Applications header opens the master CV (`private_dir/cv.md`) in the side panel
+(`/?cv=1`; Esc and ✕ close it like a job panel): the skills as chips grouped by theme (one group
+per `- **Theme:** a, b; c` line of the Skills section), the CV itself, and its **History**: every
+saved version with its date and a one-line note of what changed, each with **Open**, **Compare**
+(a line diff against the current CV) and **Restore**. Restore keeps the text it replaces as a
+version, so the toast's **Undo** brings it back.
+
+There is no edit box. With the panel open the Agent box reads "About my CV": ask for the change
+("add Terraform to my skills", "shorten my summary", "copy the summary from
+CV_OpenAI_FDE_210926_2 into my main CV"). The agent edits a draft and saves it with
+`cv save --note "…"`, which first saves the current text as a version, then replaces `cv.md`
+atomically; it replies with what changed and the panel refreshes. It never invents experience.
+Versions live in `private_dir/cv-history/cv-<YYYYMMDD-HHMMSS>.md` with their notes in prep.db,
+never in git. A hand edit of `cv.md` shows as "changed since the last version" and is saved as a
+version before the next change.
+
 ### Standing assistant (optional)
 
 A long-running dev3 task that answers thread messages and does queued research as soon as
@@ -272,7 +291,7 @@ rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 
 The repository is public; personal data stays local.
 
-- Personal files (`cv.md`, `notes/`, `sessions/`, `*.docx`, `*.xlsx`, `*.pdf`, databases,
+- Personal files (`cv.md`, `cv-history/`, `notes/`, `sessions/`, `*.docx`, `*.xlsx`, `*.pdf`, databases,
   `config/settings.toml`, `.env`, prep documents) are gitignored. Committed templates use the
   `.example` suffix.
 - Pay is stored only in the local database, never in committed files, fixtures, logs or

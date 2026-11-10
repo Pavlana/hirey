@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, db, getjo, research, stats
+from prep import assistant, charts, cvfile, db, getjo, research, stats
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep.web")
@@ -95,6 +95,7 @@ MESSAGES = {
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the agent. Its reply shows in the thread.",
+    "cv_restored": "Restored. The CV it replaced is kept as a version.",
 }
 
 SECURITY_HEADERS = [
@@ -210,12 +211,13 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
     message = MESSAGES.get((query.get("msg") or [""])[0])
     with closing(_connect(settings, today)) as conn:
         try:
-            title, subtitle, content = pages[path](settings, conn, today)
+            title, subtitle, content, *head = pages[path](settings, conn, today)
         except NotFound:
             return _text(404, "Not found.")
         offers = new_offer_count(settings, conn, _now(today), offer_score(query))
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, "/dashboard" if path == "/dashboard" else "/", offers)
+    return _page(200, title, subtitle, notice + content, "/dashboard" if path == "/dashboard" else "/", offers,
+                 head[0] if head else "")
 
 
 OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers view of Applications
@@ -461,15 +463,19 @@ def send_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     if app_id is not None and db.get_application(conn, app_id) is None:
         raise BadRequest(f"No application with id {app_id}.")
     job_id = None if app_id is not None else _optional(form, "job_id")
+    topic = None if app_id is not None or job_id else _optional(form, "topic")  # "cv": the My CV panel
+    if topic is not None and topic not in db.MESSAGE_TOPICS:
+        raise BadRequest("Unknown message topic.")
     body = form.get("body", "")
     if not body:
         raise BadRequest("Type a question or paste an email first.")
     if job_id and db.find_by_job(conn, job_id) is None and job_id not in db.job_decisions(conn):
         _getjo_job(settings, {"job_id": job_id})  # an unknown job is refused
-    msg_id = db.add_message(conn, app_id, body, job_id)  # checks the length after normalising line breaks
+    msg_id = db.add_message(conn, app_id, body, job_id, topic)  # checks the length after normalising line breaks
     about, job = db.message_subject(conn, msg_id)
-    log.info("message %s added (application %s, job %s) from the dashboard", msg_id, about, bool(job))  # never the text
-    assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None)
+    log.info("message %s added (application %s, job %s, topic %s) from the dashboard", msg_id, about, bool(job),
+             topic)  # never the text
+    assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None, topic=topic)
     return {"html": _thread(conn, settings)}
 
 
@@ -484,6 +490,19 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     _, created = db.queue_request(conn, app_id, kind, force=has_result)
     log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
     return {"redirect": _here(app_id)}
+
+
+def restore_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The My CV panel's Restore: make a saved version cv.md again (cvfile.restore: the text it
+    replaces is kept as a version, which the toast's Undo restores)."""
+    version = _int_field(form, "version")
+    if version is None:
+        raise BadRequest("version is missing.")
+    if not settings.private_dir:
+        raise BadRequest("private_dir is not set, so there is no CV.")
+    result = cvfile.restore(conn, settings.private_dir, version)
+    log.info("master cv v%s restored from the panel as v%s", version, result["version"])
+    return {"redirect": "/?cv=1", **result}
 
 
 def _here(app_id: int | None) -> str:
@@ -521,6 +540,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/skip": (skip_application, "/", "app_skipped"),
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
+    "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/tasks/done": (complete_task, "/", "task_done"),
     "/tasks/reopen": (reopen_task, "/", "task_reopened"),
 }
@@ -614,15 +634,22 @@ def home_filters(query: dict[str, list[str]]) -> dict:
     the open panel: `app` (an application id) or else `job` (a getjo job id); the pipeline's `stage`
     (a stage group) and `closed` (1: closed applications listed too); New offers' `score` (minimum,
     default 7), `loc` (repeatable), `q` (company or role) and `skipped` (1: the skipped jobs instead).
+    `cv=1` opens the My CV panel instead of `app`/`job`, with `v` (a saved version shown) or `compare`
+    (a version compared with cv.md).
     Unknown values fall back to the defaults, so an old bookmark (view=board) never fails."""
     def first(key: str) -> str:
         return (query.get(key) or [""])[0].strip()
 
     app, stage, view = first("app"), first("stage"), first("view")
+    cv = first("cv") == "1"  # the My CV panel; it wins over app and job (one panel at a time)
+    version, compare = first("v"), first("compare")
     return {
         "view": view if view in VIEWS else "pipeline",
-        "app": int(app) if app.isdigit() else None,
-        "job": first("job") or None,
+        "app": int(app) if app.isdigit() and not cv else None,
+        "job": (first("job") or None) if not cv else None,
+        "cv": cv,
+        "cv_v": int(version) if cv and version.isdigit() else None,
+        "cv_cmp": int(compare) if cv and compare.isdigit() and not version else None,
         "stage": stage if stage in STAGE_GROUPS else "",
         "closed": first("closed") == "1",
         "score": offer_score(query),
@@ -634,8 +661,15 @@ def home_filters(query: dict[str, list[str]]) -> dict:
 
 def home_url(f: dict, **changes: object) -> str:
     """An Applications page URL for state `f` with `changes` (e.g. app=3, job=None, view="offers").
-    Only the current view's filters go in, default values are left out, and app wins over job."""
+    Only the current view's filters go in, default values are left out, and app wins over job. The
+    My CV panel and an application's or job's panel exclude each other: opening one closes the other."""
     s = {**f, **changes}
+    if changes.get("app") is not None or changes.get("job"):
+        s["cv"] = False
+    if changes.get("cv"):
+        s["app"], s["job"] = None, None
+    if not s["cv"]:
+        s["cv_v"] = s["cv_cmp"] = None
     pairs: list[tuple[str, object]] = []
     if s["view"] == "offers":
         pairs.append(("view", "offers"))
@@ -651,7 +685,13 @@ def home_url(f: dict, **changes: object) -> str:
             pairs.append(("stage", s["stage"]))
         if s["closed"]:
             pairs.append(("closed", "1"))
-    if s["app"] is not None:
+    if s["cv"]:
+        pairs.append(("cv", "1"))
+        if s["cv_v"] is not None:
+            pairs.append(("v", s["cv_v"]))
+        elif s["cv_cmp"] is not None:
+            pairs.append(("compare", s["cv_cmp"]))
+    elif s["app"] is not None:
         pairs.append(("app", s["app"]))
     elif s["job"]:
         pairs.append(("job", s["job"]))
@@ -1002,16 +1042,20 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     switch = _view_switch(f, open_count, offers) + (_skipped_toggle(f) if f["view"] == "offers" else "")
     list_card = (f'<section class="card card-pipeline card-list" data-view="{f["view"]}"><header class="card-head">{switch}'
                  f'</header><div class="card-body">{body}</div></section>')
-    if focus:
+    if f["cv"]:
+        panel = _cv_panel(conn, settings, f)
+    elif focus:
         panel = _panel(conn, focus, today, f)
     elif job:
         panel = _offer_panel(job, decision, found["description"], f, now, settings.stale_days)
     else:
         panel = ""
-    agent = _agent_box(conn, settings, focus, job, home_url(f))
+    agent = _agent_box(conn, settings, focus, job, home_url(f), f["cv"])
     content = (f'<div class="apps"><div class="apps-main">{list_card}{agent}</div>{panel}</div>' + _skip_dialog())
     new = f" · {offers} new offer{'s' if offers != 1 else ''}" if offers is not None else ""
-    return "Applications", f"{open_count} open · {closed_count} closed{new} · {today}", content
+    my_cv = (f'<div class="page-head-actions"><a class="btn btn-secondary btn-sm my-cv" href="{h(home_url(f, cv=True))}" '
+             f'data-open-panel{CURRENT if f["cv"] else ""}>My CV</a></div>')
+    return "Applications", f"{open_count} open · {closed_count} closed{new} · {today}", content, my_cv
 
 
 def _stage_strip(rows: list[dict], f: dict) -> str:
@@ -1286,10 +1330,166 @@ def _history(conn: sqlite3.Connection, app_id: int) -> str:
             f'<ul class="timeline">{items}</ul></details>')
 
 
+# --- the My CV panel ----------------------------------------------------------------------
+# The master CV (private_dir/cv.md) with its skills and saved versions. Read-only apart from
+# Restore: changes are asked of the agent in the Agent box ("About my CV"), which writes them
+# through `cli cv save` (prep.cvfile). Only cv.md and recorded cv-history files are read.
+
+def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
+    """The side panel for ?cv=1: header (words, which version is current), jump buttons, then the
+    skills as chips, the rendered CV and the history; or with `v` one saved version, with `compare`
+    that version against cv.md."""
+    close = home_url(f, cv=False)
+    here = home_url(f, cv=True, cv_v=None, cv_cmp=None)
+    private_dir = settings.private_dir
+    text = cvfile.read_cv(private_dir) if private_dir else None
+    versions, current = cvfile.history(conn, private_dir) if private_dir else ([], None)
+    by_id = {v["id"]: v for v in versions}
+    if not private_dir:
+        sub, body = "", _banner("private_dir is not set, so there is no CV to show.", "warning")
+    elif text is None:
+        sub = ""
+        body = _empty("No cv.md yet.", f"Put the master CV at {cvfile.cv_path(private_dir)}.")
+    else:
+        if current is not None:
+            state = f'<span class="muted">saved as v{h(current)} · {h(_short_day(by_id[current]["created_at"]))}</span>'
+        elif versions:
+            state = ('<span class="badge badge-warning" title="cv.md was edited outside the agent; the next change '
+                     'or restore keeps this text as a version first">changed since the last version</span>')
+        else:
+            state = '<span class="muted">no saved versions yet</span>'
+        sub = f'<span>cv.md · {research.word_count(text)} words</span>{state}'
+        if f["cv_v"] in by_id:
+            body = _cv_version_view(private_dir, by_id[f["cv_v"]], current, f, here)
+        elif f["cv_cmp"] in by_id:
+            body = _cv_compare_view(private_dir, by_id[f["cv_cmp"]], text, current, f, here)
+        else:
+            groups = cvfile.skills(text)
+            jumps = "".join(
+                f'<a class="btn btn-secondary btn-sm" href="#{card}" data-jump="{card}">{label}</a>'
+                for card, label in (("cv-skills", "Skills"), ("cv-text", "CV"), ("cv-history", f"History {len(versions)}")))
+            body = (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{jumps}</div>'
+                    '<p class="muted">To change it, ask the agent below with "About my CV" ticked; each change is '
+                    'saved as a version.</p></section>'
+                    + _cv_skills(groups)
+                    + f'<section class="cv-doc" id="cv-text"><h3>CV</h3><div class="doc">{render_markdown(text)}</div></section>'
+                    + _cv_history(versions, current, f, here))
+    return (
+        '<aside class="panel panel-cv" id="panel" aria-labelledby="panel-title" data-cv="1">'
+        '<header class="panel-head"><div><h2 id="panel-title">My CV</h2>'
+        f'<p class="panel-sub">{sub}</p></div>'
+        '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
+        'Ask the agent</a>'
+        f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
+        f'<div class="panel-body">{body}</div></aside>'
+    )
+
+
+def _cv_skills(groups: list[tuple[str, list[str]]]) -> str:
+    """The skills section as one row of chips per theme."""
+    if not groups:
+        body = '<p class="muted">No skills section found (a heading with "Skills" in it).</p>'
+    else:
+        body = '<dl class="skill-groups">' + "".join(
+            f'<div class="skill-group"><dt>{h(name)}</dt><dd>'
+            + "".join(f'<span class="chip">{h(item)}</span>' for item in items) + "</dd></div>"
+            for name, items in groups) + "</dl>"
+    return f'<section class="cv-skills" id="cv-skills"><h3>Skills</h3>{body}</section>'
+
+
+def _cv_restore_form(version_id: int, here: str, variant: str = "ghost") -> str:
+    return ('<form method="post" action="/cv/restore" class="inline" data-ajax="restore">'
+            f'<input type="hidden" name="version" value="{h(version_id)}"><input type="hidden" name="return" value="{h(here)}">'
+            f'<button class="btn btn-{variant} btn-sm" aria-label="Restore v{h(version_id)}">Restore</button></form>')
+
+
+def _cv_link(f: dict, label: str, aria: str = "", **changes: object) -> str:
+    label_attr = f' aria-label="{h(aria)}"' if aria else ""
+    return (f'<a class="btn btn-ghost btn-sm" href="{h(home_url(f, cv=True, **changes))}" data-panel-link{label_attr}>'
+            f'{h(label)}</a>')
+
+
+def _cv_history(versions: list[dict], current: int | None, f: dict, here: str) -> str:
+    """Saved versions newest first: number, date, the note of what changed, and Open · Compare ·
+    Restore (the current one is marked and has Open only)."""
+    if not versions:
+        body = '<p class="muted">No saved versions yet. The first change through the agent saves this text as v1.</p>'
+    else:
+        items = []
+        for v in versions:
+            n = v["id"]
+            is_current = n == current
+            actions = _cv_link(f, "Open", f"Open v{n}", cv_v=n, cv_cmp=None)
+            if not is_current:
+                actions += _cv_link(f, "Compare", f"Compare v{n} with the current CV", cv_cmp=n, cv_v=None)
+                actions += _cv_restore_form(n, here)
+            mark = ' class="is-current"' if is_current else ""
+            items.append(
+                f'<li{mark}><span class="mono version-name">v{h(n)}</span>'
+                f'<time class="muted" datetime="{h(v["created_at"])}">{h(_local_time(v["created_at"]))}</time>'
+                f'<span class="cv-note">{h(v["note"])}</span>'
+                + (_badge("current", "s9") if is_current else "")
+                + f'<span class="artifact-actions">{actions}</span></li>')
+        body = f'<ol class="versions cv-versions">{"".join(items)}</ol>'
+    return (f'<section class="cv-history" id="cv-history"><h3>History <span class="count">{len(versions)}</span></h3>'
+            f'{body}</section>')
+
+
+def _cv_version_head(version: dict, title: str, current: int | None, here: str, actions: str) -> str:
+    restore = "" if version["id"] == current else _cv_restore_form(version["id"], here, "secondary")
+    return (f'<section class="cv-version-head"><a class="btn btn-ghost btn-sm" href="{h(here)}" data-panel-link>'
+            '← Current CV</a><h3>' + h(title) + '</h3>'
+            f'<p><span class="muted">{h(_local_time(version["created_at"]))}</span> · {h(version["note"])}'
+            + (" " + _badge("current", "s9") if version["id"] == current else "") + "</p>"
+            f'<div class="action-row">{actions}{restore}</div></section>')
+
+
+def _cv_version_view(private_dir: Path, version: dict, current: int | None, f: dict, here: str) -> str:
+    """One saved version, rendered, with Compare and Restore."""
+    n = version["id"]
+    compare = "" if n == current else _cv_link(f, "Compare with current", cv_cmp=n, cv_v=None)
+    head = _cv_version_head(version, f"Version v{n}", current, here, compare)
+    try:
+        text = cvfile.read_version(private_dir, version)
+    except (LookupError, OSError, UnicodeDecodeError):
+        return head + _banner("The file of this version is missing or unreadable.", "warning")
+    return head + f'<section class="cv-doc"><div class="doc">{render_markdown(text)}</div></section>'
+
+
+def _cv_compare_view(private_dir: Path, version: dict, text: str, current: int | None, f: dict, here: str) -> str:
+    """A saved version against cv.md: changed lines with two lines of context, − only in the version,
+    + only in the current CV, the rest folded."""
+    n = version["id"]
+    head = _cv_version_head(version, f"v{n} compared with the current CV", current, here,
+                            _cv_link(f, f"Open v{n}", cv_v=n, cv_cmp=None))
+    try:
+        old = cvfile.read_version(private_dir, version)
+    except (LookupError, OSError, UnicodeDecodeError):
+        return head + _banner("The file of this version is missing or unreadable.", "warning")
+    hunks = cvfile.diff(old, text)
+    if not hunks:
+        return head + '<p class="muted">Same as the current CV.</p>'
+    kinds = {" ": ("ctx", ""), "-": ("del", f"only in v{n}"), "+": ("add", "only in the current CV")}
+    rendered = '<div class="diff-gap" aria-hidden="true">⋯</div>'.join(
+        '<div class="diff-hunk">' + "".join(_diff_line(op, line, kinds) for op, line in hunk) + "</div>"
+        for hunk in hunks)
+    legend = (f'<p class="diff-legend"><span class="diff-key diff-del">− only in v{h(n)}</span>'
+              '<span class="diff-key diff-add">+ only in the current CV</span></p>')
+    return head + f'<section class="cv-diff">{legend}<div class="diff">{rendered}</div></section>'
+
+
+def _diff_line(op: str, line: str, kinds: dict[str, tuple[str, str]]) -> str:
+    css, label = kinds[op]
+    title = f' title="{h(label)}"' if label else ""
+    return (f'<div class="diff-line diff-{css}"{title}><span class="diff-op" aria-label="{h(label or "same")}">'
+            f'{"−" if op == "-" else "+" if op == "+" else ""}</span><span class="diff-text">{h(line) or "&nbsp;"}</span></div>')
+
+
 AGENT_MESSAGES = 60  # the latest messages shown in the Agent box
 
 
-def _agent_box(conn: sqlite3.Connection, settings: Settings, focus: dict | None, job: dict | None, here: str) -> str:
+def _agent_box(conn: sqlite3.Connection, settings: Settings, focus: dict | None, job: dict | None, here: str,
+               cv: bool = False) -> str:
     """The Agent box under the list: one conversation for every application and job. A new message
     is about the open panel's application or job offer while "About" is ticked, else about the whole
     search ("which tasks need me?"). The script adds an All / This job filter while a panel is open."""
@@ -1302,7 +1502,7 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, focus: dict | None,
         '<button type="button" class="view-btn" data-filter-chat="job">This job</button></div></header>'
         f'<div class="card-body">{_thread(conn, settings)}'
         '<form method="post" action="/applications/message" class="ask" data-ajax="thread">'
-        f'<input type="hidden" name="return" value="{h(here)}">{_agent_about(focus, job)}'
+        f'<input type="hidden" name="return" value="{h(here)}">{_agent_about(focus, job, cv)}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
         'placeholder="Ask anything: which tasks need me, a question about a job, a change (tasks, comments, stage, '
         'tier, CV), or paste a recruiter email…" aria-label="Message to the agent"></textarea>'
@@ -1311,10 +1511,13 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, focus: dict | None,
     )
 
 
-def _agent_about(focus: dict | None, job: dict | None = None) -> str:
+def _agent_about(focus: dict | None, job: dict | None = None, cv: bool = False) -> str:
     """With a panel open: a ticked "About <company>" box (untick it to ask about the whole search):
-    app_id for an application, job_id for a job offer not yet tracked. The script swaps it when
-    another panel opens, so a half-typed message stays."""
+    app_id for an application, job_id for a job offer not yet tracked, topic=cv for the My CV panel
+    ("About my CV"). The script swaps it when another panel opens, so a half-typed message stays."""
+    if cv:
+        return ('<label class="agent-about" data-about="cv"><input type="checkbox" name="topic" value="cv" checked> '
+                'About my CV</label>')
     if focus is not None:
         app = focus["app"]
         return (f'<label class="agent-about" data-about="{h(app["id"])}"><input type="checkbox" name="app_id" '
@@ -1348,6 +1551,8 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
     def about(m: dict) -> str:
         if m["application_id"] is not None:
             return f'<a class="msg-about" href="{h(_here(m["application_id"]))}">{h(m["company"])}</a>'
+        if m["topic"] == "cv":
+            return '<a class="msg-about msg-about-cv" href="/?cv=1" title="The master CV">My CV</a>'
         if m["getjo_job_id"]:
             href = "/?" + urlencode([("view", "offers"), ("job", m["getjo_job_id"])])
             return (f'<a class="msg-about msg-about-job" href="{h(href)}" title="Job offer">'
@@ -1356,7 +1561,7 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
 
     items = "".join(
         f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}" '
-        f'data-job="{h(m["getjo_job_id"] or "")}">'
+        f'data-job="{h(m["getjo_job_id"] or "")}" data-topic="{h(m["topic"] or "")}">'
         f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
         + about(m)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
@@ -1458,19 +1663,29 @@ def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return title, f'{app["role"]} · {path.name}', content
 
 
+_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
+_ITALIC = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])")
+
+
+def _inline(text: str) -> str:
+    """Escape, then turn **bold** and *italic* into <strong> and <em>. The markers are matched in
+    the escaped text, so nothing from the file can add markup."""
+    return _ITALIC.sub(r"<em>\1</em>", _BOLD.sub(r"<strong>\1</strong>", h(text)))
+
+
 def render_markdown(text: str) -> str:
-    """A small, safe subset of Markdown: headings, bullet lists and paragraphs. Every piece of
-    text is escaped; no links, images or raw HTML are produced."""
+    """A small, safe subset of Markdown: headings, bullet lists, paragraphs, **bold** and *italic*.
+    Every piece of text is escaped; no links, images or raw HTML are produced."""
     out: list[str] = []
     para: list[str] = []
     items: list[str] = []
 
     def flush() -> None:
         if para:
-            out.append(f"<p>{h(' '.join(para))}</p>")
+            out.append(f"<p>{_inline(' '.join(para))}</p>")
             para.clear()
         if items:
-            out.append("<ul>" + "".join(f"<li>{h(i)}</li>" for i in items) + "</ul>")
+            out.append("<ul>" + "".join(f"<li>{_inline(i)}</li>" for i in items) + "</ul>")
             items.clear()
 
     for line in text.splitlines():
@@ -1480,7 +1695,7 @@ def render_markdown(text: str) -> str:
         elif stripped.startswith("#"):
             flush()
             level = min(len(stripped) - len(stripped.lstrip("#")) + 1, 4)
-            out.append(f"<h{level}>{h(stripped.lstrip('#').strip())}</h{level}>")
+            out.append(f"<h{level}>{_inline(stripped.lstrip('#').strip())}</h{level}>")
         elif stripped[:2] in ("- ", "* "):
             if para:
                 flush()
@@ -1497,9 +1712,10 @@ def render_markdown(text: str) -> str:
 # Helpers that take plain values escape them; parameters documented as HTML are trusted
 # fragments built by other helpers.
 
-def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None) -> Response:
+def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None,
+          actions: str = "") -> Response:
     """The app shell. `offers` is the number of new offers shown next to Applications (none when 0
-    or unknown)."""
+    or unknown); `actions` is trusted HTML next to the title (Applications' My CV button)."""
     current = ' aria-current="page"'
     nav = "".join(
         f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{name}</span>'
@@ -1520,7 +1736,8 @@ def _page(status: int, title: str, subtitle: str, content: str, active: str, off
         '<span class="brand-name">getjo</span></a>'
         f'<nav aria-label="Pages">{nav}</nav>'
         '<p class="sidebar-foot"><span class="dot"></span>local only · 127.0.0.1</p></aside>'
-        f'<main><header class="page-head"><h1>{h(title)}</h1>{sub}</header>{content}</main>'
+        f'<main><header class="page-head"><div class="page-head-row"><h1>{h(title)}</h1>{actions}</div>{sub}</header>'
+        f'{content}</main>'
         '</div><div class="toasts" aria-live="polite"></div></body></html>'
     )
     return status, [("Content-Type", "text/html; charset=utf-8"), *SECURITY_HEADERS], body.encode("utf-8")

@@ -55,7 +55,7 @@ a committed file.
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
@@ -66,7 +66,8 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
-             research.py (agent result files), assistant.py (optional dev3 message to a standing agent),
+             research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
+             assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
@@ -99,4 +100,7 @@ data/        local databases (gitignored)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin); `cv sent APP FILE_NAME`
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
+- Master CV (used by /ask, My CV panel): `python -m prep.cli cv show|skills|history|draft`,
+  `cv save --note "..." [--to MSG]` (backup first, atomic), `cv restore V`, `cv diff V`;
+  `thread show --cv [--claim]`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

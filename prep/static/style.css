@@ -163,6 +163,9 @@ small, .muted, .card-note { color: var(--text-muted); }
 main { width: 100%; max-width: 1200px; padding: var(--space-7) var(--space-7) var(--space-8); display: flex; flex-direction: column; gap: var(--space-5); }
 .page-head { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-1); }
 .page-head h1 { font-size: 44px; font-weight: 400; line-height: 1.05; letter-spacing: -.035em; }
+.page-head-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.page-head-actions { display: inline-flex; gap: 6px; }
+.btn.my-cv[aria-current] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
 .subtitle { margin: 0; color: var(--text-muted); }
 
 /* --- layout helpers ---------------------------------------------------------- */
@@ -549,6 +552,39 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .doc h2:first-child, .doc h3:first-child { margin-top: 0; }
 .doc p, .doc ul { margin: 0 0 var(--space-3); }
 .doc li { margin-bottom: 2px; }
+
+/* The My CV panel: skills as chips per theme, the rendered master CV, its saved versions, one
+   version or a version compared with cv.md (− only in the version, + only in the current CV). */
+.panel-cv section { scroll-margin: 80px; }
+.panel-cv section.is-flash { outline: 1px solid var(--accent); outline-offset: 6px; border-radius: var(--radius-sm); }
+.skill-groups { margin: 0; display: grid; gap: var(--space-2); }
+.skill-group { display: grid; grid-template-columns: minmax(7em, 11em) minmax(0, 1fr); gap: 4px var(--space-3); align-items: baseline; }
+.skill-group dt { color: var(--text-muted); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.skill-group dd { margin: 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.chip { display: inline-flex; align-items: center; padding: 1px 9px; border-radius: var(--radius-full); border: 1px solid var(--border-strong);
+  background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 20px; }
+.cv-doc .doc { font-size: 13.5px; }
+.cv-versions { gap: 4px; }
+.cv-versions li { padding: 6px 8px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--surface-2); gap: 6px 10px; }
+.cv-versions li.is-current { border-color: var(--accent); }
+.cv-versions li .btn { margin-left: 0; }
+.cv-versions time { font-size: 12px; white-space: nowrap; }
+.cv-note { flex: 1 1 16em; min-width: 0; overflow-wrap: anywhere; }
+.cv-version-head { padding-bottom: var(--space-3); border-bottom: 1px solid var(--border); }
+.cv-version-head > .btn { justify-self: start; }
+.panel-body .cv-version-head h3 { font-size: 15px; text-transform: none; letter-spacing: 0; color: var(--text); }
+.diff-legend { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: 12px; }
+.diff { border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; font-size: 12.5px; line-height: 1.5; }
+.diff-line { display: grid; grid-template-columns: 1.6em minmax(0, 1fr); }
+.diff-op { text-align: center; color: var(--text-faint); user-select: none; }
+.diff-text { padding-right: 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff-ctx .diff-text { color: var(--text-muted); }
+.diff-del, .diff-key.diff-del { background: var(--danger-soft); }
+.diff-add, .diff-key.diff-add { background: var(--success-soft); }
+.diff-del .diff-op { color: var(--danger); }
+.diff-add .diff-op { color: var(--success); }
+.diff-key { padding: 0 8px; border-radius: var(--radius-sm); }
+.diff-gap { padding: 2px 0; text-align: center; color: var(--text-faint); background: var(--surface-2); border-block: 1px solid var(--border); }
 
 /* The Agent box under the pipeline list: one conversation, newest at the bottom, each message
    tagged with its job (or "all jobs"). The messages scroll inside the box, so the input stays in

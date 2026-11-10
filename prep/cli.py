@@ -14,6 +14,11 @@
     python -m prep.cli task delete TASK_ID
     python -m prep.cli skip APP_ID --reason R [--comment TEXT]   (Interested only, as the panel's Skip)
     python -m prep.cli cv sent APP_ID FILE_NAME           (which tailored CV version was sent)
+    python -m prep.cli cv show | skills | history         (the master CV, its skills, its saved versions)
+    python -m prep.cli cv draft                            (copy cv.md to the draft the agent edits)
+    python -m prep.cli cv save --note TEXT [--file PATH] [--to MSG]   (backup first, then cv.md replaced)
+    python -m prep.cli cv restore VERSION [--to MSG]      (the replaced text stays a version: undo = restore it)
+    python -m prep.cli cv diff VERSION [--with VERSION]   (a version against cv.md, or two versions)
     python -m prep.cli feedback export [--out PATH]
     python -m prep.cli queue                          (read-only: counts and application ids)
     python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
@@ -22,7 +27,8 @@
     python -m prep.cli fit save APP_ID [--file PATH]
     python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
     python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin)
-    python -m prep.cli thread show [APP_ID] [--claim]    (messages and context; no id: the whole search)
+    python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
+                                                       (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
     python -m prep.cli review [--all]                  (read-only: the top 3 open tasks in review order)
     python -m prep.cli thread pending
@@ -44,7 +50,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, db, getjo, research
+from prep import assistant, cvfile, db, getjo, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -337,6 +343,91 @@ def cmd_skip(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
 
 
 def cmd_cv(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """cv sent: which tailored version went out. The rest is the master CV: show, skills, history,
+    draft, save, restore and diff. Every write goes through cvfile.write_cv (backup first, atomic)."""
+    if args.cv_cmd == "sent":
+        return _cv_sent(args, conn)
+    private_dir = _private_dir(settings)
+    if getattr(args, "to", None) is not None and db.message_topic(conn, args.to) != "cv":
+        raise LookupError(f"message {args.to} is not about the master CV")  # checked before anything is written
+    if args.cv_cmd == "show":
+        text = cvfile.read_cv(private_dir)
+        if text is None:
+            raise LookupError(f"no cv.md at {cvfile.cv_path(private_dir)}")
+        print(f"{cvfile.cv_path(private_dir)} ({research.word_count(text)} words; {_cv_state(conn, private_dir)})\n")
+        print(text)
+    elif args.cv_cmd == "skills":
+        text = cvfile.read_cv(private_dir)
+        if text is None:
+            raise LookupError(f"no cv.md at {cvfile.cv_path(private_dir)}")
+        groups = cvfile.skills(text)
+        print("\n".join(f"{name}: {', '.join(items)}" for name, items in groups)
+              or "No skills section found (a heading with \"Skills\" in it).")
+    elif args.cv_cmd == "history":
+        _print_cv_history(conn, private_dir)
+    elif args.cv_cmd == "draft":
+        path = cvfile.make_draft(private_dir)
+        print(path)
+        print("  a copy of cv.md: edit it (never cv.md itself), then: python -m prep.cli cv save "
+              "--note \"what changed\" [--to MSG]")
+    elif args.cv_cmd == "save":
+        result = cvfile.save_draft(conn, private_dir, args.note, Path(args.file).expanduser() if args.file else None)
+        _cv_saved(conn, args, result, "Saved")
+    elif args.cv_cmd == "restore":
+        result = cvfile.restore(conn, private_dir, args.version)
+        _cv_saved(conn, args, result, f"Restored v{args.version} as")
+    elif args.cv_cmd == "diff":
+        old = db.cv_version(conn, args.version)
+        if old is None:
+            raise LookupError(f"no CV version v{args.version}")
+        if args.other is not None:
+            new = db.cv_version(conn, args.other)
+            if new is None:
+                raise LookupError(f"no CV version v{args.other}")
+            new_text, new_name = cvfile.read_version(private_dir, new), f"v{new['id']}"
+        else:
+            new_text, new_name = cvfile.read_cv(private_dir) or "", "cv.md"
+        print(cvfile.unified(cvfile.read_version(private_dir, old), new_text, f"v{old['id']}", new_name)
+              or "No differences.")
+    return 0
+
+
+def _cv_state(conn: sqlite3.Connection, private_dir: Path) -> str:
+    versions, current = cvfile.history(conn, private_dir)
+    if current is not None:
+        return f"saved as v{current}"
+    if versions:
+        return "changed since the last saved version: the next save keeps this text as a version first"
+    return "no saved versions yet: the first save keeps this text as v1"
+
+
+def _print_cv_history(conn: sqlite3.Connection, private_dir: Path, limit: int | None = None) -> None:
+    versions, current = cvfile.history(conn, private_dir)
+    shown = versions[:limit] if limit else versions
+    print(f"Saved versions of cv.md ({len(versions)}, newest first; {cvfile.history_dir(private_dir)}):")
+    for v in shown:
+        mark = " · CURRENT" if v["id"] == current else ""
+        print(f"  v{v['id']} {v['created_at'][:16].replace('T', ' ')} UTC {v['file_name']} — {v['note']}{mark}")
+    if not versions:
+        print("  none")
+    elif len(shown) < len(versions):
+        print(f"  … and {len(versions) - len(shown)} older (python -m prep.cli cv history)")
+
+
+def _cv_saved(conn: sqlite3.Connection, args: argparse.Namespace, result: dict, verb: str) -> None:
+    """Print what a save or restore did; with --to, post the note as the reply to that message."""
+    version = db.cv_version(conn, result["version"])
+    log.info("master cv v%s written", version["id"])  # never the text or the note
+    before = f"; the text it replaced is v{result['previous']} (undo: cv restore {result['previous']})" \
+        if result["previous"] else ""
+    print(f"{verb} v{version['id']} ({version['file_name']}){before}.")
+    if args.to is not None:
+        reply = args.reply or f"Done (v{version['id']}): {version['note']}"
+        reply_id = db.reply_message(conn, None, args.to, reply)
+        print(f"Reply {reply_id} saved; message {args.to} answered. The dashboard's My CV panel and Agent box show it.")
+
+
+def _cv_sent(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     version = db.record_cv_sent(conn, args.app_id, args.name)
     log.info("cv sent recorded for application %s (v%s)", args.app_id, version["version"])
     print(f"Recorded: {Path(version['file_path']).name} (v{version['version']}) was sent for "
@@ -434,8 +525,10 @@ def _thread_line(messages: list[dict]) -> str:
         return ""
     ids = {m["application_id"] for m in messages if m["application_id"] is not None}
     jobs = any(m["application_id"] is None and m.get("getjo_job_id") for m in messages)
-    general = any(m["application_id"] is None and not m.get("getjo_job_id") for m in messages)
-    apps = ", ".join([str(a) for a in sorted(ids)] + (["job offers"] if jobs else []) + (["general"] if general else []))
+    cv = any(m["application_id"] is None and not m.get("getjo_job_id") and m.get("topic") == "cv" for m in messages)
+    general = any(m["application_id"] is None and not m.get("getjo_job_id") and not m.get("topic") for m in messages)
+    apps = ", ".join([str(a) for a in sorted(ids)] + (["job offers"] if jobs else []) + (["my CV"] if cv else [])
+                     + (["general"] if general else []))
     claimed = sum(1 for m in messages if m.get("claimed"))
     busy = f"; {claimed} already being answered by another session" if claimed else ""
     noun = "message" if len(messages) == 1 else "messages"
@@ -449,7 +542,8 @@ def _messages_query(conn: sqlite3.Connection) -> str:
     table = "agent_messages" if found else "application_messages"
     columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
     job = "getjo_job_id" if "getjo_job_id" in columns else "NULL"  # added later: an older database has none
-    return (f"SELECT application_id, 'message', status, claimed_at, {job} FROM {table} "
+    topic = "topic" if "topic" in columns else "NULL"
+    return (f"SELECT application_id, 'message', status, claimed_at, {job}, {topic} FROM {table} "
             "WHERE author = 'user' AND status IN ('pending', 'claimed') ORDER BY id")
 
 
@@ -474,7 +568,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
                 except sqlite3.Error:
                     continue
                 found = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff,
-                          "getjo_job_id": r[4] if len(r) > 4 else None}
+                          "getjo_job_id": r[4] if len(r) > 4 else None, "topic": r[5] if len(r) > 5 else None}
                          for r in rows if r[1] in (*db.REQUEST_KINDS, "message")]
                 lines.append(line(found))
     except sqlite3.Error:
@@ -735,6 +829,8 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
                 about = f"on #{m['application_id']} {m['company']} — {m['role']}"
             elif m["getjo_job_id"]:
                 about = f"about job offer {m['getjo_job_id']} (/ask job {m['id']})"
+            elif m["topic"] == "cv":
+                about = f"about the master CV (/ask cv {m['id']})"
             else:
                 about = "about the whole search (/ask general)"
             print(f"message {m['id']} {about} (sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
@@ -744,11 +840,16 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     if args.thread_cmd == "reply":
         return _thread_reply(args, conn)
     if args.message is not None:  # /ask job MSG: whatever the message is about
-        if args.app_id is not None or args.job:
-            raise ValueError("give an application, --job or --message, not more than one")
+        if args.app_id is not None or args.job or args.cv:
+            raise ValueError("give an application, --job, --cv or --message, not more than one")
         args.app_id, job_id = db.message_subject(conn, args.message)
         if args.app_id is None and job_id:
             args.job = job_id
+        args.cv = args.app_id is None and not job_id and db.message_topic(conn, args.message) == "cv"
+    if args.cv:
+        if args.app_id is not None or args.job:
+            raise ValueError("give an application, --job or --cv, not more than one")
+        return _cv_show(args, settings, conn)
     if args.job:
         if args.app_id is not None:
             raise ValueError("give an application or --job, not both")
@@ -834,7 +935,7 @@ def _general_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     _print_review(conn)
     _print_messages(db.thread(conn, limit=GENERAL_CONTEXT), f"The conversation (latest {GENERAL_CONTEXT})")
     _print_claim(args, claimed, [m for m in db.pending_messages(conn)
-                                 if m["application_id"] is None and not m["getjo_job_id"]])
+                                 if m["application_id"] is None and not m["getjo_job_id"] and not m["topic"]])
     return 0
 
 
@@ -883,6 +984,41 @@ def _job_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     return 0
 
 
+def _cv_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """`thread show --cv`: a request about the master CV ("add Terraform to my skills", "copy the summary
+    from CV_…"). Prints cv.md's path and state, how to change it, its skills, the saved versions, the
+    tailored CV files (to copy wording from) and the CV messages."""
+    claimed = db.claim_messages(conn, None, topic="cv") if args.claim else []
+    private_dir = _private_dir(settings)
+    cv = cvfile.cv_path(private_dir)
+    text = cvfile.read_cv(private_dir)
+    print("Messages about the master CV (the My CV panel). Context:")
+    if text is None:
+        print(f"  CV: {cv} (missing)")
+    else:
+        print(f"  CV: {cv} ({research.word_count(text)} words; {_cv_state(conn, private_dir)})")
+    print("  to change it: python -m prep.cli cv draft (prints the draft path), edit the draft only, then")
+    print("    python -m prep.cli cv save --note \"what changed, one line\" --to MSG [--reply \"…\"]")
+    print("    (backs up the current text first; the reply defaults to \"Done (vN): <note>\")")
+    print("  undo or go back: python -m prep.cli cv restore VERSION --to MSG; compare: cv diff VERSION")
+    if text is not None:
+        groups = cvfile.skills(text)
+        print("  skills: " + (" | ".join(f"{name}: {', '.join(items)}" for name, items in groups) or "no skills section"))
+    print()
+    _print_cv_history(conn, private_dir, limit=10)
+    files = db.all_tailored_versions(conn)
+    print(f"\nTailored CV files ({len(files)}, newest first; read one to copy wording from it):")
+    for f in files[:20]:
+        path = Path(f["file_path"])
+        print(f"  {path.stem} · #{f['application_id']} {f['company']} v{f['version']} · {path} "
+              f"({'exists' if path.is_file() else 'missing'})")
+    if not files:
+        print("  none")
+    _print_messages(db.thread(conn, topic="cv"), "Messages about the master CV")
+    _print_claim(args, claimed, db.pending_messages(conn, topic="cv"))
+    return 0
+
+
 GENERAL_CONTEXT = 30  # messages of the whole conversation shown with a general question
 
 
@@ -891,7 +1027,8 @@ def _print_messages(messages: list[dict], title: str) -> None:
     for m in messages:
         who = f"agent, reply to {m['reply_to']}" if m["author"] == "agent" else f"user, {m['status']}"
         about = (f"#{m['application_id']} {m['company']}" if m["application_id"] is not None
-                 else f"job {m['getjo_job_id']}" if m.get("getjo_job_id") else "whole search")
+                 else f"job {m['getjo_job_id']}" if m.get("getjo_job_id")
+                 else "my CV" if m.get("topic") == "cv" else "whole search")
         print(f"\n  [message {m['id']} · {who} · {about} · {m['created_at'][:16].replace('T', ' ')} UTC]")
         print("\n".join(f"    {line}" for line in m["body"].splitlines()))
     if not messages:
@@ -923,7 +1060,7 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     reply_id = db.reply_message(conn, app_id, args.to, text)
     job = db.message_subject(conn, args.to)[1]
     about = (f"about #{app_id}" if app_id is not None else f"about job offer {job}" if job
-             else "about the whole search")
+             else "about the master CV" if db.message_topic(conn, args.to) == "cv" else "about the whole search")
     print(f"Reply {reply_id} saved {about}; message {args.to} answered. The dashboard's Agent box shows it.")
     return 0
 
@@ -1037,11 +1174,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--comment")
     p.set_defaults(func=cmd_skip)
 
-    p = sub.add_parser("cv", help="record which tailored CV version was sent")
+    p = sub.add_parser("cv", help="the master CV (show, skills, history, draft, save, restore, diff) and which tailored CV was sent")
     vsub = p.add_subparsers(dest="cv_cmd", required=True)
-    v = vsub.add_parser("sent", help="the file name of the version the user sent")
+    v = vsub.add_parser("sent", help="the file name of the tailored version the user sent")
     v.add_argument("app_id", type=int)
     v.add_argument("name", help="e.g. CV_OpenAI_FDE_210926_2 (with or without .md)")
+    vsub.add_parser("show", help="print cv.md and whether it matches a saved version")
+    vsub.add_parser("skills", help="the skills section, grouped by theme")
+    vsub.add_parser("history", help="the saved versions, newest first")
+    vsub.add_parser("draft", help="copy cv.md to the draft the agent edits; prints its path")
+    v = vsub.add_parser("save", help="write the draft (or --file) to cv.md: the current text is saved as a version first")
+    v.add_argument("--note", required=True, help="one line: what changed")
+    v.add_argument("--file", help="the edited text (default: the draft from cv draft, removed once saved)")
+    v.add_argument("--to", type=int, help="a CV message this answers (the reply is posted in the thread)")
+    v.add_argument("--reply", help="the reply text with --to (default: \"Done (vN): <note>\")")
+    v = vsub.add_parser("restore", help="make a saved version cv.md again (the current text is kept as a version)")
+    v.add_argument("version", type=int)
+    v.add_argument("--to", type=int, help="a CV message this answers")
+    v.add_argument("--reply", help="the reply text with --to")
+    v = vsub.add_parser("diff", help="a saved version against cv.md (or --with another version)")
+    v.add_argument("version", type=int)
+    v.add_argument("--with", dest="other", type=int, help="compare with this version instead of cv.md")
     p.set_defaults(func=cmd_cv)
 
     p = sub.add_parser("task", help="add, list, complete tasks")
@@ -1113,7 +1266,8 @@ def build_parser() -> argparse.ArgumentParser:
     t = hsub.add_parser("show", help="an application's context and messages, a job offer's (--job), or (no id) the whole search")
     t.add_argument("app_id", type=int, nargs="?")
     t.add_argument("--job", help="a getjo job id not yet tracked: its description and messages")
-    t.add_argument("--message", type=int, help="show whatever this message is about (for /ask job MSG)")
+    t.add_argument("--message", type=int, help="show whatever this message is about (for /ask job MSG, /ask cv MSG)")
+    t.add_argument("--cv", action="store_true", help="the master CV: its state, versions and messages")
     t.add_argument("--claim", action="store_true", help="take the waiting messages for this session first")
     t = hsub.add_parser("reply", help="reply to a user message (text from --file or stdin)")
     t.add_argument("app_id", type=int, nargs="?", help="optional: checked against the message's application")

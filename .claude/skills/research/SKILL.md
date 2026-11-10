@@ -116,7 +116,7 @@ skill or topic, for example "Kubernetes operators", not a sentence.
 ## Tailored CV → `cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`
 
 A copy of `cv.md` for this one job. The master `cv.md` is never edited here: it changes only when
-the user asks for that on the CV page. Read `cv.md` from the path in the packet (missing: stop and
+the user asks for that in the My CV panel (/ask, `cv save`). Read `cv.md` from the path in the packet (missing: stop and
 ask the user for it), the CV fit file when there is one (its gaps and "How to adapt the CV"), and
 the job description.
 

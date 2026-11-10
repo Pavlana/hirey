@@ -216,15 +216,18 @@
     poll = null;
   }
 
-  // Show only the open panel's messages ("This job": its application's, or a job offer's) or all of
-  // them; the switch shows with a panel.
+  // Show only the open panel's messages ("This job": its application's or a job offer's; "My CV"
+  // with the My CV panel) or all of them; the switch shows with a panel.
   function applyChatFilter() {
     const box = document.getElementById("agent");
     if (!box) return;
     const panel = document.getElementById("panel");
-    const key = panel?.dataset.app ? ["app", panel.dataset.app] : panel?.dataset.job ? ["job", panel.dataset.job] : null;
+    const key = panel?.dataset.app ? ["app", panel.dataset.app] : panel?.dataset.job ? ["job", panel.dataset.job]
+      : panel?.dataset.cv ? ["topic", "cv"] : null;
     const only = chatFilter === "job" && key;
     box.querySelector(".agent-filter").hidden = !key;
+    const mine = box.querySelector('[data-filter-chat="job"]');
+    if (mine) mine.textContent = key?.[0] === "topic" ? "My CV" : "This job";
     box.querySelectorAll("[data-filter-chat]").forEach((b) => b.classList.toggle("is-active", b.dataset.filterChat === (only ? "job" : "all")));
     box.querySelectorAll("li.msg").forEach((li) => { li.hidden = Boolean(only) && li.dataset[key[0]] !== key[1]; });
     const msgs = box.querySelector(".msgs");
@@ -329,6 +332,7 @@
           swap(doc, "#agent [data-thread]");
           swap(doc, ".page-head .subtitle");
           swap(doc, ".sidebar nav"); // the new offers count
+          swap(doc, ".page-head-actions"); // My CV marked while its panel is open
         }
         swap(doc, "#agent .agent-about");
         const back = document.querySelector('#agent input[name="return"]');
@@ -397,7 +401,8 @@
         }
         return;
       }
-      const link = e.target.closest(".app-list td a:not([target]), a.msg-about");
+      // A row's company, a message's tag, My CV and the My CV panel's Open / Compare / Current CV links.
+      const link = e.target.closest(".app-list td a:not([target]), a.msg-about, a[data-open-panel], a[data-panel-link]");
       const row = !link && !e.target.closest("form, button") && e.target.closest(".app-list tr[data-href]");
       if (!link && !row) return;
       e.preventDefault();
@@ -517,6 +522,14 @@
         toast(reply.message, { action: { label: "Undo", run: () => post("/tasks/reopen", params)
           .then((r) => refreshApps().then(() => toast(r.message)))
           .catch((err) => toast(err.message, { error: true })) } });
+      } else if (mode === "restore") {
+        // The My CV panel's Restore: back to the current CV; Undo restores the text it replaced (a version too).
+        await showPanelAt(form.elements.return.value);
+        const undoIt = () => post("/cv/restore", new URLSearchParams({ version: reply.previous }))
+          .then((r) => refreshApps().then(() => toast(r.message)))
+          .catch((err) => toast(err.message, { error: true }));
+        toast(`v${form.elements.version.value} restored as v${reply.version}. The CV it replaced is kept as v${reply.previous}.`,
+          reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
       } else if (mode === "thread") {
         // The Agent box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");

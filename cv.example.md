@@ -20,4 +20,7 @@ infrastructure as code and identity/security controls on public cloud.
 
 ## Skills
 
-Azure, AWS, Terraform, Kubernetes, GitHub Actions, Python, Go, identity and access management.
+- **Cloud & infrastructure:** Azure, AWS, Terraform, Kubernetes (AKS, EKS)
+- **Delivery:** GitHub Actions; deployment pipelines, on-call
+- **Languages:** Python, Go
+- **Security:** identity and access management, workload identity

@@ -2,8 +2,8 @@
 
 With `assistant_task` set, each application with new research, CV fit or tailored CV requests is sent
 `/research <app id>`, and each new message in the Agent box `/ask <app id> <message id>` (or
-`/ask job <message id>` for a job offer not yet tracked, `/ask general <message id>` for the whole
-search), through `dev3 message`, so that agent starts at once in a pane the user can watch. The
+`/ask job <message id>` for a job offer not yet tracked, `/ask cv <message id>` for the master CV,
+`/ask general <message id>` for the whole search), through `dev3 message`, so that agent starts at once in a pane the user can watch. The
 command is a fixed argument list built from database ids only (no shell, never form or message
 text). Any failure is logged and ignored: the work stays queued for the next session
 (SessionStart hook, /today).
@@ -44,15 +44,19 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
             for app_id in sorted(kinds)]
 
 
-def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str, job: bool = False) -> list[str]:
+def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str, job: bool = False,
+                topic: str | None = None) -> list[str]:
     """The `dev3 message` argument list for a new message: ids only, never its text. A message about
     a job offer not yet tracked (`job`) is sent as `/ask job <message id>` (the getjo job id stays out
-    of the command), one about the whole search as `/ask general <message id>`."""
+    of the command), one about the master CV (`topic` "cv") as `/ask cv <message id>`, one about the
+    whole search as `/ask general <message id>`."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
     if app_id is not None:
         about, subject = str(int(app_id)), f"Question on application {int(app_id)}"
     elif job:
         about, subject = "job", "Question on a job offer"
+    elif topic == "cv":
+        about, subject = "cv", "Request about the master CV"
     else:
         about, subject = "general", "Question on the whole search"
     return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
@@ -70,15 +74,16 @@ def notify(settings: Settings, requests: list[dict]) -> int:
     return _send(commands(settings, requests, dev3))
 
 
-def notify_message(settings: Settings, app_id: int | None, message_id: int, job: bool = False) -> int:
-    """Send `/ask <app id | job | general> <message id>`; returns 1 if delivered. Never raises."""
+def notify_message(settings: Settings, app_id: int | None, message_id: int, job: bool = False,
+                   topic: str | None = None) -> int:
+    """Send `/ask <app id | job | cv | general> <message id>`; returns 1 if delivered. Never raises."""
     if not settings.assistant_task:
         return 0
     dev3 = dev3_path(settings)
     if dev3 is None:
         log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
         return 0
-    return _send([ask_command(settings, app_id, message_id, dev3, job)])
+    return _send([ask_command(settings, app_id, message_id, dev3, job, topic)])
 
 
 def _send(argvs: list[list[str]]) -> int:
@@ -107,10 +112,10 @@ def notify_in_background(settings: Settings, requests: list[dict]) -> threading.
 
 
 def notify_message_in_background(settings: Settings, app_id: int | None, message_id: int,
-                                 job: bool = False) -> threading.Thread | None:
+                                 job: bool = False, topic: str | None = None) -> threading.Thread | None:
     """notify_message() in a daemon thread, so the Send button never waits for dev3."""
     if not settings.assistant_task:
         return None
-    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job), daemon=True)
+    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job, topic), daemon=True)
     thread.start()
     return thread
