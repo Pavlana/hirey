@@ -1,25 +1,11 @@
 // getjo dashboard enhancements: sortable tables, filtering, forms without a reload,
-// toasts with undo. Every page and form works without this file; it only adds to them.
+// toasts with undo, the Applications panel and its refresh. Every page and form works without
+// this file; it only adds to them.
 // No external requests: fetch goes to this page's own origin only (relative URLs).
 "use strict";
 
 (() => {
   const toasts = document.querySelector(".toasts");
-
-  // Applications: Board | List is remembered per browser; a URL without ?view= gets the
-  // remembered one. This runs first, so a flash message (?msg=) survives the redirect.
-  const VIEW_KEY = "applications-view";
-  const appsPage = document.querySelector(".apps");
-  if (appsPage) {
-    let stored = null;
-    try { stored = localStorage.getItem(VIEW_KEY); } catch { /* storage blocked: default view */ }
-    const here = new URL(location.href);
-    if (!here.searchParams.has("view") && stored === "list" && appsPage.dataset.view !== "list") {
-      here.searchParams.set("view", "list");
-      location.replace(here);
-      return;
-    }
-  }
 
   // --- toasts -------------------------------------------------------------------
   // Text is always set with textContent: server messages can echo form input.
@@ -85,16 +71,20 @@
     body.append(...rows);
   }
 
-  document.querySelectorAll("th[data-sort]").forEach((th) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.className = "sort";
-    btn.textContent = th.textContent;
-    btn.setAttribute("aria-label", `Sort by ${th.textContent}`);
-    th.textContent = "";
-    th.append(btn);
-    btn.addEventListener("click", () => sortBy(th.closest("table"), th));
-  });
+  // Also run on the part of the Applications page that refreshApps swaps in.
+  function makeSortable(root) {
+    root.querySelectorAll("th[data-sort]").forEach((th) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "sort";
+      btn.textContent = th.textContent;
+      btn.setAttribute("aria-label", `Sort by ${th.textContent}`);
+      th.textContent = "";
+      th.append(btn);
+      btn.addEventListener("click", () => sortBy(th.closest("table"), th));
+    });
+  }
+  makeSortable(document);
 
   // --- filtering --------------------------------------------------------------------
   // Matches against the visible cell text, skipping cells that hold a form.
@@ -202,52 +192,74 @@
     if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
   }
 
-  // --- Agent thread -----------------------------------------------------------------------
-  // While a message in the open panel's thread is pending, poll /applications/thread every few
-  // seconds (for at most a few minutes). When the reply is in, refresh the panel (the agent may
-  // have added tasks or comments), or the whole page when it moved the stage. Only one poll runs,
-  // tied to one panel: opening another panel or closing it stops it.
+  // --- Agent box --------------------------------------------------------------------------
+  // One conversation under the pipeline list. While a message waits for the agent, or the open
+  // panel's application has queued agent work (research, CV fit, tailored CV: data-busy), poll
+  // /applications/thread every few seconds (for at most a few minutes). When it is done, refresh
+  // the list, the panel and the conversation: the agent may have moved the stage, added tasks or
+  // comments. Only one poll runs; opening another panel or closing it restarts it.
   const POLL_MS = 4000;
   const POLL_FOR_MS = 5 * 60 * 1000;
-  const REPLIED_KEY = "agent-replied"; // survives the reload after a stage move: show the reply
+  const CHAT_KEY = "agent-filter";
   let poll = null;
-  let refreshPanel = () => location.reload(); // the board below swaps in the panel alone
+  let refreshApps = () => location.reload(); // the Applications block below swaps the parts instead
+  let chatFilter = "all";
+  try { chatFilter = localStorage.getItem(CHAT_KEY) === "job" ? "job" : "all"; } catch { /* default */ }
 
   function stopPoll() {
     if (poll) clearTimeout(poll.timer);
     poll = null;
   }
 
-  function watchThread(panel) {
+  // Show only the open job's messages ("This job") or all of them; the switch shows with a panel.
+  function applyChatFilter() {
+    const box = document.getElementById("agent");
+    if (!box) return;
+    const app = document.getElementById("panel")?.dataset.app || "";
+    const only = chatFilter === "job" && app;
+    box.querySelector(".agent-filter").hidden = !app;
+    box.querySelectorAll("[data-filter-chat]").forEach((b) => b.classList.toggle("is-active", b.dataset.filterChat === (only ? "job" : "all")));
+    box.querySelectorAll("li.msg").forEach((li) => { li.hidden = only && li.dataset.app !== app; });
+    const msgs = box.querySelector(".msgs");
+    if (msgs) msgs.scrollTop = msgs.scrollHeight; // the newest at the bottom, in view
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-filter-chat]");
+    if (!btn) return;
+    chatFilter = btn.dataset.filterChat;
+    try { localStorage.setItem(CHAT_KEY, chatFilter); } catch { /* not remembered */ }
+    applyChatFilter();
+  });
+
+  function watchThread() {
     stopPoll();
-    const thread = panel?.querySelector("[data-thread]");
-    if (!thread || !thread.hasAttribute("data-pending") || !window.fetch) return;
+    const thread = document.querySelector("#agent [data-thread]");
+    const panel = document.getElementById("panel");
+    if (!thread || !window.fetch) return;
+    if (!thread.hasAttribute("data-pending") && !panel?.hasAttribute("data-busy")) return;
     const me = { timer: null, started: Date.now() };
-    const { app, status } = panel.dataset;
+    const app = panel?.dataset.app;
+    const before = thread.querySelectorAll(".msg").length;
     poll = me;
     const tick = async () => {
       if (poll !== me) return;
       try {
-        const res = await fetch(`/applications/thread?app=${encodeURIComponent(app)}`, {
+        const res = await fetch(`/applications/thread${app ? `?app=${encodeURIComponent(app)}` : ""}`, {
           headers: { Accept: "application/json" }, credentials: "same-origin",
         });
         const reply = await res.json();
         if (poll !== me) return; // the panel changed while waiting
         if (reply.ok && !reply.pending) {
           poll = null;
-          if (reply.status !== status) {
-            try { sessionStorage.setItem(REPLIED_KEY, app); } catch { /* the reply still shows */ }
-            location.reload(); // the agent moved the stage: the board changes too
-          } else {
-            toast("The agent replied.");
-            refreshPanel();
-          }
+          const replied = reply.messages !== before;
+          await refreshApps();
+          toast(replied ? "The agent replied." : "The agent's work is in.");
           return;
         }
       } catch { /* the server restarted or is busy: try again */ }
       if (Date.now() - me.started > POLL_FOR_MS) {
         poll = null;
-        const state = panel.querySelector(".thread-state");
+        const state = document.querySelector("#agent .thread-state");
         if (state) state.textContent = "Still waiting. The reply shows here when the agent answers; reload to check.";
         return;
       }
@@ -255,14 +267,8 @@
     };
     me.timer = setTimeout(tick, POLL_MS);
   }
-  const openPanel = document.getElementById("panel");
-  watchThread(openPanel);
-  let replied = null;
-  try { replied = sessionStorage.getItem(REPLIED_KEY); sessionStorage.removeItem(REPLIED_KEY); } catch { /* none */ }
-  if (openPanel && replied === openPanel.dataset.app) {
-    openPanel.querySelector(".agent")?.scrollIntoView({ block: "end" });
-    toast("The agent replied and updated the stage.");
-  }
+  applyChatFilter();
+  watchThread();
 
   // Cmd/Ctrl+Enter sends the message.
   document.addEventListener("keydown", (e) => {
@@ -273,96 +279,110 @@
     form.requestSubmit ? form.requestSubmit() : form.submit();
   });
 
-  // --- Applications board ---------------------------------------------------------------
-  // The server renders every state from the query string (?app=ID side panel, ?view=, ?stage=),
-  // so this only adds: the panel opens without a reload, Esc closes it, the Board | List choice
-  // is remembered, and cards can be dragged between columns.
-
-  // Move to…: the interview date only matters for interview stages, so show it only then.
-  function syncMoveForms(root) {
-    root.querySelectorAll("form.move[data-interview-stages]").forEach((form) => {
-      const stages = form.dataset.interviewStages.split(" ");
-      const field = form.querySelector(".interview-date");
-      const sync = () => { field.hidden = !stages.includes(form.elements.status.value); };
-      form.elements.status.addEventListener("change", sync);
-      sync();
-    });
-  }
-  syncMoveForms(document);
-
+  // --- Applications ---------------------------------------------------------------------
+  // The server renders every state from the query string (?app=ID side panel, ?stage=, ?closed=),
+  // so this only adds: the panel opens without a reload, Esc closes it, and after any change the
+  // list and the panel are fetched again and swapped in (refreshApps), keeping the scroll position.
   const apps = document.querySelector(".apps");
   if (apps) {
-    document.querySelectorAll(".view-btn[data-view]").forEach((link) => {
-      link.addEventListener("click", () => {
-        try { localStorage.setItem(VIEW_KEY, link.dataset.view); } catch { /* not remembered */ }
-      });
-    });
-
-    const focusCard = document.querySelector(".app-card.is-focus");
-    if (focusCard) focusCard.scrollIntoView({ block: "nearest", inline: "nearest" });
-
-    // Side panel: fetch the page for ?app=ID and swap in only its panel, so the board keeps
-    // its scroll position. The fetched HTML is the server's own escaped page; scripts in a
-    // DOMParser document never run.
     function markFocus(appId) {
-      document.querySelectorAll(".app-card.is-focus, .app-list tr.is-focus").forEach((el) => el.classList.remove("is-focus"));
-      if (!appId) return;
-      document.getElementById(`app-${appId}`)?.classList.add("is-focus");
-      document.querySelector(`.app-list tr[data-app="${CSS.escape(appId)}"]`)?.classList.add("is-focus");
+      document.querySelectorAll(".app-list tr.is-focus").forEach((el) => el.classList.remove("is-focus"));
+      if (appId) document.getElementById(`app-${appId}`)?.classList.add("is-focus");
     }
 
-    async function showPanel(url, push, { toThread = false } = {}) {
+    // Fetch `url` and swap in its panel and the Agent box's "About" line (and with `list`, the
+    // pipeline and the conversation too). The message being typed stays. The fetched HTML is the
+    // server's own escaped page; scripts in a DOMParser document never run.
+    function swap(doc, selector) {
+      const next = doc.querySelector(selector);
+      const current = document.querySelector(selector);
+      if (!next || !current) return null;
+      const fresh = document.importNode(next, true);
+      current.replaceWith(fresh);
+      return fresh;
+    }
+
+    async function showPanel(url, push, { list = false } = {}) {
       const current = document.getElementById("panel");
       current?.classList.add("is-loading");
       try {
         const res = await fetch(url, { headers: { Accept: "text/html" }, credentials: "same-origin" });
         if (!res.ok) throw new Error(`Could not open it (HTTP ${res.status}).`);
         const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+        if (list) {
+          const pipeline = swap(doc, ".card-pipeline");
+          if (pipeline) makeSortable(pipeline);
+          swap(doc, "#agent [data-thread]");
+        }
+        swap(doc, "#agent .agent-about");
+        const back = document.querySelector('#agent input[name="return"]');
+        if (back) back.value = new URL(url, location.href).pathname + new URL(url, location.href).search;
         const next = doc.getElementById("panel");
         if (next) {
           const panel = document.importNode(next, true);
+          const scroll = current ? current.scrollTop : 0;
           if (current) current.replaceWith(panel); else apps.append(panel);
-          syncMoveForms(panel);
-          watchThread(panel);
-          if (toThread) {
-            panel.querySelector(".agent")?.scrollIntoView({ block: "end" });
+          if (list) {
+            panel.scrollTop = scroll; // a refresh keeps the reader's place
           } else {
             panel.querySelector(".panel-close")?.focus({ preventScroll: true });
           }
         } else {
           current?.remove();
-          stopPoll();
         }
         markFocus(next ? next.dataset.app : null);
         if (push) history.pushState(null, "", url);
+        applyChatFilter();
+        watchThread();
       } catch (err) {
         current?.classList.remove("is-loading");
         toast(err.message, { error: true });
       }
     }
 
-    refreshPanel = () => showPanel(location.href, false, { toThread: true });
+    refreshApps = () => showPanel(location.href, false, { list: true });
 
     function closePanel() {
       const panel = document.getElementById("panel");
       if (!panel) return;
-      stopPoll();
       const href = panel.querySelector("[data-close-panel]").getAttribute("href");
       const appId = panel.dataset.app;
-      panel.remove();
-      markFocus(null);
-      history.pushState(null, "", href);
-      document.getElementById(`app-${appId}`)?.focus({ preventScroll: true });
+      showPanel(href, true); // the page without a panel: About goes back to the whole search
+      document.querySelector(`#app-${CSS.escape(appId)} a`)?.focus({ preventScroll: true });
     }
 
     document.addEventListener("click", (e) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-      if (e.target.closest("[data-close-panel]")) { e.preventDefault(); closePanel(); return; }
-      const link = e.target.closest("a.app-card, .app-list a");
+      if (e.target.closest("[data-close-panel]")) { e.preventDefault(); document.body.classList.remove("is-asking"); closePanel(); return; }
+      if (e.target.closest("[data-ask-agent]")) { // phones: leave the sheet for the Agent box, About kept
+        e.preventDefault();
+        document.body.classList.add("is-asking");
+        const box = document.getElementById("agent");
+        box?.scrollIntoView({ block: "end" });
+        box?.querySelector("textarea")?.focus({ preventScroll: true });
+        return;
+      }
+      if (e.target.closest("[data-back-to-panel]")) {
+        document.body.classList.remove("is-asking");
+        document.getElementById("panel")?.scrollTo({ top: 0 });
+        return;
+      }
+      const jump = e.target.closest("a[data-jump]");
+      if (jump) { // a done shortcut: scroll to its result card (no hash, which would re-render the panel)
+        e.preventDefault();
+        const card = document.getElementById(jump.dataset.jump);
+        if (card) {
+          card.scrollIntoView({ block: "start", behavior: "smooth" });
+          card.classList.add("is-flash");
+          setTimeout(() => card.classList.remove("is-flash"), 1200);
+        }
+        return;
+      }
+      const link = e.target.closest(".app-list a, a.msg-about");
       const row = !link && e.target.closest(".app-list tr[data-href]");
       if (!link && !row) return;
-      if (row && e.target.closest("button, input, select, form")) return;
       e.preventDefault();
+      document.body.classList.remove("is-asking"); // a chosen job opens as the sheet again on phones
       showPanel(link ? link.getAttribute("href") : row.dataset.href, true);
     });
     document.addEventListener("keydown", (e) => {
@@ -370,108 +390,10 @@
       if (e.target instanceof Element && e.target.closest("input, select, textarea")) return;
       closePanel();
     });
-    window.addEventListener("popstate", () => showPanel(location.href, false));
+    window.addEventListener("popstate", () => showPanel(location.href, false, { list: true }));
 
-    // Drag and drop between columns (native HTML5 events). Interested, Applied and Offer move at
-    // once; Interviewing asks for the step and date, Closed for the outcome. Every move posts to
-    // /applications/move, then the page reloads from the server with a "Moved" toast.
-    const dialog = document.getElementById("move-dialog");
-    const STATUS_OF = { interested: "to_apply", applied: "applied", offer: "offer" };
-    const STEPS = ["recruiter_call", "technical", "system_design", "final"];
-    let dragged = null;
-
-    function reloadMoved() {
-      const url = new URL(location.href);
-      url.searchParams.set("msg", "moved");
-      location.assign(url);
-    }
-
-    async function move(data) {
-      try {
-        await post("/applications/move", data);
-        reloadMoved();
-      } catch (err) {
-        toast(err.message || "Not moved.", { error: true });
-      }
-    }
-
-    function askMove(card, column) {
-      const form = dialog.querySelector("form");
-      form.reset();
-      form.elements.app_id.value = card.dataset.app;
-      form.elements.return.value = location.pathname + location.search;
-      const interviewing = column === "interviewing";
-      dialog.querySelectorAll("[data-group]").forEach((el) => {
-        el.hidden = el.dataset.group !== column;
-        el.querySelectorAll("select, input").forEach((input) => { input.disabled = el.hidden; });
-      });
-      dialog.querySelector("[data-move-title]").textContent = interviewing ? "Move to Interviewing" : "Close this application";
-      dialog.querySelector("[data-move-app]").textContent = card.querySelector(".app-head")?.textContent || "";
-      if (interviewing) {
-        const at = STEPS.indexOf(card.dataset.status);
-        form.querySelector('select[name="status"]').value = STEPS[Math.min(at + 1, STEPS.length - 1)];
-      }
-      dialog.showModal();
-      (interviewing ? form.querySelector('select[name="status"]') : form.elements.comment).focus();
-    }
-
-    if (dialog && dialog.showModal && window.fetch) {
-      const form = dialog.querySelector("form");
-      dialog.querySelector("[data-close]").addEventListener("click", () => dialog.close());
-      form.addEventListener("submit", async (e) => {
-        e.preventDefault();
-        const data = new URLSearchParams(new FormData(form, e.submitter)); // an outcome button adds its status
-        if (!data.get("status")) return;
-        const buttons = form.querySelectorAll("button");
-        buttons.forEach((b) => { b.disabled = true; });
-        try {
-          await post(form.action, data);
-          dialog.close();
-          reloadMoved();
-        } catch (err) {
-          toast(err.message || "Not moved.", { error: true });
-        } finally {
-          buttons.forEach((b) => { b.disabled = false; });
-        }
-      });
-
-      document.addEventListener("dragstart", (e) => {
-        const card = e.target.closest?.("a.app-card");
-        if (!card) return;
-        dragged = card;
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", card.dataset.app);
-        card.classList.add("is-dragging");
-      });
-      document.addEventListener("dragend", () => {
-        dragged?.classList.remove("is-dragging");
-        dragged = null;
-        document.querySelectorAll(".col.is-drop").forEach((c) => c.classList.remove("is-drop"));
-      });
-      document.querySelectorAll("[data-drop]").forEach((col) => {
-        col.addEventListener("dragover", (e) => {
-          if (!dragged || dragged.dataset.column === col.dataset.drop) return;
-          e.preventDefault(); // allows the drop
-          e.dataTransfer.dropEffect = "move";
-          col.classList.add("is-drop");
-        });
-        col.addEventListener("dragleave", (e) => {
-          if (!col.contains(e.relatedTarget)) col.classList.remove("is-drop");
-        });
-        col.addEventListener("drop", (e) => {
-          e.preventDefault();
-          col.classList.remove("is-drop");
-          const card = dragged;
-          const column = col.dataset.drop;
-          if (!card || card.dataset.column === column) return; // same column: nothing to do
-          if (STATUS_OF[column]) {
-            move(new URLSearchParams({ app_id: card.dataset.app, status: STATUS_OF[column] }));
-          } else {
-            askMove(card, column);
-          }
-        });
-      });
-    }
+    const focusRow = document.querySelector(".app-list tr.is-focus");
+    if (focusRow) focusRow.scrollIntoView({ block: "nearest" });
   }
 
   // --- forms without a reload --------------------------------------------------------
@@ -520,9 +442,10 @@
       .catch((err) => toast(err.message, { error: true }));
   }
 
-  // --- Skipped pop-up ------------------------------------------------------------------
-  // A row's Skipped link opens the dialog instead of the skip page. Clicking a reason posts the
-  // skip; on the New and All views the row leaves with an Undo toast, elsewhere the page reloads.
+  // --- Skip pop-up -----------------------------------------------------------------------
+  // A Skip link opens the dialog instead of the skip page. Clicking a reason posts the skip. Job
+  // Offers: on the New and All views the row leaves with an Undo toast, elsewhere the page reloads.
+  // Applications (data-after="refresh"): the list and the panel are refreshed.
   const dialog = document.getElementById("skip-dialog");
   if (dialog && dialog.showModal && window.fetch) {
     const form = dialog.querySelector("form");
@@ -534,10 +457,10 @@
       opener = link;
       const row = link.closest("tr");
       form.reset();
-      form.elements.job_id.value = link.dataset.skip;
+      form.elements[form.dataset.field].value = link.dataset.skip; // job_id on Job Offers, app_id on Applications
       form.elements.return.value = location.pathname + location.search;
-      dialog.querySelector("[data-skip-job]").textContent =
-        row ? `${row.cells[1].textContent.trim()} — ${row.cells[2].textContent.trim()}` : "";
+      dialog.querySelector("[data-skip-job]").textContent = link.dataset.skipLabel
+        || (row ? `${row.cells[1].textContent.trim()} — ${row.cells[2].textContent.trim()}` : "");
       dialog.showModal();
       form.elements.comment.focus();
     });
@@ -552,6 +475,7 @@
       try {
         const reply = await post(form.action, data);
         dialog.close();
+        if (link?.dataset.after === "refresh") { await refreshApps(); toast(reply.message); return; }
         const row = link && link.closest("tr");
         if (!row || !("remove" in link.dataset)) { location.reload(); return; }
         const tableId = row.closest("table").id;
@@ -580,10 +504,6 @@
       if (mode === "remove-row" && row) {
         removeRow(row, tableId);
         toast(reply.message);
-      } else if (mode === "done" && row) {
-        const place = removeRow(row, tableId);
-        const params = { task_id: form.elements.task_id.value };
-        toast(reply.message, { action: { label: "Undo", run: () => undo(row, place, "/tasks/reopen", params, tableId) } });
       } else if (mode === "interested" && row) {
         // Job Offers: the row stays, its actions cell becomes "Interested · research queued".
         const cell = form.closest("td");
@@ -596,22 +516,27 @@
           .catch((err) => toast(err.message, { error: true }));
         // Undo only for an application this click created (never one that existed before).
         toast(reply.message, reply.created ? { action: { label: "Undo", run: undoIt } } : {});
+      } else if (mode === "applied") {
+        // Mark applied: done at once; Undo moves it back to Interested.
+        const params = new URLSearchParams({ app_id: form.elements.app_id.value });
+        await refreshApps();
+        toast(reply.message, { action: { label: "Undo", run: () => post("/applications/unapply", params)
+          .then((r) => refreshApps().then(() => toast(r.message)))
+          .catch((err) => toast(err.message, { error: true })) } });
+      } else if (mode === "tick") {
+        // A panel task ticked done: refresh the list's next task and the panel; Undo reopens it.
+        const params = new URLSearchParams({ task_id: form.elements.task_id.value });
+        await refreshApps();
+        toast(reply.message, { action: { label: "Undo", run: () => post("/tasks/reopen", params)
+          .then((r) => refreshApps().then(() => toast(r.message)))
+          .catch((err) => toast(err.message, { error: true })) } });
       } else if (mode === "thread") {
-        // The panel's Agent thread: swap in the server-built, escaped thread and wait for the reply.
+        // The Agent box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
-        form.reset();
-        watchThread(form.closest(".panel"));
-        toast(reply.message);
-      } else if (mode === "add-row") {
-        const table = document.getElementById(form.dataset.target);
-        if (!table || !reply.html) { location.reload(); return; } // was an empty state
-        // reply.html is a row the server built and escaped.
-        table.tBodies[0].insertAdjacentHTML("afterbegin", reply.html);
-        table.tBodies[0].rows[0].classList.add("is-new");
-        refreshCount(form.dataset.target);
-        form.reset();
-        form.elements.title?.focus();
+        form.elements.body.value = "";
+        applyChatFilter();
+        watchThread();
         toast(reply.message);
       }
     } catch (err) {

@@ -16,9 +16,11 @@ Run from the repo root.
 - **List**: `python -m prep.cli task list` (open tasks), `--done`, or `--all`.
 - **Complete**: `python -m prep.cli task done TASK_ID`. If the user names a task by title,
   list first, match it, and confirm when more than one fits.
+- **Change or drop**: `python -m prep.cli task edit TASK_ID [--title T] [--due D | --no-due]`,
+  `python -m prep.cli task delete TASK_ID`.
 
 These are the same tasks as on the dashboard's Applications page: a task with `--app` shows
-on that application's card, one without in General tasks. Stage tasks are created and closed
+in that application's panel; one without shows only here and in /today. Stage tasks are created and closed
 automatically when an application changes stage (`python -m prep.cli update ID --status S`);
 closed ones show in `--all` as "(closed)". An application's next action is always its next
 open task.

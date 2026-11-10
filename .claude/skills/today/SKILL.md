@@ -16,12 +16,12 @@ description: Daily job-search brief from inter_prep — applications that moved 
 2. Reply in short, plain English, in this order:
    - **Moved to No response** (only if the output lists any): applications that sat in
      Applied with no reply and were moved automatically. One line each; mention that each
-     got a Debrief task and that moving the card back on the dashboard works as usual.
+     got a Debrief task and that the agent can move it back if a reply came.
    - **Agent work** (only if the output has an "Agent work pending" line): run /research now,
      without asking the user to type anything, and give its short summary here. It reads
      cv.md and does web searches about the companies; that is expected.
-   - **Agent thread** (only if the output has an "Agent thread" line): messages left in a
-     card's Agent thread on the dashboard are waiting. Run /ask now and give its one-line
+   - **Agent thread** (only if the output has an "Agent thread" line): messages left in the
+     dashboard's Agent box are waiting. Run /ask now and give its one-line
      summary per application.
    - **Due now**: tasks due today or overdue, oldest first, with the company when the task
      belongs to an application. One line each.

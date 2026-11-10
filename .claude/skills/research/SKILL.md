@@ -1,12 +1,12 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks and tailored CVs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, suggest a tier, write a copy of the CV tailored to one job (questions go to the Agent thread), and save the results locally. Use when the user types /research [application id], when /today or the session-start note says agent work is pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks and tailored CVs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), and save the results locally. Use when the user types /research [application id], when /today or the session-start note says agent work is pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research
 
-Interested applications, and the Research / CV fit / Tailor CV buttons on the dashboard's
-Applications board, queue requests. This skill does the work and saves it. Nothing here applies to a job
+Interested applications, and the Research company / CV fit / Tailor CV buttons in the dashboard's
+Applications panel, queue requests. This skill does the work and saves it. Nothing here applies to a job
 or contacts anyone, and nothing leaves the machine except web searches about the company.
 Run every command from the repo root.
 
@@ -20,12 +20,11 @@ Run every command from the repo root.
 2. Follow the printed packet: company research, CV fit and/or tailored CV, in that order. Each
    part names its file and the save command.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
-   - company: one line on what it does and the suggested tier
+   - company: one line on what it does and the tier set
    - CV fit: the score and the top gaps
    - tailored CV: the version saved and how many questions went to the thread
    - when a save printed "both results in": the Interested application now has a "Review
-     research and apply" task; say it is ready to review (the card reads "Ready: fit N/5 ·
-     tier X" and its panel has Apply)
+     research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
 If another session has already claimed the work, leave it alone.
 
@@ -74,10 +73,12 @@ researched_at = 2026-01-20
 ## Questions worth asking
 ```
 
-Then run `python -m prep.cli research save <app id>`. It saves the summary and closes the
-research request of every application at that company.
+Then run `python -m prep.cli research save <app id>`. It saves the summary, closes the
+research request of every application at that company and **sets the tier** of that application
+to `suggested_tier`. The panel shows it with `tier_reason`, so write the reason for this role.
+No confirm step: the user changes it through the agent if needed.
 
-### Tier rubric (suggest only; the user confirms it on the card)
+### Tier rubric (the research sets it; one tier per application)
 
 - **A**: strong fit (CV fit 4–5), and a recognised company or a good employer (stable,
   well-regarded engineering, fair process).
@@ -85,7 +86,10 @@ research request of every application at that company.
 - **C**: weak fit (1–2), or risky (unclear funding, layoffs, poor reviews, unclear role).
 
 When the CV fit is done in the same run, use its score. Otherwise judge the fit from the job
-description.
+description. The profile is shared by every role at the company, but the tier belongs to one
+application: when a reused profile ("reuse it") or a later CV fit points to a different tier for
+this role, set it with `python -m prep.cli update <app id> --tier X` and give the reason in your
+reply.
 
 ## CV fit → `fit/<app-id>-<slug>.md`
 
@@ -95,7 +99,7 @@ it. Compare it with the job description in the packet; if getjo has none, use th
 ```
 +++
 score = 4                        # 1 (poor) to 5 (excellent)
-gaps = ["Most important gap", "Second", "Third"]   # most important first; first 3 show on the card
+gaps = ["Most important gap", "Second", "Third"]   # most important first; first 3 show in the panel
 checked_at = 2026-01-20
 +++
 
@@ -109,7 +113,7 @@ Then run `python -m prep.cli fit save <app id>`. Its gaps also go into the gaps 
 "cv fit"); a gap already open with the same text is not added twice. Name each gap as a short
 skill or topic, for example "Kubernetes operators", not a sentence.
 
-## Tailored CV → `cv-tailored/<app-id>-<slug>.md`
+## Tailored CV → `cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`
 
 A copy of `cv.md` for this one job. The master `cv.md` is never edited here: it changes only when
 the user asks for that on the CV page. Read `cv.md` from the path in the packet (missing: stop and
@@ -139,7 +143,19 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the
   note for the preferred line; when the answer comes (/ask), add it to `_style.md`.
 
-Write the file with the same `+++` front matter as the other files, then the CV in Markdown:
+Get the file name first. The first time, pick a short role name for this application (FDE,
+AIEng, PlatEng: letters and digits, at most 12) and pass it once; it stays the same for every
+version:
+
+```bash
+python -m prep.cli tailor path APP --role-short FDE    # later: python -m prep.cli tailor path APP
+```
+
+It prints the path of the next version, e.g. `cv-tailored/CV_Globex_FDE_101126_1.md` (DDMMYY is
+today, the last number the version). If the save runs on a later day, pass that path with
+`tailor save APP --file PATH`. Every version is its own file and is kept; never overwrite
+an earlier one. Write the file with the same `+++` front matter as the other files, then the CV
+in Markdown:
 
 ```
 +++
@@ -167,9 +183,10 @@ Questions (the CV does not say):
 NOTE
 ```
 
-Each save adds a version (v1, v2, …). A Redo rewrites the copy from the current `cv.md`. When the
-application is sent, the dashboard freezes the current copy as `<app-id>-<slug>.sent-v<N>.md`;
-never edit that file.
+Each save records the file `tailor path` printed as the next version (v1, v2, …). A Redo ("New
+from cv.md" in the panel) writes a new version from the current `cv.md`. Nothing is recorded as
+sent until the user says which file they sent (`python -m prep.cli cv sent APP FILE_NAME`, done
+by /ask).
 
 ## Rules
 
@@ -177,4 +194,4 @@ never edit that file.
   reply beyond a few words. Never write these into the repo, logs or commit messages.
 - Do not mention pay, in replies, notes or any file (tailored CVs included).
 - Files can be edited by hand. Re-running the save command re-reads the file.
-- The dashboard shows each file read-only through the card's Open link.
+- The dashboard shows each file read-only through the panel's Open links (every tailored version).

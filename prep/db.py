@@ -10,7 +10,6 @@ Dates are ISO strings: YYYY-MM-DD for days, YYYY-MM-DDTHH:MM:SSZ for timestamps.
 import json
 import logging
 import re
-import shutil
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -19,9 +18,11 @@ log = logging.getLogger("prep.db")
 
 APPLICATION_STATUSES = (
     "to_apply", "applied", "recruiter_call", "technical", "system_design",
-    "final", "offer", "rejected", "withdrawn", "no_response",
+    "final", "offer", "rejected", "withdrawn", "no_response", "skipped",
 )
-CLOSED_STATUSES = ("offer", "rejected", "withdrawn", "no_response")
+# skipped: closed from Interested without applying (the panel's Skip, `cli skip`); withdrawn is
+# pulling out of a live process.
+CLOSED_STATUSES = ("offer", "rejected", "withdrawn", "no_response", "skipped")
 TIERS = ("A", "B", "C")
 APPLICATION_TYPES = ("contract", "permanent")
 PUZZLE_ROUND = ("yes", "no", "unknown")
@@ -71,9 +72,10 @@ RECOGNITION = ("well_known", "niche", "little_known")
 RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
 SIZE_BANDS = ("1-50", "51-250", "251-1000", "1001-5000", "5000+")
 FIT_GAP_SESSION = "cv fit"
-# The panel's Agent thread: the user writes, the standing assistant (/ask) replies. A user message
-# is pending until an /ask session claims it (claims older than CLAIM_HOURS count as pending
-# again) and answered once a reply names it. Agent replies have no status.
+# The Agent conversation: the user writes, the standing assistant (/ask) replies. A user message is
+# about one application or the whole search (application_id NULL). It is pending until an /ask
+# session claims it (claims older than CLAIM_HOURS count as pending again) and answered once a
+# reply names it. Agent replies have no status and inherit the message's application.
 MESSAGE_AUTHORS = ("user", "agent")
 MESSAGE_STATUSES = ("pending", "claimed", "answered")
 MAX_MESSAGE = 20_000  # characters: room for a pasted recruiter email
@@ -219,7 +221,8 @@ CREATE TABLE IF NOT EXISTS tailored_cvs (
     updated_at     TEXT NOT NULL
 );
 
--- The Agent thread on an application's side panel. Bodies are private: never logged.
+-- The first Agent thread, one per application (replaced by agent_messages, which copies its rows
+-- on connect; nothing writes here any more). Bodies are private: never logged.
 CREATE TABLE IF NOT EXISTS application_messages (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER NOT NULL REFERENCES applications(id),
@@ -232,11 +235,37 @@ CREATE TABLE IF NOT EXISTS application_messages (
     answered_at    TEXT
 );
 
+-- Every saved version of an application's tailored CV, each its own file (tailored_cvs points at the
+-- latest). Versions are never overwritten or deleted.
+CREATE TABLE IF NOT EXISTS tailored_cv_versions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    version        INTEGER NOT NULL,
+    file_path      TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    UNIQUE (application_id, version)
+);
+
+-- The Agent conversation under the pipeline list: one stream for every application. A message is
+-- about one application (application_id) or about the whole search (NULL). Bodies are private.
+CREATE TABLE IF NOT EXISTS agent_messages (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER REFERENCES applications(id),  -- NULL: about the whole search
+    author         TEXT NOT NULL,       -- user / agent
+    body           TEXT NOT NULL,
+    status         TEXT,                -- user messages: pending / claimed / answered; NULL for agent
+    reply_to       INTEGER REFERENCES agent_messages(id),  -- agent replies: the user message answered
+    created_at     TEXT NOT NULL,
+    claimed_at     TEXT,
+    answered_at    TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
 CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_id);
 CREATE INDEX IF NOT EXISTS idx_messages_app ON application_messages(application_id);
+CREATE INDEX IF NOT EXISTS idx_agent_messages_app ON agent_messages(application_id);
 """
 
 # Columns added after a table was first created: {table: {column: definition}}.
@@ -245,15 +274,16 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     "status_history": {"comment": "TEXT"},  # the comment given with a stage change
     "tasks": {"stage": "TEXT"},             # the stage whose STAGE_TASKS created it; NULL if hand-made
     "gaps": {"application_id": "INTEGER REFERENCES applications(id)"},  # e.g. a gap found by a CV fit
-    # The tailored CV sent with the application: a frozen copy (cv-tailored/<id>-<slug>.sent-v<N>.md),
-    # its version and when it was recorded. NULL when no tailored copy existed (the master CV was used).
-    "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT"},
+    # cv_sent: the file name of the tailored CV version the user says was sent (`cli cv sent`), with its
+    # version and when that was recorded; NULL until then. Older rows may hold a frozen copy's path.
+    # role_short: the short role name in tailored CV file names (FDE, AIEng), chosen once by the agent.
+    "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
     "getjo_job_id", "company", "role", "link", "tier", "type", "source", "date_applied",
     "status", "last_contact", "next_action", "next_action_date", "puzzle_round", "pay",
-    "contact", "notes",
+    "contact", "notes", "role_short",
 )
 
 
@@ -290,7 +320,28 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
                 if (table, column) == ("tasks", "stage"):
                     _backfill_task_stages(conn)
                     next_actions_to_tasks(conn)
+    _backfill_tailored_versions(conn)
+    _copy_application_messages(conn)
     conn.commit()
+
+
+def _copy_application_messages(conn: sqlite3.Connection) -> None:
+    """Messages from the per-application threads move into agent_messages with the same ids, so
+    reply_to still points at the right message. Rows already copied are skipped."""
+    conn.execute(
+        "INSERT OR IGNORE INTO agent_messages (id, application_id, author, body, status, reply_to, created_at, "
+        "claimed_at, answered_at) SELECT id, application_id, author, body, status, reply_to, created_at, claimed_at, "
+        "answered_at FROM application_messages"
+    )
+
+
+def _backfill_tailored_versions(conn: sqlite3.Connection) -> None:
+    """A tailored CV saved before versions were kept becomes its own version row (file not renamed)."""
+    conn.execute(
+        "INSERT INTO tailored_cv_versions (application_id, version, file_path, created_at) "
+        "SELECT t.application_id, t.version, t.file_path, t.updated_at FROM tailored_cvs t "
+        "WHERE NOT EXISTS (SELECT 1 FROM tailored_cv_versions v WHERE v.application_id = t.application_id)"
+    )
 
 
 def _backfill_task_stages(conn: sqlite3.Connection) -> None:
@@ -311,7 +362,7 @@ def next_actions_to_tasks(conn: sqlite3.Connection) -> list[int]:
     rows = conn.execute(
         """
         SELECT id, next_action, next_action_date FROM applications a
-        WHERE next_action IS NOT NULL AND status NOT IN ('rejected', 'withdrawn', 'no_response')
+        WHERE next_action IS NOT NULL AND status NOT IN ('rejected', 'withdrawn', 'no_response', 'skipped')
           AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.application_id = a.id AND t.status = 'todo'
                           AND t.title = a.next_action)
         ORDER BY id
@@ -434,9 +485,7 @@ def record_application(
         return app_id, True
     new_status = fields.pop("status")
     update_application(conn, existing["id"], **{k: v for k, v in fields.items() if v is not None})
-    moved = move_application(conn, existing["id"], new_status, today)
-    if moved and not existing["date_applied"] and new_status not in ("to_apply", "withdrawn"):
-        record_cv_sent(conn, existing["id"])  # date_applied was set above, so the move did not count it as sent
+    move_application(conn, existing["id"], new_status, today)
     return existing["id"], False
 
 
@@ -479,7 +528,7 @@ def move_application(
     if row["status"] == status or (only_from is not None and row["status"] != only_from):
         return False
     stamp = now_iso()
-    sent = status not in ("to_apply", "withdrawn") and not row["date_applied"]
+    sent = status not in ("to_apply", "withdrawn", "skipped") and not row["date_applied"]
     cursor = conn.execute(
         "UPDATE applications SET status = ?, updated_at = ?, date_applied = COALESCE(date_applied, ?) "
         "WHERE id = ? AND status = ?",
@@ -494,38 +543,72 @@ def move_application(
                      (app_id, interview_date, status))
     conn.commit()
     stage_tasks(conn, app_id, status, today, interview_date)
-    if sent:
-        record_cv_sent(conn, app_id)
     return True
 
 
-def sent_copy_path(path: Path, version: int) -> Path:
-    """Where the tailored copy is frozen when it is sent: <app-id>-<slug>.sent-v<N>.md next to it."""
-    return path.with_name(f"{path.stem}.sent-v{version}{path.suffix}")
+def undo_applied(conn: sqlite3.Connection, app_id: int) -> None:
+    """Undo Mark applied: back to Interested, as if the move never happened. Only right after it
+    (status applied, its latest history row applied straight from to_apply): the applied history
+    row and the Applied stage's open tasks are deleted, the apply tasks the move marked done reopen,
+    and date_applied is cleared unless the application had been sent before. One transaction."""
+    app = get_application(conn, app_id)
+    if app is None:
+        raise LookupError(f"no application with id {app_id}")
+    rows = conn.execute("SELECT id, status, changed_at FROM status_history WHERE application_id = ? "
+                        "ORDER BY id DESC", (app_id,)).fetchall()
+    if app["status"] != "applied" or len(rows) < 2 or rows[0]["status"] != "applied" or rows[1]["status"] != "to_apply":
+        raise ValueError("It has moved on since; ask the agent to change the stage.")
+    sent_before = any(r["status"] not in ("to_apply", "withdrawn", "skipped") for r in rows[1:])
+    moved_at, back_at = rows[0]["changed_at"], rows[1]["changed_at"]
+    with conn:
+        cursor = conn.execute(
+            "UPDATE applications SET status = 'to_apply', updated_at = ?, date_applied = "
+            "CASE WHEN ? THEN date_applied END WHERE id = ? AND status = 'applied'",
+            (now_iso(), sent_before, app_id))
+        if cursor.rowcount != 1:
+            raise ValueError("It has moved on since; ask the agent to change the stage.")
+        conn.execute("DELETE FROM status_history WHERE id = ?", (rows[0]["id"],))
+        conn.execute("DELETE FROM tasks WHERE application_id = ? AND stage = 'applied' AND status = 'todo'", (app_id,))
+        conn.execute("UPDATE tasks SET status = 'todo', done_at = NULL WHERE application_id = ? AND stage = 'to_apply' "
+                     "AND kind = 'apply' AND status = 'done' AND done_at >= ?", (app_id, moved_at))
+        conn.execute("UPDATE tasks SET status = 'todo' WHERE application_id = ? AND stage = 'to_apply' "
+                     "AND status = 'closed' AND created_at >= ?", (app_id, back_at))
+    sync_next_action(conn, app_id)
 
 
-def record_cv_sent(conn: sqlite3.Connection, app_id: int) -> str | None:
-    """The application was just sent: freeze its tailored CV (a copy next to it, so later revisions
-    never change the record) and store that copy's path, version and time in applications.cv_sent.
-    Does nothing without a tailored copy, when its file is missing or when the copy fails (logged
-    with ids only; the move itself stands). Returns the frozen path."""
-    row = tailored_cv(conn, app_id)
-    if row is None:
-        return None
-    source = Path(row["file_path"])
-    if not source.is_file():
-        return None
-    target = sent_copy_path(source, row["version"])
-    try:
-        shutil.copyfile(source, target)
-    except OSError as e:
-        log.warning("could not freeze the tailored CV of application %s (%s); cv_sent not recorded",
-                    app_id, type(e).__name__)
-        return None
-    conn.execute("UPDATE applications SET cv_sent = ?, cv_sent_version = ?, cv_sent_at = ? WHERE id = ?",
-                 (str(target), row["version"], now_iso(), app_id))
-    conn.commit()
-    return str(target)
+def skip_application(conn: sqlite3.Connection, app_id: int, reason: str, comment: str | None = None,
+                     today: str | None = None) -> None:
+    """Skip an Interested application (the panel's Skip, `cli skip`): move it to skipped with the
+    comment "skipped: <reason>[ — comment]", close its open tasks and agent requests, and for a
+    getjo job mark its decision skipped with the reason and comment (as Job Offers' Skipped), so
+    it shows under Job Offers → Skipped."""
+    if not reason:
+        raise ValueError("a skip needs a reason")
+    _check("reason", reason, SKIP_REASONS)
+    comment = (comment or "").strip() or None
+    app = get_application(conn, app_id)
+    if app is None:
+        raise LookupError(f"no application with id {app_id}")
+    if app["status"] != "to_apply":
+        raise ValueError("Only an Interested application can be skipped; ask the agent to withdraw it.")
+    text = f"skipped: {reason.replace('_', ' ')}" + (f" — {comment}" if comment else "")
+    if not move_application(conn, app_id, "skipped", today, text, only_from="to_apply"):
+        raise ValueError("It has moved on since; reload to see its stage.")
+    stamp = now_iso()
+    with conn:
+        conn.execute("UPDATE tasks SET status = 'closed' WHERE application_id = ? AND status = 'todo'", (app_id,))
+        conn.execute("UPDATE agent_requests SET status = 'done', done_at = ? WHERE application_id = ? "
+                     "AND status IN ('pending', 'claimed')", (stamp, app_id))
+        if app["getjo_job_id"]:
+            cursor = conn.execute(
+                "UPDATE job_decisions SET decision = 'skipped', reason = ?, comment = ?, decided_at = ? "
+                "WHERE getjo_job_id = ?", (reason, comment, stamp, app["getjo_job_id"]))
+            if cursor.rowcount == 0:
+                conn.execute(
+                    "INSERT INTO job_decisions (getjo_job_id, decision, reason, comment, decided_at, company, title, "
+                    "url, source) VALUES (?, 'skipped', ?, ?, ?, ?, ?, ?, ?)",
+                    (app["getjo_job_id"], reason, comment, stamp, app["company"], app["role"], app["link"], app["source"]))
+    sync_next_action(conn, app_id)
 
 
 def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | None = None,
@@ -692,6 +775,67 @@ def add_comment(conn: sqlite3.Connection, app_id: int, body: str) -> int:
     return cursor.lastrowid
 
 
+_COMMENT_REF = re.compile(r"^([ch])(\d+)$")
+
+
+def comments(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
+    """Comments, newest first: free comments (ref "c<id>") and comments given with a stage change
+    (ref "h<id>", its status_history row). {ref, application_id, at, body, status (None for free)}."""
+    where = "WHERE application_id = ?" if app_id is not None else ""
+    rows = conn.execute(
+        f"""
+        SELECT * FROM (
+            SELECT 'h' || id AS ref, application_id, changed_at AS at, comment AS body, status, 0 AS kind, id
+            FROM status_history WHERE comment IS NOT NULL
+            UNION ALL
+            SELECT 'c' || id, application_id, created_at, body, NULL, 1, id FROM application_comments
+        ) {where} ORDER BY at DESC, kind DESC, id DESC
+        """,
+        (app_id,) if app_id is not None else (),
+    )
+    return [{k: r[k] for k in ("ref", "application_id", "at", "body", "status")} for r in rows]
+
+
+def latest_comments(conn: sqlite3.Connection) -> dict[int, tuple[str, int]]:
+    """(latest comment, number of comments) by application id, for the pipeline list."""
+    found: dict[int, tuple[str, int]] = {}
+    for c in comments(conn):
+        body, n = found.get(c["application_id"], (c["body"], 0))
+        found[c["application_id"]] = (body, n + 1)
+    return found
+
+
+def _comment_ref(ref: str) -> tuple[str, int]:
+    match = _COMMENT_REF.match(ref.strip())
+    if not match:
+        raise ValueError(f"a comment id looks like c12 or h34 (from `comments list`); got {ref!r}")
+    return ("application_comments", "body") if match[1] == "c" else ("status_history", "comment"), int(match[2])
+
+
+def amend_comment(conn: sqlite3.Connection, ref: str, body: str) -> None:
+    """Replace a comment's text (ref from comments())."""
+    if not body.strip():
+        raise ValueError("a comment needs some text")
+    (table, column), row_id = _comment_ref(ref)
+    cursor = conn.execute(f"UPDATE {table} SET {column} = ? WHERE id = ? AND {column} IS NOT NULL",
+                          (body.strip(), row_id))
+    conn.commit()
+    if cursor.rowcount != 1:
+        raise LookupError(f"no comment {ref}")
+
+
+def remove_comment(conn: sqlite3.Connection, ref: str) -> None:
+    """Delete a free comment, or clear the comment of a stage change (the change itself stays)."""
+    (table, column), row_id = _comment_ref(ref)
+    if table == "application_comments":
+        cursor = conn.execute("DELETE FROM application_comments WHERE id = ?", (row_id,))
+    else:
+        cursor = conn.execute("UPDATE status_history SET comment = NULL WHERE id = ? AND comment IS NOT NULL", (row_id,))
+    conn.commit()
+    if cursor.rowcount != 1:
+        raise LookupError(f"no comment {ref}")
+
+
 def timeline(conn: sqlite3.Connection, app_id: int) -> list[dict]:
     """Stage changes and free comments, oldest first: {at, status (None for a comment), comment}."""
     rows = conn.execute(
@@ -798,8 +942,10 @@ def record_decision(
     conn.commit()
 
 
-def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
-    """Remove a skip so the job is new again. Applied decisions are not undone here."""
+def undo_skip(conn: sqlite3.Connection, getjo_job_id: str, today: str | None = None) -> None:
+    """Remove a skip so the job is new again. A job whose application was skipped from its panel
+    goes back to Interested instead (in the same transaction; it would read as applied otherwise).
+    Applied decisions are not undone here."""
     row = conn.execute(
         "SELECT decision FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,)
     ).fetchone()
@@ -807,8 +953,16 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str) -> None:
         raise LookupError(f"no decision for job {getjo_job_id}")
     if row["decision"] != "skipped":
         raise ValueError("only a skip can be undone")
-    conn.execute("DELETE FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,))
-    conn.commit()
+    app = find_by_job(conn, getjo_job_id)
+    reopen = app is not None and app["status"] == "skipped"
+    stamp = now_iso()
+    with conn:
+        conn.execute("DELETE FROM job_decisions WHERE getjo_job_id = ?", (getjo_job_id,))
+        if reopen:
+            conn.execute("UPDATE applications SET status = 'to_apply', updated_at = ? WHERE id = ?", (stamp, app["id"]))
+            _add_history(conn, app["id"], "to_apply", stamp, "skip undone")
+    if reopen:
+        stage_tasks(conn, app["id"], "to_apply", today)  # research is reused while fresh
 
 
 def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
@@ -827,7 +981,7 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
         SELECT (SELECT COUNT(*) FROM status_history WHERE application_id = :id) != 1
             OR EXISTS (SELECT 1 FROM tasks WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM application_comments WHERE application_id = :id)
-            OR EXISTS (SELECT 1 FROM application_messages WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM agent_messages WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
@@ -902,6 +1056,33 @@ def add_task(
     if application_id is not None:
         sync_next_action(conn, application_id)
     return cursor.lastrowid
+
+
+def edit_task(conn: sqlite3.Connection, task_id: int, title: str | None = None, due_date: str | None = None,
+              clear_due: bool = False) -> None:
+    """Change a task's title and/or due date (clear_due: no date)."""
+    task = get_task(conn, task_id)
+    if task is None:
+        raise LookupError(f"no task with id {task_id}")
+    if title is not None and not title.strip():
+        raise ValueError("a task needs a title")
+    _check_date("due_date", due_date)
+    conn.execute("UPDATE tasks SET title = ?, due_date = ? WHERE id = ?",
+                 ((title or task["title"]).strip(), None if clear_due else (due_date or task["due_date"]), task_id))
+    conn.commit()
+    _after_task_change(conn, task_id)
+
+
+def delete_task(conn: sqlite3.Connection, task_id: int) -> dict:
+    """Delete a task for good; returns it."""
+    task = get_task(conn, task_id)
+    if task is None:
+        raise LookupError(f"no task with id {task_id}")
+    conn.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+    conn.commit()
+    if task["application_id"] is not None:
+        sync_next_action(conn, task["application_id"])
+    return task
 
 
 def recent_done_tasks(conn: sqlite3.Connection, limit: int = 10) -> list[dict]:
@@ -979,6 +1160,48 @@ def app_tasks(conn: sqlite3.Connection, status: str = "todo") -> dict[int | None
     for t in list_tasks(conn, status):
         grouped.setdefault(t["application_id"], []).append(t)
     return grouped
+
+
+# Why a task is where it is in review_tasks(), in that order.
+REVIEW_GROUPS = ("overdue", "today", "interview prep", "ready to apply", "upcoming", "no date")
+
+
+def review_tasks(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
+    """Every open task in the order the user should look at them, each with its application's
+    company, role and status (None for a task with no application) and `group` (REVIEW_GROUPS):
+    overdue, due today, then prep for the interview stages (nearest interview first), then tasks
+    to apply (Review research and apply, apply kind), then the rest by due date, then undated.
+    The same order every time, so the agent's answer is stable."""
+    today = today or today_iso()
+    rows = conn.execute(
+        """
+        SELECT t.*, a.company, a.role, a.status AS app_status,
+               (SELECT MAX(i.date) FROM interviews i WHERE i.application_id = t.application_id
+                AND i.stage = t.stage) AS interview_date
+        FROM tasks t LEFT JOIN applications a ON a.id = t.application_id
+        WHERE t.status = 'todo'
+        """
+    ).fetchall()
+
+    def group(t: dict) -> str:
+        if t["due_date"] and t["due_date"] < today:
+            return "overdue"
+        if t["due_date"] == today:
+            return "today"
+        if t["stage"] in INTERVIEW_STAGES:
+            return "interview prep"
+        if t["kind"] == "apply":
+            return "ready to apply"
+        return "upcoming" if t["due_date"] else "no date"
+
+    found = []
+    for r in rows:
+        t = dict(r)
+        t["group"] = group(t)
+        found.append(t)
+    found.sort(key=lambda t: (REVIEW_GROUPS.index(t["group"]), t["interview_date"] or t["due_date"] or "9999",
+                              t["due_date"] or "9999", t["id"]))
+    return found
 
 
 # --- interviews and gaps ----------------------------------------------------
@@ -1223,7 +1446,8 @@ def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
 
 def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
                      reply_to: int | None = None) -> int:
-    """Record a saved tailored CV for an application: version + 1, its open tailor request done, and
+    """Record a saved tailored CV for an application: version + 1 (a new tailored_cv_versions row; each
+    version is its own file and is kept), its open tailor request done, and
     `note` (what was done or changed, and any questions) posted in the thread as an agent message,
     all in one transaction. With `reply_to` (a revision asked for in the thread) the note answers
     that user message, as reply_message does. Returns the new version."""
@@ -1240,6 +1464,8 @@ def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note
             "INSERT OR REPLACE INTO tailored_cvs (application_id, file_path, version, updated_at) VALUES (?, ?, ?, ?)",
             (app_id, file_path, version, stamp),
         )
+        conn.execute("INSERT INTO tailored_cv_versions (application_id, version, file_path, created_at) VALUES (?, ?, ?, ?)",
+                     (app_id, version, file_path, stamp))
         conn.execute(
             "UPDATE agent_requests SET status = 'done', done_at = ? WHERE application_id = ? AND kind = 'tailor' "
             "AND status IN ('pending', 'claimed')",
@@ -1252,6 +1478,30 @@ def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note
 def tailored_cv(conn: sqlite3.Connection, app_id: int) -> dict | None:
     row = conn.execute("SELECT * FROM tailored_cvs WHERE application_id = ?", (app_id,)).fetchone()
     return dict(row) if row else None
+
+
+def tailored_versions(conn: sqlite3.Connection, app_id: int) -> list[dict]:
+    """Every saved version of an application's tailored CV, oldest first: version, file_path, created_at."""
+    rows = conn.execute("SELECT version, file_path, created_at FROM tailored_cv_versions WHERE application_id = ? "
+                        "ORDER BY version", (app_id,))
+    return [dict(r) for r in rows]
+
+
+def record_cv_sent(conn: sqlite3.Connection, app_id: int, name: str) -> dict:
+    """The user says which tailored CV was sent: `name` is one of the application's versions, by file
+    name with or without .md. Stores the file name, its version and the time; returns the version."""
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    name = Path(name.strip()).name
+    versions = tailored_versions(conn, app_id)
+    found = next((v for v in versions if name in (Path(v["file_path"]).name, Path(v["file_path"]).stem)), None)
+    if found is None:
+        known = ", ".join(Path(v["file_path"]).name for v in versions) or "none yet"
+        raise LookupError(f"no tailored CV {name!r} on application {app_id} (versions: {known})")
+    conn.execute("UPDATE applications SET cv_sent = ?, cv_sent_version = ?, cv_sent_at = ? WHERE id = ?",
+                 (Path(found["file_path"]).name, found["version"], now_iso(), app_id))
+    conn.commit()
+    return found
 
 
 def fit_scores(conn: sqlite3.Connection) -> dict[int, int]:
@@ -1279,12 +1529,13 @@ def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
 
 
 def board_applications(conn: sqlite3.Connection) -> list[dict]:
-    """Every application for the Applications board, oldest first: id, company, role, link,
-    tier, status, the tailored CV sent (version and time) and since (the day of its last stage
+    """Every application for the Applications page, oldest first: id, company, role, link,
+    tier, status, date_applied, getjo_job_id, the tailored CV sent (file name, version and time) and since (the day of its last stage
     change, as last_change_day). Never pay."""
     rows = conn.execute(
         """
-        SELECT a.id, a.company, a.role, a.link, a.tier, a.status, a.cv_sent_version, a.cv_sent_at,
+        SELECT a.id, a.company, a.role, a.link, a.tier, a.status, a.date_applied, a.getjo_job_id,
+               a.cv_sent, a.cv_sent_version, a.cv_sent_at,
                substr(COALESCE((SELECT MAX(changed_at) FROM status_history WHERE application_id = a.id),
                                a.date_applied, a.created_at), 1, 10) AS since
         FROM applications a ORDER BY a.id
@@ -1306,13 +1557,14 @@ def _message_body(body: str) -> str:
     return body
 
 
-def add_message(conn: sqlite3.Connection, app_id: int, body: str) -> int:
-    """A user message on an application's thread, pending until the agent answers it."""
+def add_message(conn: sqlite3.Connection, app_id: int | None, body: str) -> int:
+    """A user message, about application `app_id` or (None) the whole search, pending until the
+    agent answers it."""
     body = _message_body(body)
-    if get_application(conn, app_id) is None:
+    if app_id is not None and get_application(conn, app_id) is None:
         raise LookupError(f"no application with id {app_id}")
     cursor = conn.execute(
-        "INSERT INTO application_messages (application_id, author, body, status, created_at) "
+        "INSERT INTO agent_messages (application_id, author, body, status, created_at) "
         "VALUES (?, 'user', ?, 'pending', ?)",
         (app_id, body, now_iso()),
     )
@@ -1320,26 +1572,39 @@ def add_message(conn: sqlite3.Connection, app_id: int, body: str) -> int:
     return cursor.lastrowid
 
 
-def thread(conn: sqlite3.Connection, app_id: int) -> list[dict]:
-    """An application's messages, oldest first: id, author, body, status, reply_to, created_at."""
+def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None) -> list[dict]:
+    """Messages oldest first: id, application_id, company, author, body, status, reply_to,
+    created_at. With `app_id` only that application's; otherwise the whole conversation (with
+    `limit`, its latest messages)."""
+    where = "WHERE m.application_id = ?" if app_id is not None else ""
     rows = conn.execute(
-        "SELECT id, author, body, status, reply_to, created_at FROM application_messages "
-        "WHERE application_id = ? ORDER BY id",
-        (app_id,),
+        f"""
+        SELECT * FROM (
+            SELECT m.id, m.application_id, a.company, m.author, m.body, m.status, m.reply_to, m.created_at
+            FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
+            {where} ORDER BY m.id DESC {'LIMIT ?' if limit else ''}
+        ) ORDER BY id
+        """,
+        tuple(x for x in (app_id, limit) if x is not None),
     )
     return [dict(r) for r in rows]
 
 
+def message_count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM agent_messages").fetchone()[0]
+
+
 def pending_messages(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
     """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
-    claimed now: `claimed` is True for a live claim), oldest first, with company and role."""
+    claimed now: `claimed` is True for a live claim), oldest first, with company and role (None for
+    a message about the whole search). With `app_id` only that application's."""
     where = "WHERE m.author = 'user' AND m.status IN ('pending', 'claimed')"
     if app_id is not None:
         where += " AND m.application_id = ?"
     rows = conn.execute(
         f"""
         SELECT m.id, m.application_id, m.status, m.created_at, m.claimed_at, a.company, a.role
-        FROM application_messages m JOIN applications a ON a.id = m.application_id
+        FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
         {where} ORDER BY m.id
         """,
         (app_id,) if app_id is not None else (),
@@ -1353,19 +1618,20 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None) -> lis
     return found
 
 
-def claim_messages(conn: sqlite3.Connection, app_id: int) -> list[int]:
-    """Take an application's waiting user messages for this session; returns their ids, oldest
-    first. Only one caller wins each: the update applies while it is still pending (or its claim
-    has gone stale)."""
+def claim_messages(conn: sqlite3.Connection, app_id: int | None) -> list[int]:
+    """Take the waiting user messages about an application (or, with None, about the whole search)
+    for this session; returns their ids, oldest first. Only one caller wins each: the update
+    applies while it is still pending (or its claim has gone stale)."""
     stamp, cutoff = now_iso(), _claim_cutoff()
+    match = "application_id = ?" if app_id is not None else "application_id IS NULL"
     ids = [r[0] for r in conn.execute(
-        "SELECT id FROM application_messages WHERE application_id = ? AND author = 'user' "
+        f"SELECT id FROM agent_messages WHERE {match} AND author = 'user' "
         "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?)) ORDER BY id",
-        (app_id, cutoff))]
+        (*((app_id,) if app_id is not None else ()), cutoff))]
     won = []
     for msg_id in ids:
         cursor = conn.execute(
-            "UPDATE application_messages SET status = 'claimed', claimed_at = ? "
+            "UPDATE agent_messages SET status = 'claimed', claimed_at = ? "
             "WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
             (stamp, msg_id, cutoff),
         )
@@ -1375,10 +1641,18 @@ def claim_messages(conn: sqlite3.Connection, app_id: int) -> list[int]:
     return won
 
 
-def reply_message(conn: sqlite3.Connection, app_id: int, to_id: int, body: str) -> int:
-    """The agent's reply to user message `to_id` on this application: stores it and marks that
-    message answered, in one transaction, only while the message is still open (pending or
-    claimed). Returns the reply's id."""
+def message_application(conn: sqlite3.Connection, msg_id: int) -> int | None:
+    """The application a message is about (None: the whole search). LookupError if there is none."""
+    row = conn.execute("SELECT application_id FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no message {msg_id}")
+    return row[0]
+
+
+def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body: str) -> int:
+    """The agent's reply to user message `to_id` (about application `app_id`, or None for the whole
+    search): stores it and marks that message answered, in one transaction, only while the message
+    is still open (pending or claimed). Returns the reply's id."""
     body = _message_body(body)
     _check_user_message(conn, app_id, to_id)
     stamp = now_iso()
@@ -1386,27 +1660,28 @@ def reply_message(conn: sqlite3.Connection, app_id: int, to_id: int, body: str) 
         return _agent_message(conn, app_id, body, stamp, to_id)
 
 
-def _check_user_message(conn: sqlite3.Connection, app_id: int, to_id: int) -> None:
+def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int) -> None:
     row = conn.execute(
-        "SELECT application_id, author, status FROM application_messages WHERE id = ?", (to_id,)
+        "SELECT application_id, author, status FROM agent_messages WHERE id = ?", (to_id,)
     ).fetchone()
     if row is None or row["application_id"] != app_id or row["author"] != "user":
-        raise LookupError(f"no user message {to_id} on application {app_id}")
+        where = f"on application {app_id}" if app_id is not None else "about the whole search"
+        raise LookupError(f"no user message {to_id} {where}")
 
 
-def _agent_message(conn: sqlite3.Connection, app_id: int, body: str, stamp: str, to_id: int | None) -> int:
+def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stamp: str, to_id: int | None) -> int:
     """Insert an agent message inside the caller's transaction. With `to_id` it answers that user
     message, only while it is still open (ValueError otherwise, which rolls the transaction back)."""
     if to_id is not None:
         cursor = conn.execute(
-            "UPDATE application_messages SET status = 'answered', answered_at = ? "
+            "UPDATE agent_messages SET status = 'answered', answered_at = ? "
             "WHERE id = ? AND status IN ('pending', 'claimed')",
             (stamp, to_id),
         )
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
     cursor = conn.execute(
-        "INSERT INTO application_messages (application_id, author, body, reply_to, created_at) "
+        "INSERT INTO agent_messages (application_id, author, body, reply_to, created_at) "
         "VALUES (?, 'agent', ?, ?, ?)",
         (app_id, body, to_id, stamp),
     )

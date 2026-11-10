@@ -205,7 +205,9 @@ class CliTest(IsolatedTestCase):
         write(self.private / "fit" / f"{self.app}-globex-labs.md", FIT)
         code, out, err = self.run_cli("research", "save", str(self.app))
         self.assertEqual(code, 0, err)
-        self.assertIn("suggested tier B", out)
+        self.assertIn(f"tier B set on #{self.app}", out)  # research sets the application's tier
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.get_application(conn, self.app)["tier"], "B")
         code, out, err = self.run_cli("fit", "save", str(self.app))
         self.assertEqual(code, 0, err)
         self.assertIn("4/5, 4 gaps (4 new", out)
@@ -283,44 +285,40 @@ class DashboardTest(WebTestCase):
         super().setUp()
         self.private = self.tmp / "private"
 
-    def card(self, app_id: int) -> str:
-        """The compact card plus its side panel (where the research section lives)."""
+    def panel(self, app_id: int) -> str:
         body = self.get(f"/applications?app={app_id}")[2]
-        start = body.index(f'id="app-{app_id}"')
-        panel = body.index('<aside class="panel"')
-        return body[start:body.index("</a>", start)] + body[panel:body.index("</aside>", panel)]
+        start = body.index('<aside class="panel"')
+        return body[start:body.index("</aside>", start)]
+
+    @staticmethod
+    def shortcuts(panel: str) -> str:
+        return panel[panel.index('class="shortcuts"'):panel.index('class="panel-tasks"')]
 
     def test_buttons_queue_then_show_pending_then_redo(self) -> None:
-        card = self.card(self.MDE)
-        self.assertIn("Not researched yet.", card)
-        self.assertIn('name="kind" value="research"', card)
+        panel = self.panel(self.MDE)
+        self.assertIn(">Research company</button>", self.shortcuts(panel))
+        self.assertNotIn('id="card-research"', panel)  # no card before a result
         status, headers, _ = self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
         self.assertEqual((status, headers["Location"]), (303, f"/applications?app={self.MDE}&msg=research_queued"))
         self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})  # again: no change
         with self.conn() as conn:
             self.assertEqual(len(db.open_requests(conn, self.MDE)), 1)
-        card = self.card(self.MDE)
-        self.assertIn("Company research pending</button>", card)
-        self.assertIn('<span class="chip chip-pending">Researching…</span>', card)  # Interested card state
+        self.assertIn("Researching…</button>", self.shortcuts(self.panel(self.MDE)))
         self.assertEqual(self.post("/applications/research", {"app_id": self.MDE, "kind": "nope"})[0], 400)
 
         write(self.private / "companies" / "massive-dynamic-example.md", PROFILE)
         with self.conn() as conn:
             db.save_company_profile(conn, "massive-dynamic-example", research.read_profile(
                 self.private / "companies" / "massive-dynamic-example.md"))
-        card = self.card(self.MDE)
+        panel = self.panel(self.MDE)
+        self.assertIn('data-jump="card-research">Research ✓ 18 Jan</a>', self.shortcuts(panel))
+        card = panel[panel.index('id="card-research"'):]
         self.assertIn("Makes &lt;b&gt;example&lt;/b&gt; widgets.", card)
-        self.assertIn("Suggested tier <strong>B</strong>", card)
-        self.assertIn(">Redo research</button>", card)  # the Interested action row
         self.assertIn(f"/research/file?app={self.MDE}&amp;kind=research", card)
+        self.assertIn(">Redo</button>", card)
         self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
         with self.conn() as conn:
             self.assertEqual(db.open_requests(conn, self.MDE)[0]["force"], 1, "Redo forces new research")
-
-    @staticmethod
-    def actions(body: str) -> str:
-        start = body.index('<section class="panel-actions"')
-        return body[start:body.index("</section>", start)]
 
     def save_both(self) -> None:
         profile = write(self.private / "companies" / "massive-dynamic-example.md", PROFILE)
@@ -329,47 +327,23 @@ class DashboardTest(WebTestCase):
             db.save_company_profile(conn, "massive-dynamic-example", research.read_profile(profile), today=TODAY)
             db.save_cv_fit(conn, self.MDE, 4, ["Go"], str(fit), TODAY)
 
-    def test_interested_panel_action_row(self) -> None:
-        body = self.get(f"/applications?app={self.MDE}&view=list")[2]
-        row = self.actions(body)
-        self.assertLess(body.index('class="panel-actions"'), body.index("<h3>Tasks</h3>"))  # at the top
-        labels = [label for label in ("Company research", "CV fit", "Apply") if f">{label}</" in row]
-        self.assertEqual(labels, ["Company research", "CV fit", "Apply"])
-        self.assertIn('<details class="confirm"><summary class="btn btn-primary btn-sm">Apply</summary>', row)
-        self.assertIn("Mark as applied today?", row)
-        self.assertIn('action="/applications/apply"', row)
-        self.assertIn(f'name="return" value="/applications?app={self.MDE}&amp;view=list"', row)
-        panel = body[body.index('<aside class="panel"'):]
-        self.assertNotIn("Next stage: Applied", panel)  # Apply replaces it
-        self.assertIn('action="/applications/move"', panel)  # Move to… stays
-        section = panel[panel.index("Company and CV fit"):]
-        self.assertNotIn('action="/applications/research"', section)  # no duplicate buttons
-        # other stages keep the buttons in the section and have no action row
-        other = self.get("/applications?app=3")[2]
-        self.assertNotIn('class="panel-actions"', other)
-        self.assertIn('action="/applications/research"', other[other.index("Company and CV fit"):])
-
-    def test_researching_then_ready(self) -> None:
+    def test_results_and_tier_in_the_panel(self) -> None:
         self.post("/offers/interested", {"job_id": "lever:globex-labs:abc"})  # unrelated, queues its own work
         self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
-        body = self.get(f"/applications?app={self.MDE}")[2]
-        self.assertIn('<span class="chip chip-pending">Researching…</span>', self.card(self.MDE))
-        self.assertIn('<p class="research-state" role="status">Researching…</p>', self.actions(body))
-        self.assertIn("Company research pending</button>", self.actions(body))
+        self.assertIn("Researching…", self.shortcuts(self.panel(self.MDE)))
         self.save_both()
-        body = self.get(f"/applications?app={self.MDE}")[2]
-        ready = "Ready: fit\u00a04/5 · tier\u00a0A"  # the fixture's confirmed tier A wins over the suggested B
-        self.assertIn(f'<span class="chip chip-ready">{ready}</span>', self.card(self.MDE))
-        self.assertIn(f'<p class="research-state is-ready" role="status">{ready}</p>', self.actions(body))
-        self.assertIn(">Redo research</button>", self.actions(body))
-        self.assertIn(">Redo CV fit</button>", self.actions(body))
+        panel = self.panel(self.MDE)
+        self.assertIn('data-jump="card-fit">CV fit 4/5</a>', self.shortcuts(panel))
+        company = panel[panel.index('id="card-research"'):panel.index('id="card-fit"')]
+        self.assertIn(">Tier A</span></p>", company)  # the fixture's tier A, not the research's B: no B reason
+        self.assertNotIn("Suggested", company)
         with self.conn() as conn:
-            db.update_application(conn, self.MDE, tier=None)
+            db.update_application(conn, self.MDE, tier="B")
             titles = [t["title"] for t in db.app_tasks(conn)[self.MDE]]
         self.assertIn("Review research and apply", titles)
-        self.assertIn("Ready: fit\u00a04/5 · tier\u00a0B", self.card(self.MDE))  # suggested when none is confirmed
+        self.assertIn(">Tier B</span> Decent fit, less known.", self.panel(self.MDE))  # with the research's reason
         self.post("/applications/research", {"app_id": self.MDE, "kind": "cv_fit"})  # Redo
-        self.assertIn("Researching…", self.card(self.MDE))
+        self.assertIn("Checking CV fit…", self.shortcuts(self.panel(self.MDE)))
 
     def test_apply_from_the_panel(self) -> None:
         status, headers, _ = self.post("/applications/apply", {
@@ -384,12 +358,6 @@ class DashboardTest(WebTestCase):
         self.assertIn("Marked as applied today", self.get(headers["Location"])[2])
         self.assertEqual(self.post("/applications/apply", {"app_id": self.MDE})[0], 400)  # only from Interested
         self.assertEqual(self.post("/applications/apply", {"app_id": "999"})[0], 400)
-
-    def test_tier_confirm(self) -> None:
-        self.assertEqual(self.post("/applications/tier", {"app_id": self.MDE, "tier": "D"})[0], 400)
-        self.post("/applications/tier", {"app_id": self.MDE, "tier": "A"})
-        with self.conn() as conn:
-            self.assertEqual(db.get_application(conn, self.MDE)["tier"], "A")
 
     def test_file_page_escapes_and_guards(self) -> None:
         path = write(self.private / "fit" / f"{self.MDE}-mde.md", FIT + "\n<img src=x onerror=alert(1)>\n")

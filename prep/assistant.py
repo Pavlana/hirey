@@ -43,11 +43,14 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
             for app_id in sorted(kinds)]
 
 
-def ask_command(settings: Settings, app_id: int, message_id: int, dev3: str) -> list[str]:
-    """The `dev3 message` argument list for a new thread message: ids only, never its text."""
+def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str) -> list[str]:
+    """The `dev3 message` argument list for a new message: ids only, never its text. A message about
+    the whole search (no application) is sent as `/ask general <message id>`."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
+    about = "general" if app_id is None else str(int(app_id))
+    subject = "Question on the whole search" if app_id is None else f"Question on application {int(app_id)}"
     return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
-            "--subject", f"Question on application {int(app_id)}", f"/ask {int(app_id)} {int(message_id)}"]
+            "--subject", subject, f"/ask {about} {int(message_id)}"]
 
 
 def notify(settings: Settings, requests: list[dict]) -> int:
@@ -61,7 +64,7 @@ def notify(settings: Settings, requests: list[dict]) -> int:
     return _send(commands(settings, requests, dev3))
 
 
-def notify_message(settings: Settings, app_id: int, message_id: int) -> int:
+def notify_message(settings: Settings, app_id: int | None, message_id: int) -> int:
     """Send `/ask <app id> <message id>`; returns 1 if delivered. Never raises."""
     if not settings.assistant_task:
         return 0
@@ -97,7 +100,7 @@ def notify_in_background(settings: Settings, requests: list[dict]) -> threading.
     return thread
 
 
-def notify_message_in_background(settings: Settings, app_id: int, message_id: int) -> threading.Thread | None:
+def notify_message_in_background(settings: Settings, app_id: int | None, message_id: int) -> threading.Thread | None:
     """notify_message() in a daemon thread, so the Send button never waits for dev3."""
     if not settings.assistant_task:
         return None

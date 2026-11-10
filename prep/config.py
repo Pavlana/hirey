@@ -22,7 +22,8 @@ Keys:
     assistant_project  optional dev3 project id, passed with --project when set
     dev3_bin        optional absolute path to the dev3 CLI (default: found on PATH)
 
-Relative paths are resolved against the repo root, never the current directory,
+An env var set to an empty string clears the assistant keys (CLEARABLE); for every other key an
+empty value is ignored. Relative paths are resolved against the repo root, never the current directory,
 because the code also runs from dev3 worktrees.
 """
 
@@ -54,6 +55,10 @@ ENV_KEYS = {
     "assistant_project": "PREP_ASSISTANT_PROJECT",
     "dev3_bin": "PREP_DEV3_BIN",
 }
+# Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
+# on example data) never pings the standing assistant named in the settings file. Path and number
+# keys ignore an empty value: an empty PREP_DB must never mean "the default database".
+CLEARABLE = ("assistant_task", "assistant_project", "dev3_bin")
 
 
 class ConfigError(Exception):
@@ -119,7 +124,7 @@ def load_settings(path: Path | None = None) -> Settings:
         path = settings_path()
     data = _read_file(path)
     for key, env in ENV_KEYS.items():
-        if os.environ.get(env):
+        if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
     for key in ("getjo_db", "private_dir", "dev3_bin"):

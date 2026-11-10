@@ -6,8 +6,8 @@ Writes data/example.db (prep schema) and data/example-getjo.db (a stand-in for g
 jobs.db). Both are gitignored. Dates are shifted so the fixtures' _anchor_date becomes
 today, so the dashboard shows recent activity. Try the commands against them with:
 
-    PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
-    PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
+    PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
+    PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
 
 Tests use the fixtures unshifted.
 """
@@ -121,8 +121,8 @@ def main() -> int:
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
     log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
-    log.info("try: PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
-    log.info("or:  PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
+    log.info("try: PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
+    log.info("or:  PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
     return 0
 
 

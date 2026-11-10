@@ -33,16 +33,22 @@ the Claude app all find it without environment variables. Single keys can be ove
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
 `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN`. Use absolute paths, with `prep_db`
-outside any worktree: relative paths resolve differently in each worktree.
+outside any worktree: relative paths resolve differently in each worktree. An empty
+`PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
+on example data never messages the standing assistant; empty path and number overrides are
+ignored.
 
 ## Try it with example data
 
 ```bash
 python -m prep.seed_example
-PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
-PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
+PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
+PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
 # then open http://localhost:8766
 ```
+
+`PREP_ASSISTANT_TASK=` (empty) keeps the example run away from the standing assistant set in the
+settings file: its messages and queued research would otherwise be sent to it.
 
 The seed shifts the example dates so the most recent ones fall around today. The example databases are built from made-up fixtures in `tests/fixtures/example.json`
 (fictional companies only) and are gitignored.
@@ -88,35 +94,44 @@ charts are server-rendered SVG):
   banner). Undo deletes the application it created while nothing else has happened to it.
   Interested jobs link to their card; applying happens there. A skip can be undone. Decided
   jobs also drop out of `/today`.
-- **Applications** (`/applications`; `/tasks` redirects): a board with five columns
-  (Interested, Applied, Interviewing, Offer, Closed). Interviewing holds the recruiter call,
-  coding, system design and company interview steps; its cards show step dots and the current
-  step. Closed is a narrow strip with counts (Rejected, No response, Withdrawn) that expands
-  (from the stage strip). Compact cards show company and role, the next task and due date,
-  tier and CV fit, days in stage (Applied turns amber at day 7 and red near the no-response
-  cut-off) and pending agent work; Interested cards show "Researching…" or "Ready: fit N/5 ·
-  tier X". Clicking a card opens a side panel. For an Interested application it starts with
-  **Company research · CV fit · Apply** (Apply asks "Mark as applied today?" and moves it to
-  Applied). Every panel has the tasks (tick done, add one), **Next stage**
-  and **Move to…** (interview date for interview steps, optional comment), company research,
-  CV fit and tier, comments and history; Esc or ✕ closes it. Cards can be dragged between
-  columns (Interviewing asks for the step and date, Closed for the outcome). A stage strip
-  filters by column, and a List view shows one table sorted by the next due task (Days, Fit
-  and Tier are hidden while the panel is open); the Board / List choice is remembered in the
-  browser. Moving creates the new stage's tasks and
-  closes the old stage's open ones. General tasks (no application) and recently done tasks
-  sit below.
+- **Applications** (`/applications`; `/tasks` redirects): the pipeline list on the left with
+  the Agent box under it (below), and the selected application on the right (halves on a
+  laptop, a third and two thirds from 1600px wide, a full-screen sheet on phones). On a laptop the page fits the screen: the list (at most
+  45% of the left column) scrolls inside with its stage filters and headings kept, and the Agent
+  box's input is always in view. The list is grouped by stage (Interested → Applied →
+  Recruiter call → Coding interview → System design → Company interview → Offer) with the
+  columns Company, Role, Stage, Next task and the latest comment (one line, with the count when
+  there are more). A stage strip with counts filters it; closed applications (Rejected, No
+  response, Withdrawn, Skipped) show with **Show closed**. Clicking a row opens the panel:
+  company, role, stage with interview steps, days in this stage and the job posting; the
+  latest comment (and how many came before it); the shortcut buttons **Research company · CV fit · Tailor CV · Mark
+  applied · Skip** (each shows its state: "Researching…", "CV fit 4/5", "CV v2 · sent"; Mark
+  applied and Skip only while Interested); then the tasks (tick ☐ to mark
+  one done, with Undo), the agent's results (company research with the tier and why, CV fit,
+  every tailored CV version with Open and Redo) and the stage history. Mark applied records
+  Applied today at once and offers Undo, which moves it back to Interested. Skip asks for a
+  reason (the Job Offers reasons) and an optional comment, closes the application as Skipped
+  and lists the job under Job Offers → Skipped. Everything else (tasks, comments, stage,
+  interview dates, tier, which CV was sent) is asked of the agent in the Agent box. Esc or ✕
+  closes the panel. Every task is added, changed or removed through the agent; tasks with no
+  application are listed by `/task` and `/today`.
 
 ### Company research and CV fit
 
-Marking a job Interested queues company research and a CV fit check for the agent. Each card
-also has **Research** and **CV fit** buttons (in the action row for Interested cards), which
-read **Redo** once a result exists. Once both results are saved for an application still in
+Marking a job Interested queues company research and a CV fit check for the agent. The panel's
+**Research company** and **CV fit** shortcuts queue them by hand; once a result exists, its card
+below has **Redo**. Once both results are saved for an application still in
 Interested, it gets a "Review research and apply" task, due in two days. The
 dashboard never runs the agent. The `/research` skill does the work in a Claude Code session.
-It writes `companies/<slug>.md` and `fit/<id>-<slug>.md` to `private_dir`, and the card shows
-the summary (suggested tier, fit score, top gaps) with an **Open** link to a read-only view of
-the file.
+It writes `companies/<slug>.md` and `fit/<id>-<slug>.md` to `private_dir`, sets the
+application's tier (A/B/C) from the research, and the panel shows the summary (tier and why,
+fit score, top gaps) with an **Open** link to a read-only view of the file.
+
+**Tailor CV** asks the agent for a copy of `cv.md` tailored to the job. Each version is its own
+file, `private_dir/cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md` (for example
+`CV_Globex_FDE_210926_2.md`), and every version is kept; `cv.md` is never changed. Changes are
+asked for in the Agent box and saved as the next version. Telling the agent which file was sent
+("sent CV_Globex_FDE_210926_2") marks that version as sent.
 
 Queued work is picked up three ways:
 
@@ -127,19 +142,30 @@ Queued work is picked up three ways:
   settings, new requests are sent at once to that long-running dev3 task as
   `/research <id>`.
 
-### Agent thread
+### Agent box
 
-Each card's side panel has an **Agent** section: a message thread with the standing assistant.
-Typical messages:
+Under the pipeline list is one **Agent** box: a conversation with the standing assistant for the
+whole search. With an application open, a message is about that job ("About Globex — Platform
+Engineer", ticked); untick it, or close the panel, to ask about everything. Each message shows
+its job as a tag (click it to open the job) or "all jobs"; with a panel open, **This job** shows
+only that job's messages. Typical messages:
 
+- "Which tasks need my review?" The agent answers with the 3 most urgent open tasks in a fixed
+  order (overdue, due today, interview prep for the nearest interview, ready to apply, upcoming,
+  no date), numbered, with a few words on why, how many more there are ("show the rest" lists
+  them), and separately what it is still working on. "Done 1 and 3" or "move 2
+  to Friday" then does it. `python -m prep.cli review [--all]` prints the same order.
 - A question about the company or the fit ("good employer?", "their stack?", "competitors?").
   The agent answers from the research and fit files and the job description, searches the web
   if needed, cites sources, and updates the company file when it learns something new.
 - A pasted recruiter email or call notes. The agent does what `/stage` does (stage, interview
   date, short comment, extra to-dos) and replies in a line or two.
+- A change: add, edit or remove a task or a comment, move the stage, set the tier, record which
+  CV was sent, skip the job, or revise the tailored CV. The agent runs the command and replies in
+  one line; the list, the panel and the conversation refresh on their own.
 
-The dashboard only stores the message and pings the assistant with the application and
-message ids, never the text. It shows "Agent is working…" and refreshes the thread when the
+The dashboard only stores the message and pings the assistant with the application (or
+"general") and message ids, never the text. It shows "Agent is working…" and refreshes when the
 reply arrives. Without an assistant the message waits. The SessionStart hook and `/today`
 report it, and `/ask` answers it in any Claude Code session. Pasted emails are treated as data:
 the agent never sends email, applies or contacts anyone.

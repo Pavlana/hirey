@@ -329,3 +329,54 @@ class FeedbackExportTest(IsolatedTestCase):
             code, _, err = self.run_cli("feedback", "export")
         self.assertNotEqual(code, 0)
         self.assertIn("private_dir", err)
+
+
+class AgentCommandsTest(IsolatedTestCase):
+    """The commands /ask uses for plain requests: task edit/delete, comments, skip, thread show."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        with closing(db.connect(self.prep_db)) as conn:
+            self.app, _ = db.record_application(conn, "Globex Labs", "Engineer", status="to_apply",
+                                                getjo_job_id="lever:globex-labs:abc")
+            self.task = db.add_task(conn, "Send availability", "admin", days(2), self.app)
+
+    def test_task_edit_and_delete(self) -> None:
+        code, out, _ = self.run_cli("task", "edit", str(self.task), "--title", "Send availability to Sam", "--due", "+5")
+        self.assertEqual(code, 0)
+        self.assertIn(f"Send availability to Sam due {days(5)}", out)
+        self.assertNotIn(" due ", self.run_cli("task", "edit", str(self.task), "--no-due")[1].split(" — ")[0])
+        self.assertEqual(self.run_cli("task", "edit", str(self.task))[0], 2)  # nothing to change
+        code, out, _ = self.run_cli("task", "delete", str(self.task))
+        self.assertIn("Deleted: #", out)
+        self.assertEqual(self.run_cli("task", "delete", str(self.task))[0], 2)
+
+    def test_comments_list_amend_remove(self) -> None:
+        self.run_cli("comment", str(self.app), "Referral from a former colleague")
+        out = self.run_cli("comments", "list", str(self.app))[1]
+        ref = out.split("\n")[1].split()[0]
+        self.assertTrue(ref.startswith("c"))
+        self.assertIn("Referral from a former colleague", out)
+        self.assertEqual(self.run_cli("comments", "amend", ref, "Referral from Sam")[0], 0)
+        self.assertIn("Referral from Sam", self.run_cli("comments", "list", str(self.app))[1])
+        self.assertIn(f"Comment {ref} removed.", self.run_cli("comments", "remove", ref)[1])
+        self.assertIn("none", self.run_cli("comments", "list", str(self.app))[1])
+        self.assertEqual(self.run_cli("comments", "remove", "z9")[0], 2)
+
+    def test_skip(self) -> None:
+        self.assertEqual(self.run_cli("skip", str(self.app), "--reason", "nope")[0], 2)
+        code, out, _ = self.run_cli("skip", str(self.app), "--reason", "seniority", "--comment", "Staff level")
+        self.assertEqual(code, 0)
+        self.assertIn("Job Offers shows it under Skipped", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.get_application(conn, self.app)["status"], "skipped")
+        code, _, err = self.run_cli("skip", str(self.app), "--reason", "seniority")
+        self.assertEqual(code, 2)
+        self.assertIn("Only an Interested", err)
+
+    def test_thread_show_lists_tasks_and_comments_with_ids(self) -> None:
+        self.run_cli("comment", str(self.app), "Take-home due Friday")
+        out = self.run_cli("thread", "show", str(self.app))[1]
+        self.assertIn("Stage: interested · tier –", out)
+        self.assertIn(f"  #{self.task} [admin] Send availability due {days(2)}", out)
+        self.assertRegex(out, r"  c\d+ \d{4}-\d\d-\d\d: Take-home due Friday")

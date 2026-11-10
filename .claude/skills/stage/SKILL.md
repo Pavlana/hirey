@@ -40,6 +40,7 @@ Stages (`--status` value → what the user sees):
 | offer, "we'd like to make you an offer" | `offer` |
 | rejection, "decided not to proceed", "other candidates" | `rejected` |
 | the user withdrew or declined | `withdrawn` |
+| the user decided not to apply (still Interested) | `python -m prep.cli skip ID --reason R` instead of `update` |
 | sent the application | `applied` |
 
 - An invitation to a stage moves the application to that stage, with its date if the text

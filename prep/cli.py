@@ -6,18 +6,25 @@
     python -m prep.cli update APP_ID [--status S [--comment TEXT] [--interview-date DATE]]
                                      [--next-action TEXT [--next-date DATE]] ...
     python -m prep.cli comment APP_ID TEXT
+    python -m prep.cli comments list APP_ID | amend REF TEXT | remove REF   (REF: c12 or h34)
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
+    python -m prep.cli task edit TASK_ID [--title T] [--due DATE | --no-due]
+    python -m prep.cli task delete TASK_ID
+    python -m prep.cli skip APP_ID --reason R [--comment TEXT]   (Interested only, as the panel's Skip)
+    python -m prep.cli cv sent APP_ID FILE_NAME           (which tailored CV version was sent)
     python -m prep.cli feedback export [--out PATH]
     python -m prep.cli queue                          (read-only: counts and application ids)
     python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
     python -m prep.cli research queue APP_ID [--kind research|cv_fit] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
+    python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
     python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin)
-    python -m prep.cli thread show APP_ID [--claim]      (the Agent thread and its context; used by /ask)
-    python -m prep.cli thread reply APP_ID --to MSG_ID [--file PATH]   (reply text from the file or stdin)
+    python -m prep.cli thread show [APP_ID] [--claim]    (messages and context; no id: the whole search)
+    python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
+    python -m prep.cli review [--all]                  (read-only: the top 3 open tasks in review order)
     python -m prep.cli thread pending
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
@@ -30,6 +37,7 @@ import argparse
 import json
 import logging
 import os
+import shutil
 import sqlite3
 import sys
 from contextlib import closing
@@ -282,6 +290,46 @@ def cmd_comment(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     return 0
 
 
+def cmd_comments(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """List, amend or remove comments; a ref is c<id> (free comment) or h<id> (comment on a stage change)."""
+    if args.comments_cmd == "list":
+        app = db.get_application(conn, args.app_id)
+        if app is None:
+            raise LookupError(f"no application with id {args.app_id}")
+        found = db.comments(conn, args.app_id)
+        print(f"Comments on {_app_line(app)}, newest first:")
+        print("\n".join(_comment_line(c) for c in found) or "  none")
+    elif args.comments_cmd == "amend":
+        db.amend_comment(conn, args.ref, args.text)
+        print(f"Comment {args.ref} amended.")
+    else:
+        db.remove_comment(conn, args.ref)
+        print(f"Comment {args.ref} removed" + (" (the stage change stays)." if args.ref.startswith("h") else "."))
+    log.info("comment %s: %s", args.comments_cmd, getattr(args, "ref", ""))  # never the text
+    return 0
+
+
+def _comment_line(c: dict) -> str:
+    stage = f" [with move to {db.status_label(c['status'])}]" if c["status"] else ""
+    return f"  {c['ref']} {c['at'][:10]}{stage}: {c['body']}"
+
+
+def cmd_skip(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    db.skip_application(conn, args.app_id, args.reason, args.comment)
+    log.info("application %s skipped (reason %s)", args.app_id, args.reason)  # never the comment
+    print(f"Skipped {_app_line(db.get_application(conn, args.app_id))}; open tasks and agent requests closed"
+          + ("; Job Offers shows it under Skipped." if db.get_application(conn, args.app_id)["getjo_job_id"] else "."))
+    return 0
+
+
+def cmd_cv(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    version = db.record_cv_sent(conn, args.app_id, args.name)
+    log.info("cv sent recorded for application %s (v%s)", args.app_id, version["version"])
+    print(f"Recorded: {Path(version['file_path']).name} (v{version['version']}) was sent for "
+          f"{_app_line(db.get_application(conn, args.app_id))}")
+    return 0
+
+
 def cmd_task(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     if args.task_cmd == "add":
         task_id = db.add_task(conn, args.title, args.kind, args.due, args.app)
@@ -293,6 +341,14 @@ def cmd_task(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
     elif args.task_cmd == "done":
         db.complete_task(conn, args.task_id)
         print(f"Done: {_task_line(_get_task(conn, args.task_id))}")
+    elif args.task_cmd == "edit":
+        if args.title is None and args.due is None and not args.no_due:
+            raise SystemExit("error: nothing to change; give --title, --due or --no-due")
+        db.edit_task(conn, args.task_id, args.title, args.due, args.no_due)
+        print(f"Changed: {_task_line(_get_task(conn, args.task_id))}")
+    elif args.task_cmd == "delete":
+        task = db.delete_task(conn, args.task_id)
+        print(f"Deleted: {_task_line(task)}")
     return 0
 
 
@@ -360,11 +416,21 @@ def _thread_line(messages: list[dict]) -> str:
     """One line: thread messages waiting for the agent, with application ids only (never text)."""
     if not messages:
         return ""
-    apps = ", ".join(str(a) for a in sorted({m["application_id"] for m in messages}))
+    ids = {m["application_id"] for m in messages}
+    apps = ", ".join([str(a) for a in sorted(i for i in ids if i is not None)] + (["general"] if None in ids else []))
     claimed = sum(1 for m in messages if m.get("claimed"))
     busy = f"; {claimed} already being answered by another session" if claimed else ""
     noun = "message" if len(messages) == 1 else "messages"
     return f"Agent thread: {len(messages)} {noun} waiting (applications {apps}){busy}. Run /ask to answer."
+
+
+def _messages_query(conn: sqlite3.Connection) -> str:
+    """Waiting user messages: agent_messages, or the older per-application table in a database no
+    newer version has opened yet (queue never migrates: it is read-only)."""
+    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_messages'").fetchone()
+    table = "agent_messages" if found else "application_messages"
+    return (f"SELECT application_id, 'message', status, claimed_at FROM {table} "
+            "WHERE author = 'user' AND status IN ('pending', 'claimed') ORDER BY id")
 
 
 def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
@@ -381,8 +447,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
             for query, line in (
                 ("SELECT application_id, kind, status, claimed_at FROM agent_requests "
                  "WHERE status IN ('pending', 'claimed') ORDER BY id", _queue_line),
-                ("SELECT application_id, 'message', status, claimed_at FROM application_messages "
-                 "WHERE author = 'user' AND status IN ('pending', 'claimed') ORDER BY id", _thread_line),
+                (_messages_query(conn), _thread_line),
             ):
                 try:
                     rows = conn.execute(query).fetchall()
@@ -491,11 +556,17 @@ def _print_tailor_step(conn: sqlite3.Connection, settings: Settings, private_dir
     current = db.tailored_cv(conn, app["id"])
     print("\nTailored CV (a copy for this job only; never edit cv.md):")
     if current:
-        print(f"  Redo requested: rewrite the copy from the current cv.md (now version {current['version']})")
+        print(f"  Redo requested: write a new version from the current cv.md (latest is version {current['version']}, "
+              f"{Path(current['file_path']).name}; it is kept)")
     print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before tailoring'})")
     if fit:
         print(f"  CV fit: {fit['file_path']} (score {fit['score']}/5; use its gaps and advice)")
-    print(f"  file: {research.tailored_file(private_dir, app['id'], slug)}")
+    if app.get("role_short"):
+        print(f"  file: run python -m prep.cli tailor path {app['id']} (role short name {app['role_short']}); "
+              "it prints the new version's file")
+    else:
+        print(f"  file: pick a short role name (e.g. FDE, AIEng, PlatEng), then run python -m prep.cli tailor path "
+              f"{app['id']} --role-short X; it prints the file (CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md)")
     style = research.style_file(private_dir)
     print(f"  agreed wording: {style} ({'exists: reuse it' if style.is_file() else 'missing'})")
     print("  rules: only rephrase, reorder and cut what cv.md says; never invent experience. Anything the")
@@ -535,8 +606,10 @@ def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     profile["company"] = profile["company"] or app["company"]
     mark = _last_task_id(conn)
     app_ids = db.save_company_profile(conn, slug, profile)
+    if profile["suggested_tier"]:  # whoever researches sets the tier on this application (per role, not per company)
+        db.update_application(conn, app["id"], tier=profile["suggested_tier"])
     log.info("company profile %s saved", slug)
-    tier = f", suggested tier {profile['suggested_tier']}" if profile["suggested_tier"] else ""
+    tier = f", tier {profile['suggested_tier']} set on #{app['id']}" if profile["suggested_tier"] else ""
     print(f"Saved company profile {slug} ({profile['researched_at']}{tier}); "
           f"research done for applications {', '.join(map(str, app_ids))}")
     _print_review_tasks(conn, mark)
@@ -573,26 +646,62 @@ def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
     return 0
 
 
+def _next_tailored_file(settings: Settings, conn: sqlite3.Connection, app: dict) -> Path:
+    """Where the next version of an application's tailored CV goes (today's date, version + 1)."""
+    if not app.get("role_short"):
+        raise SystemExit(f"error: no role short name yet: run python -m prep.cli tailor path {app['id']} "
+                         "--role-short X (e.g. FDE, AIEng) first")
+    current = db.tailored_cv(conn, app["id"])
+    return research.tailored_file(_private_dir(settings), app["company"], app["role_short"], db.today_iso(),
+                                  (current["version"] if current else 0) + 1)
+
+
 def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
-    """tailor save: record the tailored copy (version + 1) and post the note from stdin in the
-    thread; with --to it answers that user message (a revision asked for in the thread)."""
+    """tailor path: the next version's file (storing the role short name the first time; --copy starts
+    it from the latest version, for a revision). tailor save: record that file as a new version and
+    post the note from stdin in the thread; with --to it answers that user message."""
     app = db.get_application(conn, args.app_id)
     if app is None:
         raise LookupError(f"no application with id {args.app_id}")
-    slug = db.company_slug(app["company"])
-    path = (Path(args.file).expanduser() if args.file
-            else research.tailored_file(_private_dir(settings), args.app_id, slug))
+    if args.tailor_cmd == "path":
+        return _tailor_path(args, settings, conn, app)
+    path = Path(args.file).expanduser() if args.file else _next_tailored_file(settings, conn, app)
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
     _, body = research.split_front_matter(path.read_text(encoding="utf-8"))  # the same +++ block as the other files
     note = sys.stdin.read()
     version = db.save_tailored_cv(conn, args.app_id, str(path), note, args.to)
     log.info("tailored cv v%s saved for application %s", version, args.app_id)  # never the CV or the note
-    print(f"Saved tailored CV v{version} for #{args.app_id}; the note is in the thread"
+    print(f"Saved tailored CV v{version} ({path.name}) for #{args.app_id}; the note is in the thread"
           + (f" as the reply to message {args.to}." if args.to else "."))
     words = research.word_count(body)
     print(f"  {words} words" + (f": WARNING, over {research.TAILOR_MAX_WORDS:,} (about two pages); cut older "
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
+    return 0
+
+
+def _tailor_path(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    if args.role_short:
+        word = research.role_short_word(args.role_short)
+        if app.get("role_short") and app["role_short"] != word:
+            raise SystemExit(f"error: this application's role short name is {app['role_short']}; it stays "
+                             "the same for every version")
+        if not app.get("role_short"):
+            db.update_application(conn, app["id"], role_short=word)
+            app = db.get_application(conn, app["id"])
+    path = _next_tailored_file(settings, conn, app)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    current = db.tailored_cv(conn, app["id"])
+    if args.copy:
+        if current is None:
+            raise SystemExit("error: no tailored CV yet to copy; write the first version from cv.md")
+        if path.exists():
+            raise SystemExit(f"error: {path} already exists")
+        shutil.copyfile(current["file_path"], path)
+    print(path)
+    print(f"  version {(current['version'] if current else 0) + 1}"
+          + (f", copied from v{current['version']} ({Path(current['file_path']).name}): edit it" if args.copy else "")
+          + f"; then: python -m prep.cli tailor save {app['id']} [--to MSG] with the note on stdin")
     return 0
 
 
@@ -601,16 +710,19 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         waiting = db.pending_messages(conn)
         for m in waiting:
             busy = ", being answered by another session" if m["claimed"] else ""
-            print(f"message {m['id']} on #{m['application_id']} {m['company']} — {m['role']} "
-                  f"(sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
+            about = (f"on #{m['application_id']} {m['company']} — {m['role']}" if m["application_id"] is not None
+                     else "about the whole search (/ask general)")
+            print(f"message {m['id']} {about} (sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
         if not waiting:
             print("No thread messages waiting.")
         return 0
+    if args.thread_cmd == "reply":
+        return _thread_reply(args, conn)
+    if args.app_id is None:
+        return _general_show(args, conn)
     app = db.get_application(conn, args.app_id)
     if app is None:
         raise LookupError(f"no application with id {args.app_id}")
-    if args.thread_cmd == "reply":
-        return _thread_reply(args, conn, app)
     return _thread_show(args, settings, conn, app)
 
 
@@ -629,7 +741,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
     profile, fit = db.company_profile(conn, slug), db.cv_fit(conn, app["id"])
     if private_dir:
         company = Path(profile["file_path"]) if profile else research.company_file(private_dir, slug)
-        note = f", researched {profile['researched_at']}, suggested tier {profile['suggested_tier'] or '–'}" if profile else ""
+        note = f", researched {profile['researched_at']}, research tier {profile['suggested_tier'] or '–'}" if profile else ""
         print(f"  company research: {company} ({'exists' if company.is_file() else 'missing'}{note})")
         print(f"    after updating it: python -m prep.cli research save {app['id']}")
         fit_path = Path(fit["file_path"]) if fit else research.fit_file(private_dir, app["id"], slug)
@@ -637,29 +749,71 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
         print(f"  CV fit: {fit_path} ({'exists' if fit_path.is_file() else 'missing'}{note})")
         cv = private_dir / research.CV_FILE
         print(f"  CV: {cv} ({'exists' if cv.is_file() else 'missing'}; the master CV: never edit it here)")
-        tailored = db.tailored_cv(conn, app["id"])
-        if tailored:
-            path = Path(tailored["file_path"])
-            print(f"  tailored CV: {path} ({'exists' if path.is_file() else 'missing'}, version {tailored['version']})")
-            print(f"    after revising it: python -m prep.cli tailor save {app['id']} --to MSG "
-                  "with what changed on stdin (this is the reply)")
+        versions = db.tailored_versions(conn, app["id"])
+        if versions:
+            print("  tailored CV versions (each its own file, all kept; the latest last):")
+            for v in versions:
+                path = Path(v["file_path"])
+                sent = " · SENT" if app.get("cv_sent_version") == v["version"] else ""
+                print(f"    v{v['version']} {path} ({'exists' if path.is_file() else 'missing'}){sent}")
+            print(f"    to revise: python -m prep.cli tailor path {app['id']} --copy (new version file), edit it, then "
+                  f"python -m prep.cli tailor save {app['id']} --to MSG with what changed on stdin (this is the reply)")
+            print(f"    the user sent one: python -m prep.cli cv sent {app['id']} FILE_NAME")
             style = research.style_file(private_dir)
             print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
-        if app.get("cv_sent"):
-            print(f"  CV sent: {app['cv_sent']} (version {app['cv_sent_version']}, frozen)")
     else:
         print("  private_dir is not set: no research, CV fit or CV files")
     _print_job_description(settings, app)
+    print(f"\nStage: {db.status_label(app['status'])} · tier {app['tier'] or '–'}")
+    tasks = db.app_tasks(conn).get(app["id"], [])
+    print(f"Open tasks ({len(tasks)}):")
+    print("\n".join(f"  {_task_line(t)}" for t in tasks) or "  none")
+    found = db.comments(conn, app["id"])
+    print(f"Comments ({len(found)}, newest first; refs for comments amend/remove):")
+    print("\n".join(_comment_line(c) for c in found) or "  none")
 
-    messages = db.thread(conn, app["id"])
-    print(f"\nThread ({len(messages)} message{'' if len(messages) == 1 else 's'}, oldest first):")
+    _print_messages(db.thread(conn, app["id"]), f"Messages about #{app['id']}")
+    _print_claim(args, claimed, db.pending_messages(conn, app["id"]))
+    return 0
+
+
+def _general_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """`thread show` with no application: messages about the whole search ("which tasks need me?").
+    Prints the open applications, the review order and the latest of the conversation."""
+    claimed = db.claim_messages(conn, None) if args.claim else []
+    print("Messages about the whole search (no application). Context:")
+    tasks = db.app_tasks(conn)
+    latest = db.latest_comments(conn)
+    print("\nOpen applications:")
+    for a in db.list_applications(conn):
+        if a["status"] in db.CLOSED_STATUSES and a["status"] != "offer":
+            continue
+        nxt = tasks.get(a["id"], [None])[0]
+        comment = f" · latest comment: {latest[a['id']][0]}" if a["id"] in latest else ""
+        print(f"  #{a['id']} {a['company']} — {a['role']} [{db.status_label(a['status'])}] tier {a['tier'] or '–'}"
+              + (f" · next: {nxt['title']}" if nxt else "") + comment)
+    print()
+    _print_review(conn)
+    _print_messages(db.thread(conn, limit=GENERAL_CONTEXT), f"The conversation (latest {GENERAL_CONTEXT})")
+    _print_claim(args, claimed, [m for m in db.pending_messages(conn) if m["application_id"] is None])
+    return 0
+
+
+GENERAL_CONTEXT = 30  # messages of the whole conversation shown with a general question
+
+
+def _print_messages(messages: list[dict], title: str) -> None:
+    print(f"\n{title} ({len(messages)} message{'' if len(messages) == 1 else 's'}, oldest first):")
     for m in messages:
         who = f"agent, reply to {m['reply_to']}" if m["author"] == "agent" else f"user, {m['status']}"
-        print(f"\n  [message {m['id']} · {who} · {m['created_at'][:16].replace('T', ' ')} UTC]")
+        about = f"#{m['application_id']} {m['company']}" if m["application_id"] is not None else "whole search"
+        print(f"\n  [message {m['id']} · {who} · {about} · {m['created_at'][:16].replace('T', ' ')} UTC]")
         print("\n".join(f"    {line}" for line in m["body"].splitlines()))
     if not messages:
         print("  none")
-    waiting = [m for m in db.pending_messages(conn, app["id"])]
+
+
+def _print_claim(args: argparse.Namespace, claimed: list[int], waiting: list[dict]) -> None:
     print()
     if args.claim:
         if claimed:
@@ -670,17 +824,51 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
         else:
             print("Nothing waiting on this thread.")
     for msg_id in claimed or [m["id"] for m in waiting]:
-        print(f"To answer message {msg_id}: python -m prep.cli thread reply {app['id']} --to {msg_id} "
+        print(f"To answer message {msg_id}: python -m prep.cli thread reply --to {msg_id} "
               "with the text on stdin (or --file PATH)")
-    return 0
 
 
-def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection, app: dict) -> int:
+def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
+    """The reply goes with the message's application (or the whole search); an APP given must match."""
+    app_id = db.message_application(conn, args.to)
+    if args.app_id is not None and args.app_id != app_id:
+        raise LookupError(f"message {args.to} is not about application {args.app_id}")
     text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-    reply_id = db.reply_message(conn, app["id"], args.to, text)
-    print(f"Reply {reply_id} saved on #{app['id']} {app['company']}; message {args.to} answered. "
-          "The dashboard panel shows it.")
+    reply_id = db.reply_message(conn, app_id, args.to, text)
+    about = f"about #{app_id}" if app_id is not None else "about the whole search"
+    print(f"Reply {reply_id} saved {about}; message {args.to} answered. The dashboard's Agent box shows it.")
     return 0
+
+
+REVIEW_TOP = 3  # "which tasks need me?" answers with the top three; --all for the rest
+
+
+def cmd_review(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Read-only: the most urgent open tasks (all with --all), in the order the user should look at
+    them, and the agent's own work."""
+    _print_review(conn, None if args.all else REVIEW_TOP)
+    return 0
+
+
+def _print_review(conn: sqlite3.Connection, limit: int | None = REVIEW_TOP) -> None:
+    tasks = db.review_tasks(conn)
+    shown = tasks[:limit] if limit else tasks
+    print(f"Tasks that need you ({len(tasks)}), " + (f"the top {len(shown)} in order:" if len(shown) < len(tasks)
+                                                      else "in order:"))
+    for n, t in enumerate(shown, 1):
+        due = f" · due {t['due_date']}" if t["due_date"] else ""
+        interview = f" · interview {t['interview_date']}" if t["interview_date"] else ""
+        app = (f" — #{t['application_id']} {t['company']}, {t['role']} [{db.status_label(t['app_status'])}]"
+               if t["application_id"] is not None else " — no application")
+        print(f"  {n}. [{t['group']}{due}{interview}] {t['title']}{app} · task #{t['id']}")
+    if not tasks:
+        print("  none")
+    if len(shown) < len(tasks):
+        print(f"  … and {len(tasks) - len(shown)} more (python -m prep.cli review --all)")
+    work = db.open_requests(conn)
+    if work:
+        print("The agent is working on (not waiting on you): " + "; ".join(
+            f"{db.REQUEST_LABELS[r['kind']].lower()} for #{r['application_id']} {r['company']}" for r in work))
 
 
 def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
@@ -744,6 +932,30 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.set_defaults(func=cmd_comment)
 
+    p = sub.add_parser("comments", help="list, amend or remove an application's comments")
+    csub = p.add_subparsers(dest="comments_cmd", required=True)
+    c = csub.add_parser("list", help="comments with their refs (c12: free comment, h34: with a stage change)")
+    c.add_argument("app_id", type=int)
+    c = csub.add_parser("amend", help="replace a comment's text")
+    c.add_argument("ref")
+    c.add_argument("text")
+    c = csub.add_parser("remove", help="delete a comment (a stage change keeps its move)")
+    c.add_argument("ref")
+    p.set_defaults(func=cmd_comments)
+
+    p = sub.add_parser("skip", help="skip an Interested application (closes it; Job Offers shows it as skipped)")
+    p.add_argument("app_id", type=int)
+    p.add_argument("--reason", required=True, choices=db.SKIP_REASONS)
+    p.add_argument("--comment")
+    p.set_defaults(func=cmd_skip)
+
+    p = sub.add_parser("cv", help="record which tailored CV version was sent")
+    vsub = p.add_subparsers(dest="cv_cmd", required=True)
+    v = vsub.add_parser("sent", help="the file name of the version the user sent")
+    v.add_argument("app_id", type=int)
+    v.add_argument("name", help="e.g. CV_OpenAI_FDE_210926_2 (with or without .md)")
+    p.set_defaults(func=cmd_cv)
+
     p = sub.add_parser("task", help="add, list, complete tasks")
     tsub = p.add_subparsers(dest="task_cmd", required=True)
     t = tsub.add_parser("add")
@@ -756,6 +968,14 @@ def build_parser() -> argparse.ArgumentParser:
     group.add_argument("--all", action="store_true")
     group.add_argument("--done", action="store_true")
     t = tsub.add_parser("done")
+    t.add_argument("task_id", type=int)
+    t = tsub.add_parser("edit", help="change a task's title or due date")
+    t.add_argument("task_id", type=int)
+    t.add_argument("--title")
+    group = t.add_mutually_exclusive_group()
+    group.add_argument("--due", type=parse_day)
+    group.add_argument("--no-due", action="store_true", help="remove the due date")
+    t = tsub.add_parser("delete", help="delete a task")
     t.add_argument("task_id", type=int)
     p.set_defaults(func=cmd_task)
 
@@ -790,23 +1010,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("tailor", help="tailored CV copies (used by /research and /ask)")
     tsub = p.add_subparsers(dest="tailor_cmd", required=True)
-    t = tsub.add_parser("save", help="record cv-tailored/<app-id>-<slug>.md; the thread note comes on stdin")
+    t = tsub.add_parser("path", help="print the next version's file (CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md)")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--role-short", help="short role name for file names, set once (e.g. FDE, AIEng)")
+    t.add_argument("--copy", action="store_true", help="start it as a copy of the latest version (revisions)")
+    t = tsub.add_parser("save", help="record the next version's file (or --file) as a new version; the thread note comes on stdin")
     t.add_argument("app_id", type=int)
     t.add_argument("--to", type=int, help="the user message this revision answers")
-    t.add_argument("--file", help="default: private_dir/cv-tailored/<app-id>-<slug>.md")
+    t.add_argument("--file", help="default: the path `tailor path` prints")
     p.set_defaults(func=cmd_tailor)
 
     p = sub.add_parser("thread", help="the Agent thread on an application's panel (used by /ask)")
     hsub = p.add_subparsers(dest="thread_cmd", required=True)
-    t = hsub.add_parser("show", help="the application, its context files and its thread")
-    t.add_argument("app_id", type=int)
+    t = hsub.add_parser("show", help="an application's context and messages, or (no id) the whole search")
+    t.add_argument("app_id", type=int, nargs="?")
     t.add_argument("--claim", action="store_true", help="take the waiting messages for this session first")
     t = hsub.add_parser("reply", help="reply to a user message (text from --file or stdin)")
-    t.add_argument("app_id", type=int)
+    t.add_argument("app_id", type=int, nargs="?", help="optional: checked against the message's application")
     t.add_argument("--to", type=int, required=True, help="the user message id being answered")
     t.add_argument("--file", help="a file holding the reply (default: stdin)")
     hsub.add_parser("pending", help="user messages waiting for the agent")
     p.set_defaults(func=cmd_thread)
+
+    p = sub.add_parser("review", help="read-only: the top 3 open tasks in the order to look at them, and the agent's work")
+    p.add_argument("--all", action="store_true", help="every open task, not only the top 3")
+    p.set_defaults(func=cmd_review)
     return parser
 
 

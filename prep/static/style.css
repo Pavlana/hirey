@@ -371,15 +371,45 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 .toast.is-leaving { opacity: 0; transform: translateY(6px); transition: opacity .2s, transform .2s; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-/* --- applications board ------------------------------------------------------------
-   A wide page: the board (or list) to scan on the left, the side panel for one application on
-   the right. Five columns; Closed is a narrow strip (<details>) that expands. Cards are links,
+/* --- applications ----------------------------------------------------------------
+   The pipeline list on the left, the side panel for one application on the right: halves on
+   laptops, a third and two thirds from 1600px, a full-screen sheet on phones. List rows are links,
    so they open the panel without the script. */
-main:has(.apps) { max-width: 1680px; }
+main:has(.apps) { max-width: 1880px; }
 .apps { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
-.apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) minmax(340px, 400px); }
-.apps-main { min-width: 0; }
-.card-board > .card-body { padding: var(--space-4); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); }
+.apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (min-width: 1600px) { .apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); } }
+.apps-main { min-width: 0; display: grid; gap: var(--space-4); }
+.card-pipeline > .card-body { padding: var(--space-4) 0 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+.card-pipeline .stage-strip { padding: 0 var(--space-4); gap: var(--space-2); }
+.card-pipeline .stage-pills { gap: 4px; }
+.card-pipeline :is(.stage-pill, .view-btn) { height: 26px; font-size: 12.5px; padding: 0 8px 0 10px; gap: 4px; }
+.card-pipeline .empty { padding-bottom: var(--space-4); }
+/* Layout A (laptop and up): the Applications page is exactly the viewport's height and never
+   scrolls. The title stays at the top; below it the left column holds the pipeline (what it
+   needs, at most 45%; its rows scroll inside while the stage strip and the column headings stay)
+   and the Agent box (the rest, at least 55%: its messages scroll, its input stays at the bottom); the panel on the right scrolls
+   inside. Phones keep everything stacked. */
+@media (min-width: 801px) {
+  main:has(.apps) { height: 100vh; padding-top: var(--space-5); padding-bottom: var(--space-4); gap: var(--space-3); }
+  main:has(.apps) .page-head { flex: none; }
+  main:has(.apps) .page-head h1 { font-size: 32px; }
+  .apps { flex: 1; min-height: 0; align-items: stretch; grid-template-rows: minmax(0, 1fr); }
+  .apps > .panel { position: static; max-height: none; min-height: 0; }
+  .apps-main { min-height: 0; display: flex; flex-direction: column; gap: var(--space-3); }
+  .apps-main > .card { display: flex; flex-direction: column; min-height: 0; }
+  .apps-main > .card > .card-head { flex: none; }
+  .card-pipeline { flex: 0 1 auto; max-height: 45%; }
+  .card-pipeline > .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: var(--space-3); }
+  .card-pipeline .stage-strip { flex: none; }
+  .card-pipeline .app-list.table-wrap { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
+  .card-agent { flex: 1 1 0; min-height: 220px; }
+  .card-agent > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .card-agent .thread { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .card-agent .msgs { flex: 1; min-height: 0; max-height: none; }
+  .card-agent form.ask { flex: none; }
+  .card-agent form.ask textarea { min-height: 56px; }
+}
 
 .stage-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .stage-pills { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -390,148 +420,123 @@ main:has(.apps) { max-width: 1680px; }
 .stage-pill:hover, .view-btn:hover { color: var(--text); background: var(--surface-2); text-decoration: none; }
 .stage-pill.is-active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
 .stage-pill.is-active .count { background: var(--accent); color: var(--on-accent); }
-.view-toggle { display: inline-flex; border: 1px solid var(--border-strong); border-radius: var(--radius-full); padding: 2px; }
-.view-btn { border: 0; height: 26px; padding: 0 12px; }
-.view-btn.is-active { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.view-btn { padding: 0 12px; }
+.view-btn.is-active { background: var(--surface-2); color: var(--text); }
 
-.board { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)) auto; gap: var(--space-3); align-items: start; overflow-x: auto; }
-.board.is-filtered { grid-template-columns: minmax(0, 1fr); }
-.board.is-filtered .col-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); align-items: start; }
-.col {
-  display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; min-height: 120px;
-  background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-2);
-  transition: border-color .12s, background-color .12s;
+/* The pipeline table: fixed columns, one line per row; long text ends in an ellipsis (full text on hover). */
+.app-list table { table-layout: fixed; width: 100%; }
+.app-list .col-company { width: 22%; }
+.app-list .col-role { width: 23%; }
+.app-list .col-stage { width: 15%; }
+.app-list .col-next-task { width: 20%; }
+.app-list .col-comment { width: 20%; }
+.app-list :is(th, td), .app-list :is(th, td):first-child, .app-list :is(th, td):last-child { padding: 9px 8px; }
+.app-list :is(th, td):first-child { padding-left: var(--space-4); }
+.app-list :is(th, td):last-child { padding-right: var(--space-4); }
+.app-list td { overflow: hidden; vertical-align: middle; line-height: 1.3; }
+.app-list td a { font-weight: 600; }
+/* Company, role and next task wrap to two lines at most; the comment stays on one. */
+.app-list td a, .app-list td .clamp { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.app-list .badge { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle;
+  font-size: 11px; padding: 1px 7px; }
+.ellip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.comment-cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.comment-cell .ellip { flex: 1; min-width: 0; color: var(--text-muted); }
+.comment-cell .count { flex: none; }
+.app-list tbody tr[data-href] { cursor: pointer; }
+.app-list tbody tr[data-href]:hover { background: var(--surface-2); }
+.app-list tr.is-focus, .app-list tr.is-focus:hover { background: var(--accent-soft); }
+.app-list tr.group-row th {
+  position: static; padding: var(--space-3) var(--space-4) 6px; text-align: left; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: .05em; background: var(--surface-2); border-bottom: 1px solid var(--border);
 }
-.col h2 { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em;
-  display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 4px 6px; margin: 0; }
-.col-cards { display: flex; flex-direction: column; gap: var(--space-2); }
-.col-empty { margin: 0; padding: var(--space-3); text-align: center; color: var(--text-faint); }
-.col.is-drop { border-color: var(--accent); background: var(--accent-soft); }
-.col-closed { padding: 0; min-height: 0; }
-.col-closed > summary {
-  list-style: none; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: var(--space-3);
-  padding: var(--space-3) 6px; color: var(--text-muted); font-size: 12px; font-weight: 600; border-radius: var(--radius-md);
-}
-.col-closed > summary::-webkit-details-marker { display: none; }
-.col-closed > summary:hover { color: var(--text); }
-.col-closed:not([open]) > summary { writing-mode: vertical-rl; min-height: 220px; }
-.col-closed:not([open]) .count { writing-mode: horizontal-tb; }
-.col-closed-title { display: inline-flex; align-items: center; gap: 6px; text-transform: uppercase; letter-spacing: .05em; }
-.col-closed-counts { display: flex; gap: var(--space-3); font-weight: 500; color: var(--text-faint); }
-.col-closed[open] { width: 240px; }
-.col-closed[open] > summary { flex-direction: row; flex-wrap: wrap; justify-content: space-between; align-items: center; }
-.col-closed[open] .col-closed-counts { display: none; }
-.col-closed .col-cards { padding: 0 var(--space-2) var(--space-2); }
-.col-closed h3 { margin: var(--space-2) 0 0; padding: 0 6px; font-size: 11.5px; font-weight: 600; color: var(--text-muted);
-  display: flex; align-items: center; gap: 6px; }
-.board.is-filtered .col-closed[open] { width: auto; }
 
-.app-card {
-  display: flex; flex-direction: column; gap: 5px; padding: 10px var(--space-3); color: var(--text);
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-sm);
-  scroll-margin: var(--space-8); cursor: pointer;
-}
-.app-card:hover { border-color: var(--border-strong); text-decoration: none; }
-.app-card.is-focus { border-color: var(--accent); box-shadow: var(--ring); }
-.app-card.is-dragging { opacity: .45; }
-.app-head { font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
-.app-role { color: var(--text-muted); font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; margin-top: -2px; }
-.app-next { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 6px; font-size: 12.5px; color: var(--text); overflow-wrap: anywhere; }
-.app-state { display: flex; }
-.app-state .chip { white-space: normal; line-height: 1.25; }
-.app-meta { display: flex; align-items: center; gap: 6px; color: var(--text-faint); font-size: 12px; }
-.app-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: 1; min-width: 0; }
-.app-badges .badge { font-size: 11px; line-height: 15px; padding: 1px 7px; }
-.app-comments { display: inline-flex; align-items: center; gap: 3px; color: var(--text-muted); }
-.app-comments .icon { width: 13px; height: 13px; }
-.age { font-family: var(--mono); font-size: 11.5px; color: var(--text-faint); white-space: nowrap; }
-.age-ageing { color: var(--warning); }
-.age-late { color: var(--danger); font-weight: 600; }
 .steps { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--accent-text); }
 .dots { display: inline-flex; gap: 3px; }
 .step { width: 7px; height: 7px; border-radius: 50%; border: 1px solid var(--s6); }
 .step.is-done { background: var(--s6); }
 .step.is-current { background: var(--accent); border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
 
-.app-list tbody tr[data-href] { cursor: pointer; }
-.app-list tr.is-focus { background: var(--accent-soft); }
-/* With the panel open the list loses Days, Fit and Tier (columns 6-8, shown in the panel). CSS,
-   not the server, so it also holds when the script opens or closes the panel without a reload. */
-.apps:has(> .panel) .app-list :is(th, td):nth-child(n+6) { display: none; }
-
-/* Side panel: sticky beside the board; a full-screen sheet on small screens. */
+/* Side panel: sticky beside the list; a full-screen sheet on small screens. */
 .panel {
-  position: sticky; top: var(--space-4); max-height: calc(100vh - 2 * var(--space-4)); overflow-y: auto;
+  position: sticky; top: var(--space-4); max-height: calc(100vh - 2 * var(--space-4)); overflow-y: auto; min-width: 0;
   background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
 }
 .panel-head {
   position: sticky; top: 0; z-index: 2; display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3);
   padding: var(--space-4) var(--space-5) var(--space-3); background: var(--surface); border-bottom: 1px solid var(--border);
 }
-.panel-head h2 { font-size: 20px; font-weight: 500; overflow-wrap: anywhere; }
-.panel-sub { margin: 2px 0 0; color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
+.panel-head h2 { font-size: 22px; font-weight: 500; overflow-wrap: anywhere; }
+.panel-role { margin: 2px 0 0; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.panel-sub { margin: 6px 0 0; color: var(--text-muted); display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 13px; }
 .panel-close { flex: none; font-size: 15px; }
-.panel-body { display: grid; gap: var(--space-4); padding: var(--space-3) var(--space-5) var(--space-5); font-size: 13px; }
+.panel-head-actions { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+/* Phones only: the panel is a full-screen sheet, so "Ask the agent" hides it (body.is-asking) to
+   reach the Agent box under the list, About still ticked for this job; "Back to the job" returns. */
+.panel-ask, .agent-back { display: none; }
+.panel-body { display: grid; gap: var(--space-5); padding: var(--space-4) var(--space-5) var(--space-5); font-size: 13px; }
 .panel-body section { display: grid; gap: var(--space-2); }
-.panel-body h3 { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.panel-body h3 { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em;
+  display: flex; align-items: center; gap: 6px; }
 .panel-body p { margin: 0; }
 .panel.is-loading { opacity: .6; }
-form.next-stage { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; }
-form.next-stage .interview-date input { height: 30px; font-size: 13px; }
-.move-group { border: 0; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
-.move-group label { display: grid; gap: 4px; color: var(--text-muted); font-size: 13px; }
-.dialog-actions { display: flex; justify-content: flex-end; gap: 6px; }
-table.mini td, table.mini td:first-child, table.mini td:last-child { padding: 5px 4px; font-size: 12.5px; }
-table.mini td:first-child:empty { display: none; }
-table.mini td:first-child { white-space: nowrap; width: 1%; }
-table.mini td:nth-child(2) { width: 100%; }
-form.add-sm > * { height: 30px; font-size: 13px; }
-form.add-sm input[name="title"], form.add-sm input[name="body"] { flex: 1 1 140px; }
-form.move { display: grid; gap: 6px; margin: 0; }
-form.move > *, form.move input { height: 30px; font-size: 13px; }
-.interview-date { display: flex; align-items: center; gap: 6px; color: var(--text-muted); }
-.interview-date input { flex: 1; }
-.interview-date[hidden] { display: none; }
-.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
-.timeline li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-/* Research and CV fit on a card, and the read-only file page */
-.app-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.chip { font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--text-muted); white-space: nowrap; }
-.chip-pending { border-style: dashed; color: var(--accent-text); }
-.chip-ready { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
-/* Interested panel: Company research · CV fit · Apply, with the research state above. */
-.panel-actions { padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
-.research-state { color: var(--accent-text); font-weight: 500; }
-.research-state.is-ready { color: var(--text); }
+.comment-latest { display: flex; gap: 8px; align-items: baseline; }
+.comment-latest .mono { flex: none; font-size: 12px; }
+.comment-body { overflow-wrap: anywhere; }
+.shortcuts { padding: var(--space-3); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); }
 .action-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .action-row form.inline { margin: 0; }
-.confirm { margin-left: auto; }
-.confirm > summary { list-style: none; cursor: pointer; }
-.confirm > summary::-webkit-details-marker { display: none; }
-.confirm[open] { flex-basis: 100%; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.confirm[open] > summary { opacity: .6; }
-.confirm-form { flex-basis: 100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: var(--space-2); border-radius: var(--radius-sm); background: var(--accent-soft); }
-.research { display: grid; gap: 4px; padding: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
-.research-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.research-actions { margin-left: auto; display: inline-flex; gap: 4px; }
-.research-actions form.inline { margin: 0; }
-.research .gaps { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.btn.is-busy { gap: 6px; color: var(--accent-text); opacity: 1; }
+.btn.is-done:disabled { opacity: 1; color: var(--text-muted); }
+table.mini td, table.mini td:first-child, table.mini td:last-child { padding: 5px 4px; font-size: 12.5px; }
+table.mini td:first-child { white-space: nowrap; width: 1%; }
+table.mini td:nth-child(2) { width: 100%; }
+table.mini td.due-cell { white-space: nowrap; text-align: right; }
+.tick {
+  width: 22px; height: 22px; padding: 0; border: 0; background: none; color: var(--text-muted); font-size: 17px; line-height: 1; cursor: pointer;
+}
+.tick:hover { color: var(--accent-text); }
+.tick:focus-visible { outline: none; box-shadow: var(--ring); border-radius: 4px; }
+.timeline { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.timeline li { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.history > summary { cursor: pointer; display: flex; align-items: center; gap: 6px; font-size: 11.5px; font-weight: 600;
+  color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.history[open] > summary { margin-bottom: var(--space-2); }
+/* The agent's results (company research, CV fit, tailored CV versions) and the read-only file page */
+.artifact { display: grid; gap: 4px; padding: var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2);
+  scroll-margin: 80px; }
+.artifact.is-flash { border-color: var(--accent); box-shadow: var(--ring); }
+.artifact-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.artifact-actions { margin-left: auto; display: inline-flex; gap: 4px; }
+.artifact-actions form.inline { margin: 0; }
+.artifact .gaps { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.versions { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.version-name { font-size: 12.5px; overflow-wrap: anywhere; }
+.versions li .btn { margin-left: auto; }
 .doc { max-width: 72ch; line-height: 1.55; }
 .doc h2, .doc h3, .doc h4 { margin: var(--space-4) 0 var(--space-2); }
 .doc h2:first-child, .doc h3:first-child { margin-top: 0; }
 .doc p, .doc ul { margin: 0 0 var(--space-3); }
 .doc li { margin-bottom: 2px; }
-.recent > summary { cursor: pointer; display: flex; align-items: center; gap: var(--space-2); padding: var(--space-2) 0; color: var(--text-muted); font-weight: 500; }
-.card-general > .card-body, .card-general > .card-body:has(> .table-wrap) { padding: var(--space-4) var(--space-5); }
-.card-general .card-body > form.add { margin-bottom: var(--space-3); }
-.card-general .table-wrap { margin: 0 calc(-1 * var(--space-5)); }
-.recent { margin-top: var(--space-3); }
 
-/* Agent thread in the panel: the user's messages and the agent's replies, newest at the bottom.
-   Bodies keep their line breaks; a long pasted email scrolls inside its own bubble. */
+/* The Agent box under the pipeline list: one conversation, newest at the bottom, each message
+   tagged with its job (or "all jobs"). The messages scroll inside the box, so the input stays in
+   view. Bodies keep their line breaks; a long pasted email scrolls inside its own bubble. */
+.card-agent > .card-body { padding: var(--space-3) var(--space-4) var(--space-4); display: grid; gap: var(--space-3); }
+.card-agent .card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.agent-filter { display: inline-flex; gap: 4px; }
+.agent-filter .view-btn { height: 26px; font-size: 12.5px; background: none; cursor: pointer; }
+.agent-filter[hidden] { display: none; }
+.card-agent .msgs { max-height: min(46vh, 520px); overflow-y: auto; padding-right: 4px; }
+.msg-about { padding: 0 6px; border-radius: var(--radius-full); border: 1px solid var(--border-strong); color: var(--text-muted);
+  font-size: 11px; line-height: 16px; white-space: nowrap; max-width: 18em; overflow: hidden; text-overflow: ellipsis; }
+a.msg-about:hover { color: var(--text); text-decoration: none; border-color: var(--accent); }
+.agent-about { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text-muted); overflow-wrap: anywhere; }
+.agent-about input { accent-color: var(--accent); }
 .thread { display: grid; gap: var(--space-2); }
 .msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.msg[hidden] { display: none; }
 .msg { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); min-width: 0; }
 .msg-user { background: var(--accent-soft); border-color: transparent; }
 .msg-meta { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--text-faint); }
@@ -553,16 +558,9 @@ form.ask textarea::placeholder { color: var(--text-faint); }
 .ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 12px; }
 
 /* --- responsive ---------------------------------------------------------------- */
-/* Laptop widths: with the panel open, four columns, the Closed strip and the panel fit side by
-   side without the board scrolling sideways. Up to 1599px, so a 1440px window with a classic
-   scrollbar keeps some room; wider screens fit at the normal sizes. */
 @media (min-width: 801px) and (max-width: 1599px) {
   main { padding-left: var(--space-6); padding-right: var(--space-6); }
-  .apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) 320px; }
-  .apps:has(> .panel) .card-board > .card-body { padding: var(--space-3); }
-  .apps:has(> .panel) .board:not(.is-filtered) { grid-template-columns: repeat(4, minmax(120px, 1fr)) auto; gap: var(--space-2); }
-  .apps:has(> .panel) .panel-body { padding-left: var(--space-4); padding-right: var(--space-4); }
-  .apps:has(> .panel) .col h2 { letter-spacing: .02em; padding: 4px; }
+  .apps:has(> .panel) .panel-body, .apps:has(> .panel) .panel-head { padding-left: var(--space-4); padding-right: var(--space-4); }
 }
 @media (max-width: 800px) {
   .app { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto 1fr; }
@@ -583,12 +581,13 @@ form.ask textarea::placeholder { color: var(--text-faint); }
   .columns { grid-template-columns: 1fr; }
   .card-head, .card-body { padding-left: var(--space-4); padding-right: var(--space-4); }
   .filter { width: 100%; }
-  .board:not(.is-filtered) { grid-template-columns: repeat(4, minmax(72vw, 1fr)) auto; overflow-x: auto; padding-bottom: var(--space-2); }
   .apps:has(> .panel) { grid-template-columns: minmax(0, 1fr); }
   .panel { position: fixed; inset: 0; z-index: 30; max-height: none; border-radius: 0; border: 0; }
   body:has(.panel) { overflow: hidden; }
-  .card-general > .card-body, .card-general > .card-body:has(> .table-wrap) { padding: var(--space-4); }
-  .card-general .table-wrap { margin: 0 calc(-1 * var(--space-4)); }
+  .panel-ask { display: inline-flex; }
+  body.is-asking .panel { display: none; }
+  body.is-asking:has(.panel) { overflow: auto; }
+  body.is-asking .agent-back { display: inline-flex; }
   .toasts { left: var(--space-3); right: var(--space-3); bottom: var(--space-3); align-items: stretch; }
   .toast { max-width: none; }
 }
@@ -609,6 +608,13 @@ form.ask textarea::placeholder { color: var(--text-faint); }
   table.mini tbody tr { flex-wrap: nowrap; padding: 6px 0; }
   table.mini td:first-child { flex: none; width: auto; }
   table.mini td:nth-child(2) { flex: 1; width: auto; }
+  /* The pipeline: a stage header bar, then each application as company / role · stage / next task / comment. */
+  .app-list table { table-layout: auto; }
+  .app-list tr.group-row { padding: 0; }
+  .app-list tr.group-row th { display: block; flex: 1 1 100%; padding: var(--space-2) var(--space-4); }
+  .app-list :is(th, td), .app-list :is(th, td):first-child, .app-list :is(th, td):last-child { padding: 0; }
+  .app-list td:first-child, .app-list td:nth-child(4), .app-list td:nth-child(5) { flex: 1 1 100%; }
+  .app-list td:nth-child(4):has(.muted) { display: none; }
 }
 @media (max-width: 480px) {
   .sidebar nav a .icon { display: none; }

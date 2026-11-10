@@ -40,8 +40,8 @@ on the dashboard's Job Offers page and the Apply button in an Interested card's 
    to a getjo job, and the tasks created. If the output says several getjo jobs matched, show
    the ids and ask which one, then re-run with `--job-id`.
 
-Later changes go through the stage, which creates and closes tasks the same way as Move to… on
-the dashboard's Applications board:
+Later changes go through the stage, which creates and closes tasks the same way whether /stage,
+/ask or the command below makes them:
 
 ```bash
 python -m prep.cli update <id> --status technical --interview-date 2026-02-03 --comment "two rounds"
@@ -49,7 +49,8 @@ python -m prep.cli comment <id> "take-home test sent"
 ```
 
 Stages: to_apply (Interested), applied, recruiter_call, technical (Coding interview),
-system_design, final (Company interview), offer, rejected, no_response, withdrawn. For the
+system_design, final (Company interview), offer, rejected, no_response, withdrawn, skipped
+(closed from Interested without applying: `python -m prep.cli skip <id> --reason R`). For the
 four interview stages, pass `--interview-date` when the user gave one: the prep tasks are due
 the day before. A take-home test or a second interview is a comment, not a stage.
 `--next-action "..." [--next-date D]` adds a task to the application. List:

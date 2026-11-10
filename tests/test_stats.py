@@ -47,6 +47,8 @@ class StatsTest(unittest.TestCase):
                 self.assertEqual(self.stage(self.add(*statuses))["replied"], replied)
         self.assertFalse(self.stage(self.add("to_apply", applied=None))["submitted"])
         self.assertFalse(self.stage(self.add("to_apply", "withdrawn", applied=None))["submitted"])
+        skipped = self.stage(self.add("to_apply", "skipped", applied=None))  # Skip: closed, never sent
+        self.assertEqual((skipped["submitted"], skipped["replied"]), (False, False))
 
     def test_rows_older_than_history_use_current_status(self) -> None:
         app_id = self.add("technical")

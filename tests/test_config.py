@@ -9,8 +9,9 @@ from prep.config import REPO_ROOT, ConfigError, load_settings
 
 CLEAN_ENV = {"INTERPREP_SETTINGS": "", "PREP_DB": "", "PREP_GETJO_DB": "", "PREP_PRIVATE_DIR": "",
              "PREP_DASHBOARD_PORT": "", "PREP_WEEKLY_TARGET": "",
-             "PREP_NO_RESPONSE_DAYS": "", "PREP_RESEARCH_MAX_AGE_DAYS": "", "PREP_ASSISTANT_TASK": "",
-             "PREP_ASSISTANT_PROJECT": "", "PREP_DEV3_BIN": ""}
+             "PREP_NO_RESPONSE_DAYS": "", "PREP_RESEARCH_MAX_AGE_DAYS": ""}
+# Set to "" these clear the file's value, so the tests unset them instead.
+CLEARABLE_ENV = ("PREP_ASSISTANT_TASK", "PREP_ASSISTANT_PROJECT", "PREP_DEV3_BIN")
 
 
 class LoadSettingsTest(unittest.TestCase):
@@ -21,6 +22,8 @@ class LoadSettingsTest(unittest.TestCase):
         patcher = mock.patch.dict(os.environ, CLEAN_ENV)
         patcher.start()
         self.addCleanup(patcher.stop)
+        for name in CLEARABLE_ENV:
+            os.environ.pop(name, None)  # patch.dict restores the original environment afterwards
 
     def write(self, text: str) -> Path:
         path = self.tmp / "settings.toml"
@@ -48,6 +51,20 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(s.dev3_bin, Path("/opt/dev3/bin/dev3"))
         with mock.patch.dict(os.environ, {"PREP_ASSISTANT_TASK": "7"}):
             self.assertEqual(load_settings(path).assistant_task, 7)
+
+    def test_empty_env_clears_the_assistant_but_not_paths(self) -> None:
+        # A demo on example data: PREP_ASSISTANT_TASK= must not ping the assistant in the settings file.
+        path = self.write('assistant_task = 42\nassistant_project = "e942eb1d-98a4"\ndev3_bin = "/opt/dev3/bin/dev3"\n'
+                          'prep_db = "/data/prep.db"\ngetjo_db = "/data/jobs.db"\ndashboard_port = 9000\n')
+        with mock.patch.dict(os.environ, {"PREP_ASSISTANT_TASK": "", "PREP_ASSISTANT_PROJECT": "",
+                                          "PREP_DEV3_BIN": ""}):
+            s = load_settings(path)
+        self.assertEqual((s.assistant_task, s.assistant_project, s.dev3_bin), (None, None, None))
+        with mock.patch.dict(os.environ, {"PREP_DB": "", "PREP_GETJO_DB": "", "PREP_DASHBOARD_PORT": ""}):
+            s = load_settings(path)
+        self.assertEqual((s.prep_db, s.getjo_db, s.dashboard_port), (Path("/data/prep.db"), Path("/data/jobs.db"), 9000),
+                         "an empty path or number override is ignored")
+        self.assertEqual(config.CLEARABLE, ("assistant_task", "assistant_project", "dev3_bin"))
 
     def test_bad_assistant_keys_rejected(self) -> None:
         for text in ('assistant_task = "abc"\n', "assistant_task = -1\n", 'assistant_project = "a b; rm"\n',

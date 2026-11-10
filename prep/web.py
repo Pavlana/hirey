@@ -49,21 +49,22 @@ STATIC_FILES = {
 }
 LOOPBACK_NAMES = ("localhost", "127.0.0.1")
 MAX_BODY = 256 * 1024  # a 20,000-character pasted email URL-encodes to up to ~180 KB
-RECENT_DONE = 10
 MAX_COMMENT = 1000
-# Applications: the funnel order (Next stage follows it) and the closed outcomes.
-BOARD_STAGES = ("to_apply", "applied", "recruiter_call", "technical", "system_design", "final", "offer")
-CLOSED_LANE = ("rejected", "no_response", "withdrawn")
-# Board columns: stored statuses stay as they are; the four interview stages share one column.
-BOARD_COLUMNS = {
+# Applications: the pipeline order (the list's stage groups follow it) and the closed outcomes.
+PIPELINE_STAGES = ("to_apply", "applied", "recruiter_call", "technical", "system_design", "final", "offer")
+CLOSED_LANE = ("rejected", "no_response", "withdrawn", "skipped")
+# The stage strip's filters: stored statuses stay as they are; the four interview stages share one.
+STAGE_GROUPS = {
     "interested": ("to_apply",), "applied": ("applied",), "interviewing": db.INTERVIEW_STAGES,
     "offer": ("offer",), "closed": CLOSED_LANE,
 }
-COLUMN_LABELS = {"interested": "Interested", "applied": "Applied", "interviewing": "Interviewing",
-                 "offer": "Offer", "closed": "Closed"}
+GROUP_LABELS = {"interested": "Interested", "applied": "Applied", "interviewing": "Interviewing",
+                "offer": "Offer", "closed": "Closed"}
 STEP_LABELS = {"recruiter_call": "Recruiter call", "technical": "Coding", "system_design": "System design",
                "final": "Company interview"}
-VIEWS = ("board", "list")
+# Stage badges in the pipeline list, short enough for a third of the screen (full label on hover).
+LIST_STAGE_LABELS = {"to_apply": "Interested", "recruiter_call": "Recruiter", "technical": "Coding",
+                     "system_design": "Sys design", "final": "Company", "no_response": "No reply"}
 CURRENT = ' aria-current="true"'
 
 Response = tuple[int, list[tuple[str, str]], bytes]
@@ -85,15 +86,13 @@ MESSAGES = {
     "interested": "Interested · research queued. The agent researches the company and checks the CV fit.",
     "uninterested": "Interested undone; the job is new again.",
     "applied_today": "Marked as applied today. Chase if no reply is due in 7 days.",
-    "moved": "Moved. The stage's tasks are in its panel.",
-    "commented": "Comment added.",
+    "unapplied": "Back to Interested; the Applied tasks are gone.",
+    "app_skipped": "Skipped and closed. Job Offers lists it under Skipped.",
     "skipped": "Skipped. It no longer appears in new job offers.",
     "unskipped": "Skip undone; the job is new again.",
-    "task_added": "Task added.",
     "task_done": "Task marked done.",
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
-    "tier_set": "Tier saved.",
     "message_sent": "Sent to the agent. Its reply shows in the thread.",
 }
 
@@ -119,7 +118,7 @@ PAGE_THEMES = {"/": "sage", "/offers": "dusty-blue", "/applications": "ochre"}
 # Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
-    "rejected": "s1", "withdrawn": "s2", "no_response": "s3", "to_apply": "s4", "applied": "s5",
+    "rejected": "s1", "withdrawn": "s2", "no_response": "s3", "skipped": "s2", "to_apply": "s4", "applied": "s5",
     "recruiter_call": "s6", "technical": "s7", "system_design": "s8", "final": "s9", "offer": "s10",
 }
 TIER_SHADES = {"A": "s9", "B": "s7", "C": "s5", "unset": "s3"}
@@ -205,6 +204,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         "/": dashboard_page,
         "/offers": lambda s, c, t: offers_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
+        "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
         "/applications": lambda s, c, t: applications_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
     }
@@ -217,7 +217,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         except NotFound:
             return _text(404, "Not found.")
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    active = {"/offers/skip": "/offers", "/research/file": "/applications"}.get(path, path)
+    active = {"/offers/skip": "/offers", "/research/file": "/applications",
+              "/applications/skip": "/applications"}.get(path, path)
     return _page(200, title, subtitle, notice + content, active)
 
 
@@ -376,19 +377,6 @@ def unskip_offer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
     log.info("getjo job skip undone from the dashboard")
 
 
-def add_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    title = form.get("title")
-    if not title:
-        raise BadRequest("A task needs a title.")
-    app_id = _int_field(form, "application_id")
-    app = None if app_id is None else db.get_application(conn, app_id)
-    if app_id is not None and app is None:
-        raise BadRequest(f"No application with id {app_id}.")
-    task_id = db.add_task(conn, title, form.get("kind") or "admin", _optional(form, "due_date"), app_id)
-    log.info("task %s added from the dashboard", task_id)
-    return {"html": _task_row(db.get_task(conn, task_id), today, _here(app_id))}
-
-
 def _app_id(conn: sqlite3.Connection, form: dict[str, str]) -> int:
     app_id = _int_field(form, "app_id")
     if app_id is None:
@@ -398,55 +386,52 @@ def _app_id(conn: sqlite3.Connection, form: dict[str, str]) -> int:
     return app_id
 
 
-def move_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Move to…: any stage, forward or back, with an optional comment and interview date."""
-    app_id = _app_id(conn, form)
-    status = form.get("status") or ""
-    if status not in db.APPLICATION_STATUSES:
-        raise BadRequest("Pick a stage to move to.")
-    comment = _optional(form, "comment")
-    if comment and len(comment) > MAX_COMMENT:
-        raise BadRequest(f"The comment is longer than {MAX_COMMENT} characters.")
-    interview = _optional(form, "interview_date") if status in db.INTERVIEW_STAGES else None
-    db.move_application(conn, app_id, status, today, comment, interview)
-    log.info("application %s moved to %s from the dashboard", app_id, status)  # never the comment
-    return {"redirect": _here(app_id)}
-
-
 def apply_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The panel's Apply (after its confirm): Interested → Applied today, as Next stage: Applied."""
+    """The panel's Mark applied: Interested → Applied today, at once (the toast offers Undo)."""
     app_id = _app_id(conn, form)
     if not db.move_application(conn, app_id, "applied", today, only_from="to_apply"):
-        raise BadRequest("It is no longer Interested; use Move to… instead.")
+        raise BadRequest("It is no longer Interested; ask the agent to change the stage.")
     log.info("application %s marked applied from the panel", app_id)
+    return {"redirect": _here(app_id), "app_id": app_id}
+
+
+def unapply_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Undo Mark applied: back to Interested, its date and Applied tasks reverted (db.undo_applied)."""
+    app_id = _app_id(conn, form)
+    db.undo_applied(conn, app_id)
+    log.info("mark applied undone on application %s", app_id)
     return {"redirect": _here(app_id)}
 
 
-def comment_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+def skip_application(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The panel's Skip: a reason and an optional comment; closes the application as skipped and marks
+    its getjo job skipped, as Job Offers does (db.skip_application)."""
     app_id = _app_id(conn, form)
-    body = form.get("body", "")
-    if not body:
-        raise BadRequest("A comment needs some text.")
-    if len(body) > MAX_COMMENT:
+    reason = form.get("reason")
+    if not reason:
+        raise BadRequest("Pick a reason for skipping.")
+    if len(form.get("comment", "")) > MAX_COMMENT:
         raise BadRequest(f"The comment is longer than {MAX_COMMENT} characters.")
-    db.add_comment(conn, app_id, body)
-    log.info("comment added to application %s from the dashboard", app_id)  # never the text
+    db.skip_application(conn, app_id, reason, _optional(form, "comment"), today)
+    log.info("application %s skipped from the panel (reason %s)", app_id, reason)  # never the comment
     return {"redirect": _here(app_id)}
 
 
 def send_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The panel's Agent thread: store the user's message (author is always user, whatever the
-    form says) and ping the standing assistant with `/ask <app> <message>`, ids only, in the
-    background. The message stays pending until /ask replies through the CLI."""
-    app_id = _app_id(conn, form)
+    """The Agent box: store the user's message (author is always user, whatever the form says), about
+    the application in `app_id` (the open panel's, when "About" is ticked) or the whole search, and
+    ping the standing assistant with `/ask <app or general> <message>`, ids only, in the background.
+    The message stays pending until /ask replies through the CLI. The JSON reply is the thread."""
+    app_id = _int_field(form, "app_id")
+    if app_id is not None and db.get_application(conn, app_id) is None:
+        raise BadRequest(f"No application with id {app_id}.")
     body = form.get("body", "")
     if not body:
         raise BadRequest("Type a question or paste an email first.")
     msg_id = db.add_message(conn, app_id, body)  # checks the length after normalising line breaks
-    log.info("message %s added to application %s's thread from the dashboard", msg_id, app_id)  # never the text
+    log.info("message %s added (application %s) from the dashboard", msg_id, app_id)  # never the text
     assistant.notify_message_in_background(settings, app_id, msg_id)
-    return {"redirect": _here(app_id),
-            "html": _thread(db.thread(conn, app_id), bool(settings.assistant_task), _tailoring(conn, app_id))}
+    return {"html": _thread(conn, bool(settings.assistant_task))}
 
 
 def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -459,17 +444,6 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     has_result, _ = research.result_path(conn, settings.private_dir, app_id, kind)
     _, created = db.queue_request(conn, app_id, kind, force=has_result)
     log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
-    return {"redirect": _here(app_id)}
-
-
-def set_tier(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Confirm or change the application's tier (the agent only suggests one)."""
-    app_id = _app_id(conn, form)
-    tier = form.get("tier") or ""
-    if tier not in db.TIERS:
-        raise BadRequest("Pick tier A, B or C.")
-    db.update_application(conn, app_id, tier=tier)
-    log.info("tier set on application %s from the dashboard", app_id)
     return {"redirect": _here(app_id)}
 
 
@@ -502,13 +476,11 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/offers/unskip": (unskip_offer, "/offers", "unskipped"),
     "/offers/uninterested": (unmark_interested, "/offers", "uninterested"),
     "/matches/apply": (mark_applied, "/offers", "applied"),  # old form action, before the rename
-    "/applications/move": (move_application, "/applications", "moved"),
     "/applications/apply": (apply_application, "/applications", "applied_today"),
-    "/applications/comment": (comment_application, "/applications", "commented"),
+    "/applications/unapply": (unapply_application, "/applications", "unapplied"),
+    "/applications/skip": (skip_application, "/applications", "app_skipped"),
     "/applications/research": (queue_research, "/applications", "research_queued"),
-    "/applications/tier": (set_tier, "/applications", "tier_set"),
     "/applications/message": (send_message, "/applications", "message_sent"),
-    "/tasks/add": (add_task, "/applications", "task_added"),
     "/tasks/done": (complete_task, "/applications", "task_done"),
     "/tasks/reopen": (reopen_task, "/applications", "task_reopened"),
 }
@@ -675,7 +647,7 @@ def offers_page(settings: Settings, conn: sqlite3.Connection, today: str,
                    row_attrs=attrs)
     content = _offer_filter_form(f) + _card(SHOW[f["show"]], table, count=len(found), count_for="offers")
     if any(d is None for _, d in found):  # some row has a Skipped link
-        content += _skip_dialog()
+        content += _skip_dialog("/offers/skip", "job_id")
     return "Job Offers", f"{subtitle} · {SHOW[f['show']].lower()} ({len(found)})", content
 
 
@@ -755,16 +727,17 @@ def _tracked_cell(app_id: int, status: str, queued: bool = False) -> str:
 
 
 
-def _skip_dialog() -> str:
-    """The Skipped pop-up: one button per reason and an optional comment. The page script fills
-    in job_id and return when a row's Skipped link is clicked; without the script it never opens."""
+def _skip_dialog(action: str, field: str) -> str:
+    """The Skip pop-up: one button per reason and an optional comment, posting to `action`. The page
+    script fills in `field` (job_id on Job Offers, app_id on Applications) and return when a Skip
+    link is clicked; without the script it never opens."""
     reasons = "".join(
         f'<button class="btn btn-secondary btn-sm" name="reason" value="{k}">{h(v)}</button>'
         for k, v in SKIP_REASON_LABELS.items())
     return (
         '<dialog id="skip-dialog" class="dialog" aria-labelledby="skip-title">'
-        '<form method="post" action="/offers/skip" class="skip-form">'
-        '<input type="hidden" name="job_id" value=""><input type="hidden" name="return" value="">'
+        f'<form method="post" action="{h(action)}" class="skip-form" data-field="{h(field)}">'
+        f'<input type="hidden" name="{h(field)}" value=""><input type="hidden" name="return" value="">'
         '<h2 id="skip-title">Skip this job?</h2><p class="muted" data-skip-job></p>'
         f'<textarea name="comment" maxlength="{MAX_COMMENT}" rows="2" placeholder="Comment (optional)" '
         'aria-label="Comment"></textarea>'
@@ -772,6 +745,26 @@ def _skip_dialog() -> str:
         '<button type="button" class="btn btn-ghost btn-sm" data-close>Cancel</button>'
         "</form></dialog>"
     )
+
+
+def app_skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                  query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """The panel's Skip without the page script: a reason select and a comment. Reading it changes
+    nothing; the form posts to /applications/skip."""
+    raw = (query.get("app") or [""])[0]
+    app = db.get_application(conn, int(raw)) if raw.isdigit() else None
+    if app is None:
+        raise NotFound()
+    back = _return_to((query.get("return") or [""])[0], "/applications")
+    reasons = "".join(f'<option value="{k}">{h(v)}</option>' for k, v in SKIP_REASON_LABELS.items())
+    form = (
+        '<form method="post" action="/applications/skip" class="add">'
+        f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(back)}">'
+        f'<select name="reason" required aria-label="Skip reason"><option value="">skip reason</option>{reasons}</select>'
+        f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="Comment (optional)" aria-label="Comment">'
+        + _button("Skip") + f'<a class="btn btn-ghost" href="{h(back)}">Cancel</a></form>'
+    )
+    return "Skip an application", f'{app["company"]} — {app["role"]}', _card("Why skip it?", form, cls="card-form")
 
 
 def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
@@ -793,37 +786,31 @@ def skip_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return "Skip a job", f'{job["company"]} — {job["title"]}', _card("Why skip it?", form, cls="card-form")
 
 
-def board_filters(query: dict[str, list[str]]) -> dict:
-    """Applications page state from the query string: open card (`app`), `view` (board or list)
-    and `stage` (a board column). Unknown values fall back to the defaults."""
+def list_filters(query: dict[str, list[str]]) -> dict:
+    """Applications page state from the query string: open panel (`app`), `stage` (a stage group)
+    and `closed` (1: closed applications listed too). Unknown values fall back to the defaults;
+    an old `view=board` is ignored."""
     def first(key: str) -> str:
         return (query.get(key) or [""])[0].strip()
 
-    app, view, stage = first("app"), first("view"), first("stage")
+    app, stage = first("app"), first("stage")
     return {
         "app": int(app) if app.isdigit() else None,
-        "view": view if view in VIEWS else "board",
-        "stage": stage if stage in BOARD_COLUMNS else "",
+        "stage": stage if stage in STAGE_GROUPS else "",
+        "closed": first("closed") == "1",
     }
 
 
-def apps_url(app: int | None = None, view: str = "board", stage: str = "") -> str:
+def apps_url(app: int | None = None, stage: str = "", closed: bool = False) -> str:
     """An Applications page URL; default values are left out (built from ids and fixed names)."""
-    pairs = [(k, v) for k, v in (("app", app), ("view", view if view != "board" else None),
-                                  ("stage", stage or None)) if v is not None]
+    pairs = [(k, v) for k, v in (("app", app), ("stage", stage or None), ("closed", "1" if closed else None))
+             if v is not None]
     return "/applications" + (f"?{urlencode(pairs)}" if pairs else "")
 
 
-def column_of(status: str) -> str:
-    """The board column of a stored status (to_apply → interested, technical → interviewing…)."""
-    return next(col for col, statuses in BOARD_COLUMNS.items() if status in statuses)
-
-
-def next_stage(status: str) -> str | None:
-    """The stage after `status` in the funnel (Interested … Offer); None for Offer and closed."""
-    if status not in BOARD_STAGES or status == BOARD_STAGES[-1]:
-        return None
-    return BOARD_STAGES[BOARD_STAGES.index(status) + 1]
+def group_of(status: str) -> str:
+    """The stage group of a stored status (to_apply → interested, technical → interviewing…)."""
+    return next(g for g, statuses in STAGE_GROUPS.items() if status in statuses)
 
 
 def step_dots(status: str, label: bool = True) -> str:
@@ -841,19 +828,9 @@ def step_dots(status: str, label: bool = True) -> str:
             f'<span class="dots" aria-hidden="true">{dots}</span>{text}</span>')
 
 
-def age_tone(status: str, days: int, no_response_days: int) -> str:
-    """Ageing colour for days in stage: Applied turns amber at day 7 and red two days before it
-    would move to No response. Other stages stay neutral."""
-    if status != "applied":
-        return ""
-    if days >= max(no_response_days - 2, 1):
-        return "late"
-    return "ageing" if days >= 7 else ""
-
-
 def list_order(rows: list[dict]) -> list[dict]:
-    """List view order: applications with a dated next task first (earliest due first), then
-    undated tasks, then none; ties by days in stage, longest first."""
+    """Order within a stage: a dated next task first (earliest due first), then undated tasks,
+    then none; ties by days in stage, longest first."""
     def key(r: dict) -> tuple:
         nxt = r["next"]
         rank = 0 if nxt and nxt["due_date"] else (1 if nxt else 2)
@@ -863,302 +840,346 @@ def list_order(rows: list[dict]) -> list[dict]:
 
 def applications_page(settings: Settings, conn: sqlite3.Connection, today: str,
                       query: dict[str, list[str]]) -> tuple[str, str, str]:
-    """A five-column board (or a list) to scan, with a stage strip that filters it, and a side
-    panel for the application named by ?app=ID (an unknown id is ignored). General tasks below."""
-    f = board_filters(query)
+    """The pipeline list on the left (grouped by stage, with a stage strip that filters it); the side panel for the application named by ?app=ID on the right (an unknown id
+    is ignored). The panel holds no forms but the shortcut buttons, task ticks and the Agent thread."""
+    f = list_filters(query)
     tasks = db.app_tasks(conn, "todo")
-    counts = db.comment_counts(conn)
+    latest = db.latest_comments(conn)
     found = db.research_view(conn)
     rows = []
     for a in db.board_applications(conn):
         own = tasks.get(a["id"], [])
-        rows.append({"app": a, "column": column_of(a["status"]), "next": own[0] if own else None,
-                     "tasks": own, "comments": counts.get(a["id"], 0),
+        rows.append({"app": a, "group": group_of(a["status"]), "next": own[0] if own else None,
+                     "tasks": own, "comment": latest.get(a["id"]),
                      "days": (date.fromisoformat(today) - date.fromisoformat(a["since"])).days,
                      "found": found.get(a["id"]) or {"profile": None, "fit": None, "tailored": None,
                                                      "open": set()}})
     focus = next((r for r in rows if r["app"]["id"] == f["app"]), None)
-    shown = [r for r in rows if not f["stage"] or r["column"] == f["stage"]]
-
-    def card(r: dict) -> str:
-        return _app_card(r, today, settings.no_response_days, apps_url(r["app"]["id"], f["view"], f["stage"]),
-                         r is focus)
-
-    open_count = sum(1 for r in rows if r["column"] != "closed")
+    open_count = sum(1 for r in rows if r["group"] != "closed")
     closed_count = len(rows) - open_count
     if not rows:
-        main = _empty("No applications yet.", "Mark a job Applied or Interested on Job Offers, or use /applied.")
+        main = _empty("No applications yet.", "Mark a job Interested on Job Offers, or use /applied.")
     else:
-        main = (_stage_strip(rows, f) + _board(shown, f, card)
-                + _app_list(shown, f, today) + _move_dialog())
-    panel = _panel(conn, focus, today, f, bool(settings.assistant_task)) if focus else ""
-    layout = (f'<div class="apps" data-view="{f["view"]}">'
-              f'<div class="apps-main">{_card("Pipeline", main, count=open_count, cls="card-board")}</div>'
-              f"{panel}</div>")
-    content = layout + _general_tasks(conn, tasks.get(None, []), today)
+        main = _stage_strip(rows, f) + _app_list(rows, f)
+    panel = _panel(conn, focus, today, f) if focus else ""
+    here = apps_url(f["app"] if focus else None, f["stage"], f["closed"])
+    agent = _agent_box(conn, focus, here, bool(settings.assistant_task))
+    content = (f'<div class="apps"><div class="apps-main">{_card("Pipeline", main, count=open_count, cls="card-pipeline")}'
+               f'{agent}</div>{panel}</div>'
+               + _skip_dialog("/applications/skip", "app_id"))
     return "Applications", f"{open_count} open · {closed_count} closed · {today}", content
 
 
 def _stage_strip(rows: list[dict], f: dict) -> str:
-    """Counts per column; each links to that column's filter (the active one clears it), and the
-    Board | List toggle (links, so it works without the script)."""
+    """Counts per stage group; each links to that group's filter (the active one clears it). Show /
+    Hide closed lists the closed applications too (links, so it works without the script)."""
     pills = []
-    for col, label in COLUMN_LABELS.items():
-        n = sum(1 for r in rows if r["column"] == col)
-        active = f["stage"] == col
-        href = apps_url(f["app"], f["view"], "" if active else col)
-        pills.append(f'<a class="stage-pill{" is-active" if active else ""}" href="{h(href)}" data-stage="{col}"'
+    for group, label in GROUP_LABELS.items():
+        n = sum(1 for r in rows if r["group"] == group)
+        active = f["stage"] == group
+        href = apps_url(f["app"], "" if active else group, f["closed"])
+        pills.append(f'<a class="stage-pill{" is-active" if active else ""}" href="{h(href)}" data-stage="{group}"'
                      f'{CURRENT if active else ""}>{h(label)} <span class="count">{n}</span></a>')
-    views = "".join(
-        f'<a class="view-btn{" is-active" if f["view"] == v else ""}" href="{h(apps_url(f["app"], v, f["stage"]))}" '
-        f'data-view="{v}"{CURRENT if f["view"] == v else ""}>{v.capitalize()}</a>'
-        for v in VIEWS)
+    toggle = ""
+    if f["stage"] != "closed":
+        href = apps_url(f["app"], f["stage"], not f["closed"])
+        toggle = (f'<a class="view-btn{" is-active" if f["closed"] else ""}" href="{h(href)}" data-closed-toggle>'
+                  f'{"Hide closed" if f["closed"] else "Show closed"}</a>')
     return (f'<div class="stage-strip"><nav class="stage-pills" aria-label="Filter by stage">{"".join(pills)}</nav>'
-            f'<div class="view-toggle" role="group" aria-label="View">{views}</div></div>')
+            f'{toggle}</div>')
 
 
-def _board(rows: list[dict], f: dict, card: Callable[[dict], str]) -> str:
-    """Five columns; with a stage filter only that column. Closed is a strip that expands, open
-    only under ?stage=closed (never because the panel shows a closed application: at laptop
-    width it would push the board sideways)."""
-    columns = []
-    for col, label in COLUMN_LABELS.items():
-        if f["stage"] and col != f["stage"]:
-            continue
-        mine = [r for r in rows if r["column"] == col]
-        if col == "closed":
-            columns.append(_closed_column(mine, card, bool(f["stage"])))
-            continue
-        body = "".join(card(r) for r in mine) or '<p class="col-empty">–</p>'
-        columns.append(f'<section class="col" aria-label="{h(label)}" data-drop="{col}">'
-                       f'<h2>{h(label)}<span class="count">{len(mine)}</span></h2><div class="col-cards">{body}</div></section>')
-    filtered = " is-filtered" if f["stage"] else ""
-    return f'<div class="board{filtered}" data-board{" hidden" if f["view"] != "board" else ""}>{"".join(columns)}</div>'
-
-
-def _closed_column(rows: list[dict], card: Callable[[dict], str], expanded: bool) -> str:
-    """Closed: a narrow strip with the count per outcome; opened, the cards grouped by outcome."""
-    groups = []
-    for status in CLOSED_LANE:
-        mine = [r for r in rows if r["app"]["status"] == status]
-        groups.append(f'<h3>{h(_status_label(status))} <span class="count">{len(mine)}</span></h3>'
-                      + "".join(card(r) for r in mine))
-    counts = "".join(f'<span>{h(_status_label(s))} {sum(1 for r in rows if r["app"]["status"] == s)}</span>'
-                     for s in CLOSED_LANE)
-    return (f'<details class="col col-closed" aria-label="Closed" data-drop="closed"{" open" if expanded else ""}>'
-            f'<summary><span class="col-closed-title">Closed <span class="count">{len(rows)}</span></span>'
-            f'<span class="col-closed-counts">{counts}</span></summary>'
-            f'<div class="col-cards">{"".join(groups)}</div></details>')
-
-
-def _app_card(r: dict, today: str, no_response_days: int, href: str, focus: bool) -> str:
-    """A compact card, a link to its side panel (no forms): company and role (they wrap), the
-    interview steps, the next task with its due date, tier and fit badges, days in stage with
-    an ageing colour, pending research chips and the comment count. Draggable with the script."""
-    app, nxt, days = r["app"], r["next"], r["days"]
-    next_line = (f'<span class="app-next">{_due(nxt["due_date"], today)}<span>{h(nxt["title"])}</span></span>' if nxt
-                 else '<span class="app-next muted">No open tasks</span>')
-    tone = age_tone(app["status"], days, no_response_days)
-    age_text = _age_text(days)
-    age = (f'<span class="age{" age-" + tone if tone else ""}" title="{h(age_text)}">'
-           f'{"today" if days <= 0 else f"{days}d"}</span>')
-    state = research_state(app, r["found"])
-    tailored = tailored_state(app, r["found"])
-    tailored_chip = (f'<span class="chip{" chip-pending" if tailored[1] else ""}" title="Tailored CV">{h(tailored[0])}</span>'
-                     if tailored else "")
-    state_line = ""
-    if state:  # Interested: Researching… or Ready (fit and tier) on its own line, not separate chips
-        text, ready = state
-        state_line = (f'<span class="app-state"><span class="chip {"chip-ready" if ready else "chip-pending"}">{h(text)}</span>'
-                      f'{tailored_chip}</span>')
-        badges = []
+def _app_list(rows: list[dict], f: dict) -> str:
+    """The pipeline: one table, a <tbody> per stage (Interested → Offer, then the closed outcomes
+    when shown), next due task first within a stage. Columns: company (a link to the panel), role,
+    stage, next task and the latest comment (one line, with the count when there are more)."""
+    if f["stage"]:
+        shown = [r for r in rows if r["group"] == f["stage"]]
     else:
-        badges = [_tier_badge(app["tier"]) if app["tier"] else ""]
-        fit = r["found"]["fit"]
-        if fit and "cv_fit" not in r["found"]["open"]:
-            badges.append(f'<span class="chip" title="CV fit">fit {h(fit["score"])}/5</span>')
-        badges += [f'<span class="chip chip-pending">{h(db.REQUEST_LABELS[k])} pending</span>'
-                   for k in db.RESEARCH_KINDS if k in r["found"]["open"]]
-        badges.append(tailored_chip)
-    if r["column"] == "closed":
-        badges.insert(0, _status_badge(app["status"]))
-    comments = (f'<span class="app-comments" title="comments">{_icon(COMMENT_ICON)}{r["comments"]}</span>'
-                if r["comments"] else "")
-    css = "app-card is-focus" if focus else "app-card"
-    return (f'<a class="{css}" id="app-{h(app["id"])}" href="{h(href)}" draggable="true" data-app="{h(app["id"])}" '
-            f'data-column="{r["column"]}" data-status="{h(app["status"])}">'
-            f'<strong class="app-head">{h(app["company"])}</strong><span class="app-role">{h(app["role"])}</span>'
-            f'{step_dots(app["status"])}{next_line}{state_line}'
-            f'<span class="app-meta"><span class="app-badges">{"".join(badges)}</span>{comments}{age}</span></a>')
+        shown = [r for r in rows if r["group"] != "closed" or f["closed"]]
+    bodies = []
+    for status in (*PIPELINE_STAGES, *CLOSED_LANE):
+        mine = list_order([r for r in shown if r["app"]["status"] == status])
+        if not mine:
+            continue
+        head = (f'<tr class="group-row"><th colspan="5" scope="rowgroup">{h(_status_label(status).capitalize())}'
+                f' <span class="count">{len(mine)}</span></th></tr>')
+        bodies.append(f'<tbody data-group="{status}">{head}{"".join(_list_row(r, f) for r in mine)}</tbody>')
+    if not bodies:
+        return _empty("No applications here.", "Clear the stage filter or show the closed ones.")
+    head = "".join(f'<th scope="col" class="col-{c.lower().replace(" ", "-")}">{c}</th>'
+                   for c in ("Company", "Role", "Stage", "Next task", "Comment"))
+    return (f'<div class="table-wrap app-list"><table id="app-list"><thead><tr>{head}</tr></thead>'
+            f'{"".join(bodies)}</table></div>')
 
 
-def research_state(app: dict, found: dict) -> tuple[str, bool] | None:
-    """An Interested application's research state: ("Researching…", False) while company research
-    or the CV fit is queued, ("Ready: fit N/5 · tier X", True) once both results are in (tier: the
-    confirmed one, else the suggested one, left out when neither). None otherwise."""
-    if app["status"] != "to_apply":
-        return None
-    if found["open"] & set(db.RESEARCH_KINDS):
-        return "Researching…", False
-    profile, fit = found["profile"], found["fit"]
-    if not (profile and fit):
-        return None
-    tier = app["tier"] or profile["suggested_tier"]
-    # no-break spaces keep "fit 4/5" and "tier A" whole when a narrow card wraps the chip
-    return f'Ready: fit\u00a0{fit["score"]}/5' + (f" · tier\u00a0{tier}" if tier else ""), True
-
-
-def tailored_state(app: dict, found: dict, long: bool = False) -> tuple[str, bool] | None:
-    """The tailored CV's state for the card (short) or the panel (`long`): ("Tailoring…", True)
-    while a tailor request is open, then "CV tailored vN" / "Tailored CV ready · vN · date", and
-    "CV sent vN" / "Sent: tailored CV vN · date" once the application went out with it. None
-    without a request or a copy. The flag is True while the agent is working on it."""
-    current = found.get("tailored")
-    if "tailor" in found["open"]:
-        return "Tailoring…", True
-    if app.get("cv_sent_version"):
-        n = app["cv_sent_version"]
-        return (f"Sent: tailored CV v{n} · {_local_time(app['cv_sent_at'])}" if long else f"CV sent v{n}"), False
-    if current:
-        n = current["version"]
-        return (f"Tailored CV ready · v{n} · {_local_time(current['updated_at'])}" if long else f"CV tailored v{n}"), False
-    return None
+def _list_row(r: dict, f: dict) -> str:
+    app, nxt, comment = r["app"], r["next"], r["comment"]
+    href = apps_url(app["id"], f["stage"], f["closed"])
+    status = app["status"]
+    stage = (f'<span class="badge {STATUS_SHADES.get(status, "neutral")}" title="{h(_status_label(status).capitalize())}">'
+             f'{h(LIST_STAGE_LABELS.get(status, _status_label(status).capitalize()))}</span>')
+    next_cell = (f'<span class="clamp" title="{h(nxt["title"])}">{h(nxt["title"])}</span>' if nxt
+                 else '<span class="muted">–</span>')
+    comment_cell = ""
+    if comment:
+        body, n = comment
+        more = f' <span class="count" title="{n} comments">+{n - 1}</span>' if n > 1 else ""
+        comment_cell = f'<span class="comment-cell"><span class="ellip" title="{h(body)}">{h(body)}</span>{more}</span>'
+    cells = (f'<a href="{h(href)}">{h(app["company"])}</a>',
+             f'<span class="clamp" title="{h(app["role"])}">{h(app["role"])}</span>', stage, next_cell, comment_cell)
+    focus = ' class="is-focus"' if app["id"] == f["app"] else ""
+    return (f'<tr id="app-{h(app["id"])}" data-href="{h(href)}" data-app="{h(app["id"])}"{focus}>'
+            + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
 
 
 def _age_text(days: int) -> str:
-    return f'{days} day{"s" if days != 1 else ""} in stage' if days > 0 else "new today"
+    return f'{days} day{"s" if days != 1 else ""} in this stage' if days > 0 else "new today"
 
 
-def _app_list(rows: list[dict], f: dict, today: str) -> str:
-    """The list view: one table, open applications only (unless filtered to Closed), sorted by
-    the next due task. A row's company links to its side panel."""
-    if f["stage"] != "closed":
-        rows = [r for r in rows if r["column"] != "closed"]
-    table_rows, attrs = [], []
-    for r in list_order(rows):
-        app, nxt = r["app"], r["next"]
-        fit = r["found"]["fit"]
-        href = apps_url(app["id"], f["view"], f["stage"])
-        table_rows.append((
-            f'<a href="{h(href)}">{h(app["company"])}</a>', h(app["role"]), _status_badge(app["status"]),
-            h(nxt["title"]) if nxt else "", _due(nxt["due_date"], today) if nxt else "",
-            _mono(h(r["days"])), h(f'{fit["score"]}/5') if fit else "", h(app["tier"] or ""),
-        ))
-        attrs.append(f'data-href="{h(href)}" data-app="{h(app["id"])}"' + (' class="is-focus"' if app["id"] == f["app"] else ""))
-    head = ("Company", "Role", "Stage", "Next task", ("Due", "date"), ("Days", "num"), ("Fit", "text"), "Tier")
-    table = _table(head, table_rows, "No open applications here.", table_id="app-list", row_attrs=attrs)
-    return f'<div class="app-list" data-list{" hidden" if f["view"] != "list" else ""}>{table}</div>'
-
-
-def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, assistant_on: bool = False) -> str:
-    """The side panel for one application: tasks, Next stage and Move to, company research,
-    CV fit and tier, the Agent thread, comments and history. Every form posts and comes back to
-    this panel."""
-    app = r["app"]
-    here = apps_url(app["id"], f["view"], f["stage"])
-    keep = (f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
-            f'<input type="hidden" name="return" value="{h(here)}">')
-    rows = "".join(_task_row(t, today, here, kind=False, ajax=False) for t in r["tasks"])
-    task_list = (f'<table class="mini" id="tasks-{h(app["id"])}"><tbody>{rows}</tbody></table>' if rows
-                 else '<p class="muted">No open tasks.</p>')
-    add = (
-        '<form method="post" action="/tasks/add" class="add add-sm">'
-        f'<input type="hidden" name="application_id" value="{h(app["id"])}">'
-        f'<input type="hidden" name="return" value="{h(here)}">'
-        '<input name="title" placeholder="New task…" required aria-label="New task">'
-        '<input type="date" name="due_date" aria-label="Due date">'
-        + _button("Add", "secondary", "sm") + "</form>"
-    )
-    interested = app["status"] == "to_apply"
-    nxt = next_stage(app["status"])
-    next_form = ""
-    if nxt and not interested:  # Interested: the action row's Apply replaces Next stage: Applied
-        date_field = ('<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
-                      if nxt in db.INTERVIEW_STAGES else "")
-        next_form = (f'<form method="post" action="/applications/move" class="next-stage">{keep}'
-                     f'<input type="hidden" name="status" value="{nxt}">{date_field}'
-                     + _button(f"Next stage: {_status_label(nxt)}", size="sm") + "</form>")
-    stages = "".join(
-        f'<option value="{s}"{" disabled" if s == app["status"] else ""}>{h(_status_label(s))}</option>'
-        for s in (*BOARD_STAGES, *CLOSED_LANE))
-    move = (
-        f'<form method="post" action="/applications/move" class="move" '
-        f'data-interview-stages="{" ".join(db.INTERVIEW_STAGES)}">{keep}'
-        f'<select name="status" required aria-label="Move to"><option value="">Move to…</option>{stages}</select>'
-        '<label class="interview-date">Interview date <input type="date" name="interview_date"></label>'
-        f'<input name="comment" maxlength="{MAX_COMMENT}" placeholder="Comment (optional)" aria-label="Comment with the move">'
-        + _button("Move", "secondary", "sm") + "</form>"
-    )
-    comment = (
-        f'<form method="post" action="/applications/comment" class="add add-sm">{keep}'
-        f'<input name="body" maxlength="{MAX_COMMENT}" required placeholder="Comment, e.g. take-home test sent" '
-        'aria-label="Comment">' + _button("Add comment", "secondary", "sm") + "</form>"
-    )
-    history = "".join(
-        f'<li><span class="mono">{h(e["at"][:10])}</span> '
-        + (_status_badge(e["status"]) if e["status"] else "")
-        + (f' <span class="{"muted" if e["status"] else ""}">{h(e["comment"])}</span>' if e["comment"] else "")
-        + "</li>"
-        for e in reversed(db.timeline(conn, app["id"]))
-    )
-    link = (f' · {_link(app["link"], "Job posting ↗")}'
+def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict) -> str:
+    """The side panel, top to bottom: header, the latest comment (read-only), shortcut buttons, tasks
+    (tick to mark done), the agent's results (company research, CV fit, tailored CV versions) and
+    the stage history. Everything else is asked of the agent in the Agent box under the list."""
+    app, found = r["app"], r["found"]
+    here = apps_url(app["id"], f["stage"], f["closed"])
+    link = (f'<span>{_link(app["link"], "Job posting ↗")}</span>'
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
-    close = apps_url(None, f["view"], f["stage"])
+    close = apps_url(None, f["stage"], f["closed"])
+    versions = db.tailored_versions(conn, app["id"])
+    busy = " data-busy" if found["open"] else ""
     return (
         f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}" '
-        f'data-status="{h(app["status"])}">'
+        f'data-status="{h(app["status"])}"{busy}>'
         f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
-        f'<p class="panel-sub">{h(app["role"])}</p>'
+        f'<p class="panel-role">{h(app["role"])}</p>'
         f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
         f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
-        f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></header>'
+        '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
+        'Ask the agent</a>'
+        f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         f'<div class="panel-body">'
-        + (_interested_actions(app, r["found"], here) if interested else "")
-        + f'<section><h3>Tasks</h3>{task_list}{add}</section>'
-        f'<section><h3>Stage</h3>{next_form}{move}</section>'
-        f'<section><h3>Company and CV fit</h3>{_research_section(app, r["found"], buttons=not interested)}</section>'
-        + _agent_section(app["id"], db.thread(conn, app["id"]), keep, assistant_on, "tailor" in r["found"]["open"]) +
-        f'<section><h3>Comments and history</h3>{comment}'
-        + (f'<ul class="timeline">{history}</ul>' if history else "")
-        + "</section></div></aside>"
+        + _comments_section(conn, app["id"])
+        + _shortcuts(conn, app, found, versions, here)
+        + _panel_tasks(r["tasks"], today, here)
+        + _research_cards(app, found, versions, here)
+        + _history(conn, app["id"])
+        + "</div></aside>"
     )
 
 
-def _agent_section(app_id: int, messages: list[dict], keep: str, assistant_on: bool, tailoring: bool = False) -> str:
-    """The Agent thread (newest at the bottom) and a box to ask a question or paste an email.
-    `keep` is the panel's trusted hidden app_id/return fields."""
-    ask = (
-        f'<form method="post" action="/applications/message" class="ask" data-ajax="thread">{keep}'
+def _comments_section(conn: sqlite3.Connection, app_id: int) -> str:
+    """The latest comment with its date, and how many came before it. Read-only: the agent adds,
+    lists, amends and removes them (`cli comment`, `cli comments`)."""
+    found = db.comments(conn, app_id)
+    if found:
+        latest = found[0]
+        earlier = (f'<p class="muted">{len(found) - 1} earlier comment{"s" if len(found) > 2 else ""}; '
+                   'ask the agent to list them.</p>' if len(found) > 1 else "")
+        body = (f'<p class="comment-latest"><span class="mono muted">{h(latest["at"][:10])}</span> '
+                f'<span class="comment-body">{h(latest["body"])}</span></p>{earlier}')
+    else:
+        body = '<p class="muted">No comments yet. Ask the agent to add one.</p>'
+    return f'<section class="panel-comments" aria-labelledby="comments-{h(app_id)}"><h3 id="comments-{h(app_id)}">Comments</h3>{body}</section>'
+
+
+def _short_day(stamp: str | None) -> str:
+    """A date or timestamp as "3 Nov"."""
+    if not stamp:
+        return ""
+    try:
+        day = date.fromisoformat(stamp[:10])
+    except ValueError:
+        return stamp
+    return f"{day.day} {day:%b}"
+
+
+def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[dict], here: str) -> str:
+    """Research company · CV fit · Tailor CV · Mark applied · Skip, each showing its state: queued work
+    is a disabled "…ing" button, a result links to its card below (Open and Redo are there). Mark
+    applied and Skip act while the application is Interested, and show the outcome afterwards."""
+    profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
+
+    def queue(kind: str, label: str) -> str:
+        return ('<form method="post" action="/applications/research" class="inline">'
+                f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="kind" value="{kind}">'
+                f'<input type="hidden" name="return" value="{h(here)}">' + _button(label, "secondary", "sm") + "</form>")
+
+    def busy(label: str) -> str:
+        return f'<button class="btn btn-ghost btn-sm is-busy" disabled><span class="spinner" aria-hidden="true"></span>{h(label)}</button>'
+
+    def done(card: str, label: str) -> str:
+        return f'<a class="btn btn-secondary btn-sm is-done" href="#{card}" data-jump="{card}">{h(label)}</a>'
+
+    def state(text: str) -> str:
+        return f'<button class="btn btn-ghost btn-sm is-done" disabled>{h(text)}</button>'
+
+    buttons = []
+    if "research" in open_kinds:
+        buttons.append(busy("Researching…"))
+    elif profile:
+        buttons.append(done("card-research", f"Research ✓ {_short_day(profile['researched_at'])}"))
+    else:
+        buttons.append(queue("research", "Research company"))
+    if "cv_fit" in open_kinds:
+        buttons.append(busy("Checking CV fit…"))
+    elif fit:
+        buttons.append(done("card-fit", f"CV fit {fit['score']}/5"))
+    else:
+        buttons.append(queue("cv_fit", "CV fit"))
+    if "tailor" in open_kinds:
+        buttons.append(busy("Tailoring…"))
+    elif versions:
+        sent = (" · sent" if app.get("cv_sent_version") == versions[-1]["version"]
+                else f" · sent v{app['cv_sent_version']}" if app.get("cv_sent_version") else "")
+        buttons.append(done("card-tailor", f"CV v{versions[-1]['version']}{sent}"))
+    else:
+        buttons.append(queue("tailor", "Tailor CV"))
+    if app["status"] == "to_apply":
+        buttons.append(f'<form method="post" action="/applications/apply" class="inline" data-ajax="applied">'
+                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+                       + _button("Mark applied", size="sm") + "</form>")
+        skip_url = "/applications/skip?" + urlencode([("app", app["id"]), ("return", here)])
+        buttons.append(f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(app["id"])}" '
+                       f'data-skip-label="{h(app["company"])} — {h(app["role"])}" data-after="refresh">Skip</a>')
+    elif app["status"] == "skipped":
+        buttons.append(state("Skipped"))
+    elif app["date_applied"]:
+        buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
+    return f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div></section>'
+
+
+def _panel_tasks(tasks: list[dict], today: str, here: str) -> str:
+    """Open tasks with a tick that marks them done (a direct action; Undo in the toast)."""
+    rows = "".join(
+        '<tr><td class="tick-cell"><form method="post" action="/tasks/done" class="inline" data-ajax="tick">'
+        f'<input type="hidden" name="task_id" value="{h(t["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+        f'<button class="tick" aria-label="Mark done: {h(t["title"])}" title="Mark done">☐</button></form></td>'
+        f'<td>{h(t["title"])}</td><td class="due-cell">{_due(t["due_date"], today)}</td></tr>'
+        for t in tasks)
+    body = f'<table class="mini tasks-list"><tbody>{rows}</tbody></table>' if rows else '<p class="muted">No open tasks.</p>'
+    return f'<section class="panel-tasks"><h3>Tasks <span class="count">{len(tasks)}</span></h3>{body}</section>'
+
+
+def _redo(app_id: int, kind: str, here: str, label: str = "Redo") -> str:
+    return ('<form method="post" action="/applications/research" class="inline">'
+            f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="kind" value="{kind}">'
+            f'<input type="hidden" name="return" value="{h(here)}">' + _button(label, "ghost", "sm") + "</form>")
+
+
+def _open_link(app_id: int, kind: str, label: str = "Open", version: int | None = None) -> str:
+    pairs = [("app", app_id), ("kind", kind)] + ([("v", version)] if version is not None else [])
+    return f'<a class="btn btn-ghost btn-sm" href="{h("/research/file?" + urlencode(pairs))}">{h(label)}</a>'
+
+
+def _artifact(card_id: str, title: str, meta: str, actions: str, body: str) -> str:
+    return (f'<section class="artifact" id="{card_id}"><div class="artifact-head"><strong>{h(title)}</strong>{meta}'
+            f'<span class="artifact-actions">{actions}</span></div>{body}</section>')
+
+
+def _research_cards(app: dict, found: dict, versions: list[dict], here: str) -> str:
+    """The agent's results, each with Open and Redo: company research (with the tier the research
+    set and why), the CV fit with its top gaps, and every tailored CV version (the sent one marked).
+    A card shows once there is a result; queued work shows on its shortcut button."""
+    profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
+    cards = []
+    if profile:
+        size = " · ".join(x for x in (
+            profile["size_band"] and f'{profile["size_band"]} people',
+            profile["sector"],
+            profile["recognition"] and db.RECOGNITION_LABELS.get(profile["recognition"], profile["recognition"]),
+            profile["london_remote"],
+        ) if x)
+        body = (f'<p>{h(profile["what_it_does"])}</p>' if profile["what_it_does"] else "")
+        body += f'<p class="muted">{h(size)}</p>' if size else ""
+        tier = app["tier"] or profile["suggested_tier"]
+        if tier:
+            why = profile["tier_reason"] if tier == profile["suggested_tier"] else None
+            body += f'<p>{_tier_badge(tier)}' + (f' {h(why)}' if why else "") + "</p>"
+        actions = _open_link(app["id"], "research") + ("" if "research" in open_kinds else _redo(app["id"], "research", here))
+        cards.append(_artifact("card-research", "Company research",
+                               f' <span class="mono muted">{h(profile["researched_at"])}</span>', actions, body))
+    if fit:
+        gaps = ('<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>") if fit["top_gaps"] else ""
+        actions = _open_link(app["id"], "cv_fit") + ("" if "cv_fit" in open_kinds else _redo(app["id"], "cv_fit", here))
+        score = _badge(f'{fit["score"]}/5', _fit_tone(fit["score"]))
+        meta = f' {score} <span class="mono muted">{h(fit["checked_at"])}</span>'
+        cards.append(_artifact("card-fit", "CV fit", meta, actions, gaps))
+    if versions:
+        items = "".join(
+            f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
+            f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
+            + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
+            + _open_link(app["id"], "tailor", version=v["version"]) + "</li>"
+            for v in reversed(versions))
+        actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
+        body = (f'<ul class="versions">{items}</ul>'
+                '<p class="muted">Ask the agent for changes; each one is a new version. Tell it which file you sent.</p>')
+        cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
+    return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
+
+
+def _history(conn: sqlite3.Connection, app_id: int) -> str:
+    """Stage changes, newest first, collapsed (their comments are under Comments)."""
+    moves = [e for e in reversed(db.timeline(conn, app_id)) if e["status"]]
+    if not moves:
+        return ""
+    items = "".join(f'<li><span class="mono">{h(e["at"][:10])}</span> {_status_badge(e["status"])}</li>' for e in moves)
+    return (f'<details class="history"><summary>History <span class="count">{len(moves)}</span></summary>'
+            f'<ul class="timeline">{items}</ul></details>')
+
+
+AGENT_MESSAGES = 60  # the latest messages shown in the Agent box
+
+
+def _agent_box(conn: sqlite3.Connection, focus: dict | None, here: str, assistant_on: bool) -> str:
+    """The Agent box under the pipeline list: one conversation for every application. A new message
+    is about the open panel's application while "About" is ticked, else about the whole search
+    ("which tasks need me?"). The script adds an All / This job filter while a panel is open."""
+    return (
+        f'<section class="card card-agent agent" id="agent" aria-labelledby="agent-title">'
+        f'<header class="card-head"><h2 id="agent-title">Agent</h2>'
+        '<button type="button" class="btn btn-ghost btn-sm agent-back" data-back-to-panel>← Back to the job</button>'
+        '<div class="agent-filter" role="group" aria-label="Show messages" hidden>'
+        '<button type="button" class="view-btn is-active" data-filter-chat="all">All</button>'
+        '<button type="button" class="view-btn" data-filter-chat="job">This job</button></div></header>'
+        f'<div class="card-body">{_thread(conn, assistant_on)}'
+        '<form method="post" action="/applications/message" class="ask" data-ajax="thread">'
+        f'<input type="hidden" name="return" value="{h(here)}">{_agent_about(focus)}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
-        'placeholder="Ask about the company or the CV fit, ask for CV changes, or paste a recruiter email…" '
-        'aria-label="Message to the agent"></textarea>'
-        '<div class="ask-foot"><span class="muted">Pasted emails update the stage.</span>'
-        + _button("Send", size="sm") + "</div></form>"
+        'placeholder="Ask anything: which tasks need me, a question about a job, a change (tasks, comments, stage, '
+        'tier, CV), or paste a recruiter email…" aria-label="Message to the agent"></textarea>'
+        '<div class="ask-foot"><span class="muted">The agent does the edits and replies here.</span>'
+        + _button("Send", size="sm") + "</div></form></div></section>"
     )
-    return (f'<section class="agent" aria-labelledby="agent-{h(app_id)}"><h3 id="agent-{h(app_id)}">Agent</h3>'
-            f'{_thread(messages, assistant_on, tailoring)}{ask}</section>')
 
 
-def _thread(messages: list[dict], assistant_on: bool, tailoring: bool = False) -> str:
-    """The thread itself, swapped in whole by the page script after Send and while polling.
-    data-pending marks a user message still waiting for its reply, or a tailored CV being written
-    (its note, with any questions, arrives in the thread)."""
+def _agent_about(focus: dict | None) -> str:
+    """With a panel open: a ticked "About <company>" box (untick it to ask about the whole search).
+    The script swaps it when another panel opens, so a half-typed message stays."""
+    if focus is None:
+        return '<p class="agent-about muted" data-about="">About: the whole search</p>'
+    app = focus["app"]
+    return (f'<label class="agent-about" data-about="{h(app["id"])}"><input type="checkbox" name="app_id" '
+            f'value="{h(app["id"])}" checked> About {h(app["company"])} — {h(app["role"])}</label>')
+
+
+def _thread(conn: sqlite3.Connection, assistant_on: bool) -> str:
+    """The conversation, its latest AGENT_MESSAGES oldest first, each tagged with its application (a
+    link to its panel) or "all jobs". Swapped in whole by the page script after Send and while
+    polling; data-pending marks a user message still waiting for its reply."""
+    messages = db.thread(conn, limit=AGENT_MESSAGES)
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}">'
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}">'
         f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
-        f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
+        + (f'<a class="msg-about" href="{h(_here(m["application_id"]))}">{h(m["company"])}</a>'
+           if m["application_id"] is not None else '<span class="msg-about">all jobs</span>')
+        + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
         f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
         for m in messages
     )
-    waiting = any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
-    pending = waiting or tailoring
-    if tailoring and not waiting and assistant_on:
-        state = ('<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 "Agent is tailoring the CV… Its questions will appear here.</p>")
-    elif tailoring and not waiting:
-        state = ('<p class="thread-state" role="status">Tailoring queued: run /research in a Claude Code session '
-                 "(no standing assistant is set).</p>")
-    elif not messages:
+    pending = bool(db.pending_messages(conn))
+    if not messages:
         state = '<p class="muted thread-empty">No messages yet.</p>'
     elif pending and assistant_on:
         state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Agent is working…</p>'
@@ -1196,168 +1217,25 @@ def _local_time(stamp: str) -> str:
 
 
 def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
-    """GET /applications/thread?app=ID for the panel's polling: whether a message (or a tailored
-    CV) is still pending, the application's status (the agent may have moved it) and the thread's HTML."""
+    """GET /applications/thread[?app=ID] for polling: whether a message is still waiting for the agent
+    or (with `app`, the open panel) an agent request for that application is open; that
+    application's status (the agent may have moved it); the message count (so the script can tell
+    a reply from finished work) and the conversation's HTML."""
     raw = (query.get("app") or [""])[0]
-    if not raw.isdigit():
+    if raw and not raw.isdigit():
         return _json(400, {"ok": False, "message": "app must be an application id."})
     with closing(_connect(settings, today)) as conn:
-        app = db.get_application(conn, int(raw))
-        if app is None:
+        app = db.get_application(conn, int(raw)) if raw else None
+        if raw and app is None:
             return _json(404, {"ok": False, "message": "No such application."})
-        messages = db.thread(conn, app["id"])
-        tailoring = _tailoring(conn, app["id"])
-    pending = tailoring or any(m["author"] == "user" and m["status"] in ("pending", "claimed") for m in messages)
-    return _json(200, {"ok": True, "pending": pending, "status": app["status"],
-                       "html": _thread(messages, bool(settings.assistant_task), tailoring)})
+        working = bool(app and db.open_requests(conn, app["id"]))
+        pending = working or bool(db.pending_messages(conn))
+        payload = {"ok": True, "pending": pending, "status": app["status"] if app else None,
+                   "messages": db.message_count(conn), "html": _thread(conn, bool(settings.assistant_task))}
+    return _json(200, payload)
 
 
-def _tailoring(conn: sqlite3.Connection, app_id: int) -> bool:
-    """A tailor request is open: the panel polls until the agent's note is in the thread."""
-    return any(r["kind"] == "tailor" for r in db.open_requests(conn, app_id))
-
-
-def _move_dialog() -> str:
-    """The drop dialog: an interview step with a date (dropped on Interviewing) or an outcome
-    (dropped on Closed). The page script fills in app_id and return, shows one group and
-    disables the other; without the script it never opens."""
-    steps = "".join(f'<option value="{s}">{h(STEP_LABELS[s])}</option>' for s in db.INTERVIEW_STAGES)
-    outcomes = "".join(f'<button class="btn btn-secondary btn-sm" name="status" value="{s}">{h(_status_label(s))}</button>'
-                       for s in CLOSED_LANE)
-    return (
-        '<dialog id="move-dialog" class="dialog" aria-labelledby="move-title">'
-        '<form method="post" action="/applications/move" class="skip-form">'
-        '<input type="hidden" name="app_id" value=""><input type="hidden" name="return" value="">'
-        '<h2 id="move-title" data-move-title>Move</h2><p class="muted" data-move-app></p>'
-        '<fieldset class="move-group" data-group="interviewing"><label>Interview step '
-        f'<select name="status" aria-label="Interview step">{steps}</select></label>'
-        '<label>Interview date <input type="date" name="interview_date"></label></fieldset>'
-        f'<textarea name="comment" maxlength="{MAX_COMMENT}" rows="2" placeholder="Comment (optional)" '
-        'aria-label="Comment"></textarea>'
-        f'<div class="reasons" role="group" aria-label="Outcome" data-group="closed">{outcomes}</div>'
-        '<div class="dialog-actions"><button type="button" class="btn btn-ghost btn-sm" data-close>Cancel</button>'
-        '<button class="btn btn-primary btn-sm" data-group="interviewing">Move</button></div>'
-        "</form></dialog>"
-    )
-
-
-REDO_LABELS = {"research": "Redo research", "cv_fit": "Redo CV fit", "tailor": "Redo tailored CV"}
-
-
-def _research_button(app_id: int, kind: str, has_result: bool, pending: bool, here: str = "") -> str:
-    """Research / CV fit: queues the request; "… pending" (disabled) while queued; Redo once done.
-    With `here` (the action row) the labels name the kind and the post returns to that panel URL."""
-    if pending:
-        text = "Tailoring…" if kind == "tailor" else f"{db.REQUEST_LABELS[kind]} pending"
-        return f'<button class="btn btn-ghost btn-sm" disabled>{h(text)}</button>'
-    if here:
-        label = (REDO_LABELS[kind] if has_result else {"tailor": "Tailor CV"}.get(kind, db.REQUEST_LABELS[kind]))
-    else:
-        label = "Redo" if has_result else {"research": "Research", "cv_fit": "CV fit", "tailor": "Tailor CV"}[kind]
-    back = f'<input type="hidden" name="return" value="{h(here)}">' if here else ""
-    return ('<form method="post" action="/applications/research" class="inline">'
-            f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="kind" value="{h(kind)}">'
-            + back + _button(label, "secondary", "sm") + "</form>")
-
-
-def _interested_actions(app: dict, found: dict, here: str) -> str:
-    """The Interested panel's action row: Company research · CV fit · Tailor CV · Apply, with the research state.
-    Apply opens a short confirm (a <details>, so it needs no script) that moves it to Applied today."""
-    state = research_state(app, found)
-    line = ""
-    if state:
-        text, ready = state
-        line = f'<p class="research-state{" is-ready" if ready else ""}" role="status">{h(text)}</p>'
-    results = {"research": found["profile"], "cv_fit": found["fit"], "tailor": found.get("tailored")}
-    buttons = "".join(_research_button(app["id"], kind, bool(results[kind]), kind in found["open"], here)
-                      for kind in db.REQUEST_KINDS)
-    apply = (
-        '<details class="confirm"><summary class="btn btn-primary btn-sm">Apply</summary>'
-        '<form method="post" action="/applications/apply" class="confirm-form">'
-        f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-        '<span>Mark as applied today?</span>' + _button("Yes, applied", size="sm") + "</form></details>"
-    )
-    return (f'<section class="panel-actions" aria-label="Next steps">{line}'
-            f'<div class="action-row">{buttons}{apply}</div></section>')
-
-
-def _open_link(app_id: int, kind: str, label: str = "Open") -> str:
-    href = "/research/file?" + urlencode([("app", app_id), ("kind", kind)])
-    return f'<a class="btn btn-ghost btn-sm" href="{h(href)}">{h(label)}</a>'
-
-
-def _research_section(app: dict, found: dict, buttons: bool = True) -> str:
-    """Company research and CV fit summaries with their buttons (left out for Interested, whose
-    action row holds them), and the tier form."""
-    profile, fit = found["profile"], found["fit"]
-
-    def button(kind: str, has_result: bool) -> str:
-        return _research_button(app["id"], kind, has_result, kind in found["open"]) if buttons else ""
-
-    head = '<div class="research-head"><strong>Company</strong>'
-    if profile:
-        head += f' <span class="mono muted">{h(profile["researched_at"])}</span>'
-    head += ('<span class="research-actions">' + (_open_link(app["id"], "research") if profile else "")
-             + button("research", bool(profile)) + "</span></div>")
-    company = head
-    if profile:
-        size = " · ".join(x for x in (
-            profile["size_band"] and f'{profile["size_band"]} people',
-            profile["employees"] and f'~{profile["employees"]}'
-            + (f' (as of {profile["employees_as_of"]})' if profile["employees_as_of"] else ""),
-            profile["sector"],
-            profile["recognition"] and db.RECOGNITION_LABELS.get(profile["recognition"], profile["recognition"]),
-            profile["london_remote"],
-        ) if x)
-        company += (f'<p>{h(profile["what_it_does"])}</p>' if profile["what_it_does"] else "")
-        company += f'<p class="muted">{h(size)}</p>' if size else ""
-        if profile["suggested_tier"]:
-            company += (f'<p>Suggested tier <strong>{h(profile["suggested_tier"])}</strong>'
-                        + (f' — {h(profile["tier_reason"])}' if profile["tier_reason"] else "") + "</p>")
-    else:
-        company += f'<p class="muted">{"Queued for the agent." if "research" in found["open"] else "Not researched yet."}</p>'
-
-    fit_head = '<div class="research-head"><strong>CV fit</strong>'
-    if fit:
-        fit_head += " " + _badge(f'{fit["score"]}/5', _fit_tone(fit["score"]))
-        fit_head += f' <span class="mono muted">{h(fit["checked_at"])}</span>'
-    fit_head += ('<span class="research-actions">' + (_open_link(app["id"], "cv_fit") if fit else "")
-                 + button("cv_fit", bool(fit)) + "</span></div>")
-    fit_html = fit_head
-    if fit and fit["top_gaps"]:
-        fit_html += '<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>"
-    elif not fit:
-        fit_html += f'<p class="muted">{"Queued for the agent." if "cv_fit" in found["open"] else "Not checked yet."}</p>'
-
-    tailored = found.get("tailored")
-    state = tailored_state(app, found, long=True)
-    cv_head = ('<div class="research-head"><strong>Tailored CV</strong><span class="research-actions">'
-               + (_open_link(app["id"], "tailor") if tailored else "")
-               + (_open_link(app["id"], "cv_sent", "Open sent") if app.get("cv_sent_version") else "")
-               + button("tailor", bool(tailored)) + "</span></div>")
-    if state:
-        cv_html = cv_head + f'<p class="{"research-state" if state[1] else "muted"}" role="status">{h(state[0])}</p>'
-    else:
-        cv_html = cv_head + '<p class="muted">Not tailored yet. The agent writes a copy for this job; master CV untouched.</p>'
-    if tailored and state and state[0].startswith("Sent") and tailored["version"] != app["cv_sent_version"]:
-        cv_html += f'<p class="muted">Revised since: v{h(tailored["version"])}.</p>'
-
-    suggested = profile["suggested_tier"] if profile else None
-    current = app["tier"] or suggested
-    options = "".join(f'<option value="{t}"{" selected" if t == current else ""}>Tier {t}</option>' for t in db.TIERS)
-    label = "Confirm" if not app["tier"] and suggested else "Set tier"
-    placeholder = "" if current else '<option value="">Tier…</option>'
-    tier_form = (
-        '<form method="post" action="/applications/tier" class="add add-sm">'
-        f'<input type="hidden" name="app_id" value="{h(app["id"])}">'
-        f'<select name="tier" required aria-label="Tier">{placeholder}{options}</select>'
-        + _button(label, "secondary", "sm") + "</form>"
-    )
-    return (f'<div class="research">{company}</div><div class="research">{fit_html}</div>'
-            f'<div class="research">{cv_html}</div>{tier_form}')
-
-
-FILE_TITLES = {**db.REQUEST_LABELS, "cv_sent": "Tailored CV sent"}
+FILE_TITLES = dict(db.REQUEST_LABELS)
 
 
 def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
@@ -1366,10 +1244,12 @@ def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
     private_dir is read (anything else is a 404); a missing file says so instead of failing."""
     app_param = (query.get("app") or [""])[0]
     kind = (query.get("kind") or [""])[0]
-    if not app_param.isdigit() or kind not in FILE_TITLES:
+    version = (query.get("v") or [""])[0]
+    if not app_param.isdigit() or kind not in FILE_TITLES or (version and not (kind == "tailor" and version.isdigit())):
         raise NotFound()
     app = db.get_application(conn, int(app_param))
-    recorded, path = research.result_path(conn, settings.private_dir, int(app_param), kind)
+    recorded, path = research.result_path(conn, settings.private_dir, int(app_param), kind,
+                                          int(version) if version else None)
     if app is None or not recorded or path is None:
         raise NotFound()
     title = f'{FILE_TITLES[kind]} · {app["company"]}'
@@ -1426,53 +1306,6 @@ def render_markdown(text: str) -> str:
             para.append(stripped)
     flush()
     return "".join(out) or '<p class="muted">No notes.</p>'
-
-
-def _task_row(task: dict, today: str, here: str, kind: bool = True, ajax: bool = True) -> str:
-    """An open task in General tasks (due, title, kind, Done) or in the side panel (no kind, to
-    fit; no ajax, so the board's next task refreshes too). A plain post returns to `here` (a URL
-    built from database ids)."""
-    done = (
-        '<form method="post" action="/tasks/done" class="inline"' + (' data-ajax="done">' if ajax else ">")
-        + f'<input type="hidden" name="task_id" value="{h(task["id"])}">'
-        f'<input type="hidden" name="return" value="{h(here)}">'
-        + _button("Done", "secondary", "sm") + "</form>"
-    )
-    cells = (_due(task["due_date"], today), h(task["title"]), _kind_badge(task["kind"]), done)
-    return _row(cells if kind else cells[:2] + cells[3:])
-
-
-def _general_tasks(conn: sqlite3.Connection, tasks: list[dict], today: str) -> str:
-    """Tasks with no application: add form, open list, and the recently done (all tasks) with Reopen."""
-    kinds = "".join(f'<option value="{h(k)}"{" selected" if k == "admin" else ""}>{h(k)}</option>'
-                    for k in db.TASK_KINDS)
-    add = (
-        '<form method="post" action="/tasks/add" class="add" data-ajax="add-row" data-target="general-tasks">'
-        '<input name="title" placeholder="New task…" required aria-label="Title">'
-        f'<select name="kind" aria-label="Kind">{kinds}</select>'
-        '<input type="date" name="due_date" aria-label="Due date">'
-        + _button("Add task") + "</form>"
-    )
-    table = _table((("Due", "date"), "Task", "Kind", ""), [], "No general tasks.",
-                   hint="Tasks that belong to no application, e.g. drills or admin.")
-    if tasks:
-        rows = "".join(_task_row(t, today, "/applications") for t in tasks)
-        table = (f'<div class="table-wrap"><table id="general-tasks"><thead><tr><th scope="col" data-sort="date">Due</th>'
-                 f'<th scope="col" data-sort="text">Task</th><th scope="col" data-sort="text">Kind</th><th scope="col"></th>'
-                 f'</tr></thead><tbody>{rows}</tbody></table></div>')
-    done_rows = []
-    for t in db.recent_done_tasks(conn, RECENT_DONE):
-        reopen = (
-            '<form method="post" action="/tasks/reopen" class="inline">'
-            f'<input type="hidden" name="task_id" value="{h(t["id"])}">'
-            + _button("Reopen", "ghost", "sm") + "</form>"
-        )
-        done_rows.append((_mono(h((t["done_at"] or "")[:10])), h(t["title"]), _kind_badge(t["kind"]), reopen))
-    recent = ""
-    if done_rows:
-        recent = (f'<details class="recent"><summary>Recently done <span class="count">{len(done_rows)}</span></summary>'
-                  + _table((("Done", "date"), "Task", "Kind", ""), done_rows, "") + "</details>")
-    return _card("General tasks", add + table + recent, count=len(tasks), count_for="general-tasks", cls="card-general")
 
 
 # --- HTML helpers ---------------------------------------------------------------------

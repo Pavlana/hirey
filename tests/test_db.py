@@ -580,3 +580,113 @@ class InterviewDateTest(DbTest):
         self.assertEqual(db.get_task(self.conn, mine)["due_date"], "2026-03-15")
         with self.assertRaises(ValueError):
             db.set_interview_date(self.conn, app_id, "applied", "2026-03-25", TODAY)
+
+
+class AgentFirstTest(DbTest):
+    """Skip, Undo of Mark applied, comment amend/remove and task edit/delete (the agent's commands)."""
+    JOB = {"id": "lever:globex-labs:abc", "company": "Globex Labs", "title": "Engineer", "location": "London",
+           "score": 8, "url": "https://example.com/j", "source": "lever"}
+
+    def interested(self) -> int:
+        app_id, _ = db.record_application(self.conn, "Globex Labs", "Engineer", status="to_apply",
+                                          getjo_job_id=self.JOB["id"], link=self.JOB["url"], today=TODAY)
+        db.record_decision(self.conn, self.JOB, "interested")
+        return app_id
+
+    def test_skip_closes_it_and_marks_the_job_skipped(self) -> None:
+        app_id = self.interested()
+        db.add_task(self.conn, "Hand-made", application_id=app_id)
+        db.skip_application(self.conn, app_id, "location", " On-site only ", TODAY)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual(app["status"], "skipped")
+        self.assertIn("skipped", db.CLOSED_STATUSES)
+        self.assertEqual(db.timeline(self.conn, app_id)[-1]["comment"], "skipped: location — On-site only")
+        self.assertEqual(db.app_tasks(self.conn).get(app_id), None, "every open task closed")
+        self.assertEqual(db.open_requests(self.conn, app_id), [], "queued research closed")
+        decision = db.job_decisions(self.conn)[self.JOB["id"]]
+        self.assertEqual((decision["decision"], decision["reason"], decision["comment"], decision["location"]),
+                         ("skipped", "location", "On-site only", "London"))  # the snapshot is kept
+        with self.assertRaisesRegex(ValueError, "Only an Interested"):
+            db.skip_application(self.conn, app_id, "location")
+        with self.assertRaises(ValueError):
+            db.skip_application(self.conn, self.interested_other(), "nope")
+
+    def interested_other(self) -> int:
+        return db.record_application(self.conn, "Initech", "Engineer", status="to_apply", today=TODAY)[0]
+
+    def test_skip_without_a_getjo_job_or_a_decision_row(self) -> None:
+        app_id = self.interested_other()
+        db.skip_application(self.conn, app_id, "stack")
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "skipped")
+        app_id, _ = db.record_application(self.conn, "Hooli", "Engineer", status="to_apply",
+                                          getjo_job_id="ashby:hooli:1", today=TODAY)
+        db.skip_application(self.conn, app_id, "pay")
+        self.assertEqual(db.job_decisions(self.conn)["ashby:hooli:1"]["decision"], "skipped")
+
+    def test_undo_skip_on_job_offers_reopens_the_application(self) -> None:
+        app_id = self.interested()
+        db.skip_application(self.conn, app_id, "location", today=TODAY)
+        db.undo_skip(self.conn, self.JOB["id"], TODAY)
+        self.assertEqual(db.get_application(self.conn, app_id)["status"], "to_apply")
+        self.assertEqual(db.job_decisions(self.conn)[self.JOB["id"]]["decision"], "interested")
+
+    def test_undo_applied(self) -> None:
+        app_id = self.interested()
+        review = db.add_task(self.conn, db.REVIEW_TASK[0], "apply", None, app_id, stage="to_apply")
+        self.assertTrue(db.move_application(self.conn, app_id, "applied", TODAY))
+        db.undo_applied(self.conn, app_id)
+        app = db.get_application(self.conn, app_id)
+        self.assertEqual((app["status"], app["date_applied"]), ("to_apply", None))
+        self.assertEqual(db.status_history(self.conn, app_id), ["to_apply"])
+        self.assertEqual([t["id"] for t in db.app_tasks(self.conn)[app_id]], [review], "Chase gone, review reopened")
+        with self.assertRaisesRegex(ValueError, "moved on"):
+            db.undo_applied(self.conn, app_id)  # not applied any more
+        db.move_application(self.conn, app_id, "applied", TODAY)
+        db.move_application(self.conn, app_id, "recruiter_call", TODAY)
+        with self.assertRaises(ValueError):
+            db.undo_applied(self.conn, app_id)
+
+    def test_undo_applied_keeps_an_earlier_send_date(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", status="applied", date_applied="2026-03-01")
+        db.move_application(self.conn, app_id, "to_apply", TODAY)
+        db.move_application(self.conn, app_id, "applied", TODAY)
+        db.undo_applied(self.conn, app_id)
+        self.assertEqual(db.get_application(self.conn, app_id)["date_applied"], "2026-03-01")
+
+    def test_comments_list_amend_remove(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", status="applied")
+        db.move_application(self.conn, app_id, "technical", TODAY, comment="Coding on Tue")
+        free = db.add_comment(self.conn, app_id, "Referral")
+        found = db.comments(self.conn, app_id)
+        self.assertEqual({c["ref"] for c in found}, {f"c{free}", found[-1]["ref"]})
+        stage_ref = next(c["ref"] for c in found if c["status"])
+        self.assertTrue(stage_ref.startswith("h"))
+        self.assertEqual(db.latest_comments(self.conn)[app_id][1], 2)
+        db.amend_comment(self.conn, f"c{free}", "Referral from Sam")
+        db.amend_comment(self.conn, stage_ref, "Coding on Wed")
+        self.assertEqual(sorted(c["body"] for c in db.comments(self.conn, app_id)), ["Coding on Wed", "Referral from Sam"])
+        db.remove_comment(self.conn, stage_ref)
+        db.remove_comment(self.conn, f"c{free}")
+        self.assertEqual(db.comments(self.conn, app_id), [])
+        self.assertEqual(db.status_history(self.conn, app_id)[-1], "technical", "the stage change stays")
+        for bad in ("x1", "c", f"c{free}"):
+            with self.subTest(ref=bad), self.assertRaises((ValueError, LookupError)):
+                db.remove_comment(self.conn, bad)
+        with self.assertRaises(ValueError):
+            db.amend_comment(self.conn, stage_ref, " ")
+
+    def test_edit_and_delete_task(self) -> None:
+        app_id = db.add_application(self.conn, "Acme", "Engineer", status="applied")
+        task = db.add_task(self.conn, "Call prep", "prep", "2026-03-12", app_id)
+        db.edit_task(self.conn, task, title="Call prep with Sam", due_date="2026-03-13")
+        self.assertEqual((db.get_task(self.conn, task)["title"], db.get_application(self.conn, app_id)["next_action_date"]),
+                         ("Call prep with Sam", "2026-03-13"))
+        db.edit_task(self.conn, task, clear_due=True)
+        self.assertIsNone(db.get_task(self.conn, task)["due_date"])
+        with self.assertRaises(ValueError):
+            db.edit_task(self.conn, task, due_date="Friday")
+        db.delete_task(self.conn, task)
+        self.assertIsNone(db.get_task(self.conn, task))
+        self.assertIsNone(db.get_application(self.conn, app_id)["next_action"])
+        with self.assertRaises(LookupError):
+            db.delete_task(self.conn, task)

@@ -86,10 +86,14 @@ data/        local databases (gitignored)
 - Tasks: `python -m prep.cli task add|list|done`
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then
-  `PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
-  `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees)
+  `PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
+  `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
+  `PREP_ASSISTANT_TASK=` keeps it from messaging the real standing assistant)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
-- Agent thread (used by /ask): `python -m prep.cli thread show APP [--claim]`, `thread reply APP --to MSG`, `thread pending`
-- Tailored CV (used by /research and /ask): `python -m prep.cli tailor save APP [--to MSG]` (note on stdin)
+- Agent box (used by /ask): `python -m prep.cli thread show [APP] [--claim]` (no APP: the whole search),
+  `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
+- Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
+  `tailor save APP [--to MSG]` (note on stdin); `cv sent APP FILE_NAME`
+- Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`
