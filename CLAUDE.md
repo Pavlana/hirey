@@ -80,8 +80,8 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
-launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in README)
-docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow)
+launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
+docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow), usage.md (setup and reference), screenshots/
 data/        local databases (gitignored)
 requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 ```

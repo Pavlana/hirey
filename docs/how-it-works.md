@@ -609,7 +609,7 @@ checkout with `RunAtLoad` and `KeepAlive`, so the dashboard starts at login and 
 exits. Output goes to the main checkout's `data/dashboard.log` (gitignored). launchd starts
 processes without a shell profile, so the server finds `prep_db` and `getjo_db` through
 `~/.config/inter_prep/settings.toml`. `http://localhost:8765/` opens Applications; the Dashboard is at
-`/dashboard`. Install and uninstall steps are in the README.
+`/dashboard`. Install and uninstall steps are in `docs/usage.md`.
 
 ## Configuration
 
