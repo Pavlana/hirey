@@ -34,6 +34,8 @@ GAP_STATUSES = ("open", "closed")
 SESSION_KINDS = ("mock", "real")
 # Each gap named in a session gets one open drill task (add_gap_drills); closing the gap completes it.
 DRILL_TITLE = "Drill: {gap}"
+# The message the panel's Mock interview control stores; /ask hands it to the /mock skill.
+MOCK_START = "Start a mock interview: {label} ({stage})"
 DECISIONS = ("interested", "applied", "skipped")
 # Labels read back by job_decisions(): a tracked job reads as "interested" while its application
 # is to_apply and as "applied" once it moves on, whatever was stored.

@@ -17,6 +17,7 @@
     python -m prep.cli session list
     python -m prep.cli debrief --kind real|mock [--app ID] [--stage S] [--date DATE] [--questions T]
         [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] [--transcript < FILE]
+    python -m prep.cli mock path APP --stage S [--date DATE]   (transcript file for a new mock, under sessions/)
     python -m prep.cli gap add TEXT ... [--session ID] [--app ID] [--due DATE]   (one drill task per gap)
     python -m prep.cli gap list [--all | --closed]
     python -m prep.cli gap close GAP_ID                    (its open drill tasks are marked done)
@@ -550,6 +551,30 @@ def cmd_debrief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     if found["debrief_tasks"]:
         print(f"  done: {db.DEBRIEF_TASK}")
     return 0
+
+
+def cmd_mock(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """mock path: the transcript file for a new mock, the next free name under private_dir/sessions/
+    (the folder is created, the file is not). The /mock skill writes the mock's questions and answers there,
+    then records it with `session add --file`."""
+    if db.get_application(conn, args.app_id) is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    path = mock_file(_private_dir(settings), args.app_id, args.stage, args.date or db.today_iso())
+    path.parent.mkdir(parents=True, exist_ok=True)
+    print(path)
+    return 0
+
+
+def mock_file(private_dir: Path, app_id: int, stage: str, day: str) -> Path:
+    """private_dir/sessions/mock-<app>-<stage>-<date>.md, or -2, -3 … when that name is taken."""
+    if stage not in db.INTERVIEW_STAGES:
+        raise ValueError(f"stage must be one of {', '.join(db.INTERVIEW_STAGES)}; got {stage!r}")
+    folder = private_dir / "sessions"
+    stem = f"mock-{int(app_id)}-{stage}-{day}"
+    n = 1
+    while (folder / (stem + (f"-{n}" if n > 1 else "") + ".md")).exists():
+        n += 1
+    return folder / (stem + (f"-{n}" if n > 1 else "") + ".md")
 
 
 def _session_line(s: dict) -> str:
@@ -1616,6 +1641,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--transcript", action="store_true",
                    help="read the transcript or notes on stdin; saved under private_dir/sessions/")
     p.set_defaults(func=cmd_debrief)
+    p = sub.add_parser("mock", help="mock interviews run in the Agent box (/mock)")
+    msub = p.add_subparsers(dest="mock_cmd", required=True)
+    t = msub.add_parser("path", help="print the transcript file for a new mock (under private_dir/sessions/)")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--stage", required=True, choices=db.INTERVIEW_STAGES)
+    t.add_argument("--date", type=parse_day, help="the mock's date (default today)")
+    p.set_defaults(func=cmd_mock)
 
     p = sub.add_parser("gap", help="gaps and their drill tasks")
     gsub = p.add_subparsers(dest="gap_cmd", required=True)

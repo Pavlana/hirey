@@ -666,6 +666,13 @@
           .catch((err) => toast(err.message, { error: true }));
         toast(`v${form.elements.version.value} restored as v${reply.version}. The CV it replaced is kept as v${reply.previous}.`,
           reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
+      } else if (mode === "mock") {
+        // The panel's Mock interview: the start message joins the Agent box, which waits for the first question.
+        const thread = document.querySelector(".agent [data-thread]");
+        if (thread && reply.html) thread.outerHTML = reply.html;
+        applyChatFilter();
+        watchThread();
+        toast(reply.message);
       } else if (mode === "thread") {
         // The Agent box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");

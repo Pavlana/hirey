@@ -96,6 +96,7 @@ MESSAGES = {
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the agent. Its reply shows in the thread.",
+    "mock_started": "Mock interview asked for. The agent's first question shows in the Agent box.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "brief_queued": "Brief queued. The agent writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
@@ -548,6 +549,22 @@ def _send_about(settings: Settings, conn: sqlite3.Connection, form: Form) -> dic
     return {"html": _thread(conn, settings)}
 
 
+def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
+    """The panel's Mock interview: store the fixed start message (db.MOCK_START, built here from the
+    stage, never free text) about the application and ping `/ask <app> <message>` like any message.
+    The agent runs the mock in the Agent box (/mock). The JSON reply is the thread."""
+    app_id = _app_id(conn, form)
+    if db.get_application(conn, app_id)["status"] in db.CLOSED_STATUSES:
+        raise BadRequest("This application is closed; a mock is for an open one.")
+    stage = form.get("stage") or ""
+    if stage not in db.INTERVIEW_STAGES:
+        raise BadRequest("Pick an interview stage for the mock.")
+    msg_id = db.add_message(conn, app_id, db.MOCK_START.format(label=db.status_label(stage), stage=stage))
+    log.info("mock interview (%s) asked for on application %s, message %s", stage, app_id, msg_id)
+    assistant.notify_message_in_background(settings, app_id, msg_id)
+    return {"redirect": _here(app_id), "html": _thread(conn, settings)}
+
+
 def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
     """Write brief / Redo brief: queue a job brief for the agent (Redo when one exists) and ping the
     standing assistant. A second click while it is open changes nothing."""
@@ -623,6 +640,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/skip": (skip_application, "/", "app_skipped"),
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
+    "/applications/mock": (start_mock, "/", "mock_started"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
     "/tasks/done": (complete_task, "/", "task_done"),
@@ -1539,7 +1557,21 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
         buttons.append(state("Skipped"))
     elif app["date_applied"]:
         buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
+    if app["status"] not in db.CLOSED_STATUSES:
+        buttons.append(_mock_form(app, here))
     return f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div></section>'
+
+
+def _mock_form(app: dict, here: str) -> str:
+    """Mock interview for a chosen stage (the current one when it is an interview stage): a fixed message
+    in the Agent box, where the agent asks the questions and gives the scores (/mock)."""
+    current = app["status"] if app["status"] in db.INTERVIEW_STAGES else db.INTERVIEW_STAGES[0]
+    options = "".join(f'<option value="{s}"{" selected" if s == current else ""}>{h(db.status_label(s).capitalize())}</option>'
+                      for s in db.INTERVIEW_STAGES)
+    return ('<form method="post" action="/applications/mock" class="inline mock-start" data-ajax="mock">'
+            f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+            f'<select name="stage" aria-label="Mock interview stage">{options}</select>'
+            + _button("Mock interview", "secondary", "sm") + "</form>")
 
 
 def _panel_tasks(tasks: list[dict], today: str, here: str) -> str:
