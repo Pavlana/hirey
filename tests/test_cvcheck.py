@@ -69,6 +69,23 @@ class RulesTest(IsolatedTestCase):
         self.assertEqual(run_check(CLEAN.replace("https://www.linkedin.com/in/alex-example/",
                                                  "[LinkedIn](linkedin.com/in/alex-example)")), [])
 
+    def test_contacts_from_the_facts_bank(self) -> None:
+        facts = ("# Facts\n\n## Contact\n- Name: Alex Example\n- Email: alex.new@example.org\n- Phone:\n"
+                 "- GitHub: https://github.com/alex-example\n\n## Tools\n- Email: not@example.org\n")
+        self.assertEqual(cvcheck.contact_section(facts),
+                         "Alex Example\nalex.new@example.org\nhttps://github.com/alex-example")
+        moved = CLEAN.replace("alex@example.org", "alex.new@example.org · github.com/alex-example")
+        self.assertEqual(run_check(moved, facts=facts), [], "the facts bank's email replaces cv.md's; the empty "
+                         "phone falls back to cv.md's, which is kept")
+        found = run_check(CLEAN.replace("alex@example.org", "alex@example.org · github.com/alex-example"), facts=facts)
+        self.assertEqual([(f["severity"], f["message"]) for f in found],
+                         [("block", "The email in the facts bank is missing: alex.new@example.org")],
+                         "cv.md's old email does not stand in for the facts bank's")
+        no_email = MASTER.replace("alex@example.org · ", "")
+        self.assertEqual(run_check(moved, master=no_email, facts=facts), [], "cv.md without an email is fine")
+        self.assertEqual(run_check(CLEAN.replace("https://www.linkedin.com/in/alex-example/",
+                                                 "[LinkedIn](linkedin.com/in/alex-example)")), [])
+
     def test_placeholders_but_not_markdown_links(self) -> None:
         text = CLEAN.replace("- Ran the on-call rotation.", "- Cut costs by [X]%.\n- TODO: add a metric\n- See <company>")
         found = run_check(text)

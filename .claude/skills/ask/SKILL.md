@@ -177,7 +177,7 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    in private_dir, or the `facts_file` setting; create it from `cv-facts.example.md` if missing) so
    the AI check can trace it; anything still unclear becomes a short question in the reply.
    Follow the tailoring rules in `.claude/skills/research/SKILL.md` (length, structure, impact,
-   keyword coverage). Wording the user agrees for reuse, such as a career gap line, goes into
+   keyword coverage, the header from the facts bank's `## Contact` section). Wording the user agrees for reuse, such as a career gap line, goes into
    `cv-tailored/_style.md` (path in `thread show`) as well as the copy.
 3. Save it; the note on stdin is the reply to this message, saying in a few lines what changed:
 

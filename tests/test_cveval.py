@@ -238,6 +238,13 @@ class CliTest(IsolatedTestCase):
         self.assertIn(f"Application #{other}: Initech Example", out)
         self.assertIn("being done by another session", self.run_cli("research", "next")[1])
 
+    def test_tailor_packet_names_the_facts_bank_for_the_header(self) -> None:
+        facts = write(self.private / "cv-facts.md", "## Contact\n- Email: alex@example.org\n")
+        with closing(db.connect(self.prep_db)) as conn:
+            db.queue_request(conn, self.app, "tailor")
+        out = self.run_cli("research", "next", str(self.app))[1]
+        self.assertIn(f"facts bank: {facts} (exists: header from its ## Contact section", out)
+
     def test_facts_file_setting_is_used(self) -> None:
         facts = write(self.tmp / "elsewhere" / "facts.md", "Led a team of nine in 2015.")
         with mock.patch.dict(os.environ, {"PREP_FACTS_FILE": str(facts)}):

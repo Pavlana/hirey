@@ -179,6 +179,11 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 - **Plain wording**: write like the user, not like a model. No stock words (spearheaded,
   leveraged, passionate, results-driven, robust, seamless, innovative, …), no dashes inside
   sentences, vary the opening verbs, and keep the figures. The check flags these in rewritten lines.
+- **Header**: the name line and the contact line come from the facts bank's `## Contact` section
+  (`- Name:`, `- Email:`, `- Phone:`, `- Location:`, `- LinkedIn:`, `- GitHub:`,
+  `- Portfolio / website:`; the facts bank path is in the packet), using every field with a value;
+  a field that is empty or missing there comes from `cv.md`'s header. The check blocks a version
+  that drops one of these contacts.
 - **Agreed wording**: `cv-tailored/_style.md` (path in the packet) holds wording agreed in earlier
   threads, such as a one-line explanation of a career gap. Reuse it in every copy. On the first
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the

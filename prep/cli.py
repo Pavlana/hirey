@@ -859,6 +859,7 @@ def _print_tailor_step(conn: sqlite3.Connection, settings: Settings, private_dir
               f"{app['id']} --role-short X; it prints the file (CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md)")
     style = research.style_file(private_dir)
     print(f"  agreed wording: {style} ({'exists: reuse it' if style.is_file() else 'missing'})")
+    _print_facts(settings, "header from its ## Contact section, cv.md's header for empty fields")
     print("  rules: only rephrase, reorder and cut what cv.md says; never invent experience. Anything the")
     print("    job needs that cv.md does not answer becomes a question in the note. No pay.")
     print(f"  then: python -m prep.cli tailor save {app['id']} with the thread note on stdin "
@@ -891,6 +892,11 @@ def _print_eval_step(conn: sqlite3.Connection, settings: Settings, private_dir: 
     print(f"  then: python -m prep.cli tailor eval {app['id']}")
     if job:
         _print_job_description(settings, app)
+
+
+def _print_facts(settings: Settings, use: str) -> None:
+    facts = config.facts_path(settings)
+    print(f"  facts bank: {facts} ({'exists: ' + use if facts and facts.is_file() else 'missing'})")
 
 
 def _print_job_description(settings: Settings, app: dict) -> None:
@@ -1297,6 +1303,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
             print(f"    the user sent one: python -m prep.cli cv sent {app['id']} FILE_NAME")
             style = research.style_file(private_dir)
             print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
+            _print_facts(settings, "header from its ## Contact section; add facts the user confirms")
     else:
         print("  private_dir is not set: no research, CV fit or CV files")
     _print_brief(conn, app.get("getjo_job_id"))

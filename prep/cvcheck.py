@@ -100,8 +100,31 @@ def check_pages(pages: int | None) -> list[dict]:
     return []
 
 
-def check_contacts(lines: list[tuple[int, str]], master: str | None) -> list[dict]:
-    """An email and a link in the CV, and every contact detail in cv.md's header kept."""
+def contact_section(facts: str | None) -> str:
+    """The values of the facts bank's `## Contact` section ("- Email: …" lines), empty ones skipped,
+    one per line. Tailored CV headers are built from it, falling back to cv.md's header."""
+    out, inside = [], False
+    for line in (facts or "").splitlines():
+        if line.startswith("#"):
+            inside = line.lstrip("#").strip().lower() == "contact"
+            continue
+        match = re.match(r"\s*[-*]\s*[^:]+:\s*(.*)$", line) if inside else None
+        if match and match.group(1).strip():
+            out.append(match.group(1).strip())
+    return "\n".join(out)
+
+
+def _field(contact: tuple[str, str]) -> str:
+    """Which header field a contact fills: email, phone, linkedin, github or link (any other site)."""
+    kind, value = contact
+    if kind != "link":
+        return kind
+    return next((site for site in ("linkedin", "github") if value.startswith(site + ".com")), "link")
+
+
+def check_contacts(lines: list[tuple[int, str]], master: str | None, facts: str | None = None) -> list[dict]:
+    """An email and a link in the CV, and every header contact kept: per field (email, phone, LinkedIn,
+    GitHub, other link) the facts bank's Contact section when it has that field, else cv.md's header."""
     body = "\n".join(line for _, line in lines)
     have = _contacts(body)
     out = []
@@ -109,10 +132,13 @@ def check_contacts(lines: list[tuple[int, str]], master: str | None) -> list[dic
         out.append(_finding("contacts", "block", "No email address"))
     if not any(kind == "link" for kind, _ in have):
         out.append(_finding("contacts", "look", "No link (LinkedIn, GitHub or a site)"))
-    if master:
-        header = "\n".join(line for _, line in _header(body_lines(master)))
-        for kind, value in sorted(_contacts(header) - have):
-            out.append(_finding("contacts", "block", f"The {kind} in cv.md is missing: {value}"))
+    bank = _contacts(contact_section(facts))
+    from_bank = {_field(c) for c in bank}
+    header = _contacts("\n".join(line for _, line in _header(body_lines(master)))) if master else set()
+    wanted = [(c, "the facts bank") for c in bank] + [(c, "cv.md") for c in header if _field(c) not in from_bank]
+    for (kind, value), source in sorted(wanted):
+        if (kind, value) not in have:
+            out.append(_finding("contacts", "block", f"The {kind} in {source} is missing: {value}"))
     return out
 
 
@@ -376,7 +402,7 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
     """Every rule finding for a tailored CV's text (front matter skipped), in line order."""
     lines = body_lines(text)
     sources = "\n".join(t for t in (master, facts) if t) or None
-    findings = (check_pages(pages) + check_contacts(lines, master) + check_placeholders(lines)
+    findings = (check_pages(pages) + check_contacts(lines, master, facts) + check_placeholders(lines)
                 + check_pay(lines, master, sources) + check_dates(lines, sources if master else None, this_year)
                 + check_companies(lines, company, others, sources) + check_keywords(lines, front_matter(text))
                 + check_title(lines, role) + check_style(lines, master))

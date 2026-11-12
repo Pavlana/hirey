@@ -332,8 +332,10 @@
    Check: after the PDF, `tailor save` checks the version (`prep/cvcheck.py`, `cvcheck.run`), so
    reviewing a tailored CV means reading only the flagged lines and skimming the PDF. Rule checks,
    no AI: the PDF has at most `cvpdf.MAX_PAGES` pages (no PDF: page count unknown); an email and a
-   link are there and every email, link and phone in cv.md's header (the lines before the first
-   `##`) is kept; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
+   link are there and every header contact is kept: per field (email, phone, LinkedIn, GitHub,
+   other link) the values in the facts bank's `## Contact` section (`cvcheck.contact_section`:
+   `- Email: …` lines, empty ones skipped), else those in cv.md's header (the lines before the
+   first `##`), since the skills build each tailored header from that section and fall back to cv.md; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
    lorem ipsum, `??`; a `<https://…>` autolink is a look, since the PDF prints its brackets); pay, in lines other than the user's own from cv.md and never quoted:
    clear pay wording (salary, compensation, per annum, day rate, OTE, bonus…: `cvcheck.PAY_WORDS`)
    within `cvcheck.PAY_NEAR` characters of a number blocks, a money or "k" figure that neither

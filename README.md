@@ -14,7 +14,7 @@ from a separate scoring service that this project only reads. Nothing here appli
 sends email or posts anywhere: the person decides and acts.
 
 Python 3.11+, standard library by default (no frameworks, no build step; one pinned library,
-WeasyPrint, renders the tailored CV PDF), 550 unit tests.
+WeasyPrint, renders the tailored CV PDF), 552 unit tests.
 
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
 ![New offers with the agent's job brief, and the Agent box](docs/screenshots/new-offers.png)

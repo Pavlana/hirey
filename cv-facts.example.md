@@ -8,6 +8,19 @@ flags anything else as unsourced, which blocks the verdict. One fact per bullet,
 with dates and numbers as they really were. Copy to the private folder as cv-facts.md (or set
 `facts_file`), never commit it, and keep pay out of it.
 
+## Contact
+
+Tailored CV headers (name line, then contact line) are built from these fields; an empty one
+falls back to the master CV's header.
+
+- Name: Alex Example
+- Email: alex@example.org
+- Phone: +44 7700 900123
+- Location: London, UK
+- LinkedIn: https://www.linkedin.com/in/alex-example/
+- GitHub: https://github.com/alex-example
+- Portfolio / website:
+
 ## Experience details
 
 - Brightwater Widgets (fictional), 2019–2024: led a team of four platform engineers from 2022.
