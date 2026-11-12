@@ -9,11 +9,21 @@
   // The Applications page's left column shows the pipeline or New offers (?view=). A bare "/"
   // (the nav link, a bookmark) opens the view last picked with the switch in this browser. Any
   // other URL says what to show (a message's job link, a filter), so it is never redirected.
+  // The jobs ticked for the Agent box are in the URL (?sel=a:3&sel=j:…&sel=cv) and kept here too, so a
+  // bare "/" brings them back with the view.
   const VIEW_KEY = "apps-view";
+  const SEL_KEY = "apps-sel";
   if (location.pathname === "/" && !location.search && document.querySelector(".view-switch")) {
     let view = null;
-    try { view = localStorage.getItem(VIEW_KEY); } catch { /* storage blocked: the default view */ }
-    if (view === "offers") { location.replace("/?view=offers"); return; }
+    let sel = [];
+    try {
+      view = localStorage.getItem(VIEW_KEY);
+      sel = JSON.parse(localStorage.getItem(SEL_KEY) || "[]");
+    } catch { /* storage blocked: the default view, nothing ticked */ }
+    const query = new URLSearchParams();
+    if (view === "offers") query.set("view", "offers");
+    if (Array.isArray(sel)) sel.slice(0, 4).forEach((k) => { if (typeof k === "string") query.append("sel", k); });
+    if (query.toString()) { location.replace(`/?${query}`); return; }
   }
   document.addEventListener("click", (e) => {
     const tab = e.target.closest(".view-switch a[data-view]");
@@ -209,27 +219,59 @@
   let refreshApps = () => location.reload(); // the Applications block below swaps the parts instead
   let showPanelAt = (url) => { location.href = url; return Promise.resolve(); }; // likewise, without a reload
   let chatFilter = "all";
-  try { chatFilter = localStorage.getItem(CHAT_KEY) === "job" ? "job" : "all"; } catch { /* default */ }
+  try { chatFilter = localStorage.getItem(CHAT_KEY) === "sel" ? "sel" : "all"; } catch { /* default */ }
+
+  // --- ticked jobs (sel) ---------------------------------------------------------------
+  const MAX_SEL = 4;
+  const currentSel = () => new URL(location.href).searchParams.getAll("sel");
+  // `url` with the ticked jobs of this page (or `sel`) instead of its own.
+  function withSel(url, sel = currentSel()) {
+    const u = new URL(url, location.href);
+    u.searchParams.delete("sel");
+    sel.forEach((k) => u.searchParams.append("sel", k));
+    return u.pathname + u.search;
+  }
+  // What a panel URL opens, as a tick key: an application, a job offer or My CV.
+  function keyOf(url) {
+    const q = new URL(url, location.href).searchParams;
+    if (q.get("cv") === "1") return "cv";
+    if (q.get("app")) return `a:${q.get("app")}`;
+    if (q.get("job")) return `j:${q.get("job")}`;
+    return null;
+  }
+  function rememberSel(sel) {
+    try { localStorage.setItem(SEL_KEY, JSON.stringify(sel)); } catch { /* not remembered */ }
+  }
+  // The server names the ticked jobs as they are now (a job marked Interested since is its
+  // application; unknown ids are dropped): its About line is the truth, so the URL follows it.
+  function adoptServerSel() {
+    const about = document.querySelector("#agent .agent-about");
+    if (!about) return;
+    const keys = Array.from(about.querySelectorAll('input[name="about"]'), (i) => i.value);
+    const now = currentSel();
+    if (keys.length !== now.length || keys.some((k, i) => k !== now[i])) {
+      history.replaceState(null, "", withSel(location.href, keys));
+    }
+  }
+  adoptServerSel();
 
   function stopPoll() {
     if (poll) clearTimeout(poll.timer);
     poll = null;
   }
 
-  // Show only the open panel's messages ("This job": its application's or a job offer's; "My CV"
-  // with the My CV panel) or all of them; the switch shows with a panel.
+  // All, or Selected: the messages about any ticked job (a message lists its targets in
+  // data-targets; a comparison has several). The switch shows while something is ticked.
   function applyChatFilter() {
     const box = document.getElementById("agent");
     if (!box) return;
-    const panel = document.getElementById("panel");
-    const key = panel?.dataset.app ? ["app", panel.dataset.app] : panel?.dataset.job ? ["job", panel.dataset.job]
-      : panel?.dataset.cv ? ["topic", "cv"] : null;
-    const only = chatFilter === "job" && key;
-    box.querySelector(".agent-filter").hidden = !key;
-    const mine = box.querySelector('[data-filter-chat="job"]');
-    if (mine) mine.textContent = key?.[0] === "topic" ? "My CV" : "This job";
-    box.querySelectorAll("[data-filter-chat]").forEach((b) => b.classList.toggle("is-active", b.dataset.filterChat === (only ? "job" : "all")));
-    box.querySelectorAll("li.msg").forEach((li) => { li.hidden = Boolean(only) && li.dataset[key[0]] !== key[1]; });
+    const sel = new Set(currentSel());
+    const only = chatFilter === "sel" && sel.size > 0;
+    box.querySelector(".agent-filter").hidden = sel.size === 0;
+    box.querySelectorAll("[data-filter-chat]").forEach((b) => b.classList.toggle("is-active", b.dataset.filterChat === (only ? "sel" : "all")));
+    box.querySelectorAll("li.msg").forEach((li) => {
+      li.hidden = only && !(li.dataset.targets || "").split(" ").some((k) => sel.has(k));
+    });
     const msgs = box.querySelector(".msgs");
     if (msgs) msgs.scrollTop = msgs.scrollHeight; // the newest at the bottom, in view
   }
@@ -249,12 +291,14 @@
     if (!thread.hasAttribute("data-pending") && !panel?.hasAttribute("data-busy")) return;
     const me = { timer: null, started: Date.now() };
     const app = panel?.dataset.app;
+    const job = panel?.dataset.job;
+    const query = app ? `?app=${encodeURIComponent(app)}` : job ? `?job=${encodeURIComponent(job)}` : "";
     const before = thread.querySelectorAll(".msg").length;
     poll = me;
     const tick = async () => {
       if (poll !== me) return;
       try {
-        const res = await fetch(`/applications/thread${app ? `?app=${encodeURIComponent(app)}` : ""}`, {
+        const res = await fetch(`/applications/thread${query}`, {
           headers: { Accept: "application/json" }, credentials: "same-origin",
         });
         const reply = await res.json();
@@ -279,6 +323,26 @@
   }
   applyChatFilter();
   watchThread();
+
+  // A job description without a brief is folded to a few lines: Show all opens it.
+  function setupClamp(root) {
+    root.querySelectorAll(".description[data-clamp]").forEach((el) => {
+      if (el.nextElementSibling?.classList.contains("show-all") || el.scrollHeight <= el.clientHeight + 4) return;
+      el.classList.add("is-folded"); // only text that is cut off fades out
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "btn btn-ghost btn-sm show-all";
+      btn.textContent = "Show all";
+      btn.setAttribute("aria-expanded", "false");
+      btn.addEventListener("click", () => {
+        const open = el.classList.toggle("is-open");
+        btn.textContent = open ? "Show less" : "Show all";
+        btn.setAttribute("aria-expanded", String(open));
+      });
+      el.after(btn);
+    });
+  }
+  setupClamp(document);
 
   // Cmd/Ctrl+Enter sends the message.
   document.addEventListener("keydown", (e) => {
@@ -335,8 +399,10 @@
           swap(doc, ".page-head-actions"); // My CV marked while its panel is open
         }
         swap(doc, "#agent .agent-about");
+        if (push) history.pushState(null, "", url);
+        adoptServerSel();
         const back = document.querySelector('#agent input[name="return"]');
-        if (back) back.value = new URL(url, location.href).pathname + new URL(url, location.href).search;
+        if (back) back.value = push ? location.pathname + location.search : withSel(url);
         const next = doc.getElementById("panel");
         let panel = null;
         if (next) {
@@ -353,7 +419,8 @@
           current?.remove();
         }
         markFocus(panel);
-        if (push) history.pushState(null, "", url);
+        if (panel) setupClamp(panel);
+        paintTicks();
         applyChatFilter();
         watchThread();
       } catch (err) {
@@ -363,12 +430,72 @@
     }
 
     refreshApps = () => showPanel(location.href, false, { list: true });
-    showPanelAt = (url) => showPanel(url, true, { list: true });
+    showPanelAt = (url) => showPanel(withSel(url), true, { list: true });
+
+    // Ticks: every ☐ for a key shows the same state; links and forms carry the ticked jobs along.
+    function paintTicks(sel = currentSel()) {
+      const on = new Set(sel);
+      document.querySelectorAll(".sel-tick[data-sel]").forEach((a) => {
+        a.classList.toggle("is-on", on.has(a.dataset.sel));
+        a.setAttribute("aria-checked", String(on.has(a.dataset.sel)));
+      });
+      document.querySelectorAll('input[name="return"]').forEach((i) => { if (i.value) i.value = withSel(i.value, sel); });
+      document.querySelectorAll('form[method="get"][action="/"]').forEach((form) => { // New offers filters
+        form.querySelectorAll('input[name="sel"]').forEach((i) => i.remove());
+        sel.forEach((k) => {
+          const input = document.createElement("input");
+          input.type = "hidden"; input.name = "sel"; input.value = k;
+          form.append(input);
+        });
+      });
+      rememberSel(sel);
+    }
+    // Plain links to this page (the view switch, stage pills, Show closed…) take the ticks as they are now.
+    document.addEventListener("click", (e) => {
+      const a = e.target.closest?.("a[href]");
+      if (!a || a.hasAttribute("data-sel") || a.hasAttribute("data-sel-clear") || a.target
+        || a.getAttribute("href").startsWith("#")) return;
+      const u = new URL(a.href, location.href);
+      if (u.origin === location.origin && u.pathname === "/") a.setAttribute("href", withSel(u.pathname + u.search));
+    }, true);
+
+    // Tick or untick: the URL changes in place (no reload, the list keeps its scroll) and the Agent
+    // box's About line is fetched again (the server names the jobs). Only the latest fetch is used.
+    let selFetch = 0;
+    async function setSel(sel) {
+      const url = withSel(location.href, sel);
+      history.replaceState(null, "", url);
+      paintTicks(sel);
+      applyChatFilter();
+      const mine = ++selFetch;
+      try {
+        const res = await fetch(url, { headers: { Accept: "text/html" }, credentials: "same-origin" });
+        if (!res.ok) throw new Error();
+        const doc = new DOMParser().parseFromString(await res.text(), "text/html");
+        if (mine === selFetch) {
+          swap(doc, "#agent .agent-about");
+          adoptServerSel();
+          paintTicks();
+          applyChatFilter();
+        }
+      } catch {
+        if (mine === selFetch) toast("Could not update the About line; reload the page.", { error: true });
+      }
+    }
+
+    function toggleSel(el) {
+      const sel = currentSel();
+      if (el.hasAttribute("data-sel-clear")) { setSel([]); return; }
+      const key = el.dataset.sel;
+      if (sel.includes(key)) setSel(sel.filter((k) => k !== key));
+      else if (sel.length >= MAX_SEL) toast(`Up to ${MAX_SEL} at a time: untick one first.`, { error: true });
+      else setSel([...sel, key]);
+    }
 
     function closePanel() {
       const panel = document.getElementById("panel");
       if (!panel) return;
-      const href = panel.querySelector("[data-close-panel]").getAttribute("href");
+      const href = withSel(panel.querySelector("[data-close-panel]").getAttribute("href"));
       const row = rowFor(panel);
       showPanel(href, true); // the page without a panel: About goes back to the whole search
       row?.querySelector("a")?.focus({ preventScroll: true });
@@ -376,6 +503,8 @@
 
     document.addEventListener("click", (e) => {
       if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+      const tick = e.target.closest("a[data-sel], a[data-sel-clear]");
+      if (tick) { e.preventDefault(); toggleSel(tick); return; }
       if (e.target.closest("[data-close-panel]")) { e.preventDefault(); document.body.classList.remove("is-asking"); closePanel(); return; }
       if (e.target.closest("[data-ask-agent]")) { // phones: leave the sheet for the Agent box, About kept
         e.preventDefault();
@@ -407,12 +536,19 @@
       if (!link && !row) return;
       e.preventDefault();
       document.body.classList.remove("is-asking"); // a chosen job opens as the sheet again on phones
-      const href = link ? link.getAttribute("href") : row.dataset.href;
+      // The ticked jobs go along; opening a job ticks it only when nothing is ticked yet.
+      const raw = link ? link.getAttribute("href") : row.dataset.href;
+      const key = keyOf(raw);
+      let sel = currentSel();
+      if (!sel.length && key && key !== keyOf(location.href)) sel = [key];
+      const href = withSel(raw, sel);
       // A message's tag may point at the other view (a job offer from the pipeline): swap the list too.
       const viewOf = (u) => new URL(u, location.href).searchParams.get("view") || "pipeline";
       showPanel(href, true, { list: viewOf(href) !== viewOf(location.href) });
     });
     document.addEventListener("keydown", (e) => {
+      const tick = e.key === " " && e.target.closest?.("a.sel-tick");
+      if (tick) { e.preventDefault(); toggleSel(tick); return; } // a checkbox toggles on Space too
       if (e.key !== "Escape" || document.querySelector("dialog[open]")) return;
       if (e.target instanceof Element && e.target.closest("input, select, textarea")) return;
       closePanel();

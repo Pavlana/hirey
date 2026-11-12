@@ -96,11 +96,16 @@ charts are server-rendered SVG):
   Remote / Other and a search on company or role; they live in the URL. **Show skipped** lists
   the skipped jobs at any score with their reason and **Undo skip**. Clicking a row opens the
   offer panel: company, role, score, location, seen date, the posting link, the chips,
-  **Interested · Skip**, and the job description from getjo (read-only). **Interested** records
+  **Interested · Skip**, and the **job brief**: the agent's short summary of the description (a
+  key facts line such as "hybrid 2 days · Python · Senior · London", then must-haves,
+  nice-to-haves, where and terms, team, interview process, red flags; never pay), with the original
+  behind Show original. Offers scored `brief_auto_min_score` (8) or more get their brief in the
+  background; any other offer when its panel is first opened ("Writing brief…" until it is in),
+  tracked jobs during company research; **Write brief / Redo brief** asks again. **Interested** records
   the application (status `to_apply`, which queues company research and a CV fit), moves it to
   Pipeline → Interested and opens its panel, with an Undo toast that deletes it again while
   nothing else has happened to it. **Skip** asks for a reason and an optional comment (a pop-up;
-  without JavaScript a plain form page) and offers Undo. The Agent box's "About" tick works here
+  without JavaScript a plain form page) and offers Undo. Ticking a row's ☐ works here
   too: a question about a job not yet tracked ("is this remote?", "how does my CV fit?") goes to
   the agent tagged with that job, and follows the job into its application if it is marked
   Interested. Decided jobs also drop out of `/today`.
@@ -157,10 +162,14 @@ Queued work is picked up three ways:
 ### Agent box
 
 Under the pipeline list is one **Agent** box: a conversation with the standing assistant for the
-whole search. With an application open, a message is about that job ("About Globex — Platform
-Engineer", ticked); untick it, or close the panel, to ask about everything. Each message shows
-its job as a tag (click it to open the job) or "all jobs"; with a panel open, **This job** shows
-only that job's messages. Typical messages:
+whole search. Tick ☐ rows (Pipeline or New offers, up to 4, kept in the URL across views and
+reloads), the open panel's **Ask about this** or the ☐ by **My CV** to say what a message is
+about; "About:" above the input shows them as chips (× unticks one, **Clear all** all of them).
+Nothing ticked asks about everything; one tick asks about that job; two or more ask for a
+**comparison** (differences, pros and cons, fit per role). Opening a job only shows it, and
+ticks it only when nothing else is ticked. Each message shows its jobs as tags (click one to open
+it) or "all jobs"; while something is ticked, **Selected** shows only the messages about those.
+Typical messages:
 
 - "Which tasks need my review?" The agent answers with the 3 most urgent open tasks in a fixed
   order (overdue, due today, interview prep for the nearest interview, ready to apply, upcoming,

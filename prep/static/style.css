@@ -415,9 +415,28 @@ main:has(.apps) { max-width: 1880px; }
 /* Open/closed chips read as written ("expires in 4 days"), not title-cased like stage badges. */
 .chips .badge, .panel-sub .badge-warning, .panel-sub .badge-neutral { text-transform: none; }
 .app-list .chips .badge { font-size: 10.5px; padding: 0 6px; }
-/* The offer panel's job description: getjo's text, paragraphs keep their line breaks. */
-.description { max-width: 78ch; line-height: 1.55; font-size: 13.5px; display: grid; gap: var(--space-3); }
-.description p { white-space: pre-line; overflow-wrap: anywhere; }
+/* The job description: getjo's text tidied (headings, lists, paragraphs keeping their line breaks).
+   While there is no brief it is folded to a few lines (Show all, from the script; in full without it). */
+.description { max-width: 78ch; line-height: 1.55; font-size: 13.5px; display: grid; gap: var(--space-2); }
+.description p { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.description h4 { margin: var(--space-2) 0 0; font-size: 13.5px; font-weight: 650; color: var(--text); }
+.description h4:first-child { margin-top: 0; }
+.description ul { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.has-js .description.is-clamped:not(.is-open) { max-height: 12.5em; overflow: hidden; }
+.has-js .description.is-folded:not(.is-open) { mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+.show-all { justify-self: start; }
+/* The job brief: the key facts line as chips, then short sections (written by the agent). */
+.panel-brief { padding: var(--space-3) var(--space-4); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.panel-body .panel-brief h3 { justify-content: space-between; }
+.brief-actions { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.brief-facts { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.fact { padding: 2px 10px; border-radius: var(--radius-full); background: var(--accent-soft); color: var(--accent-text); font-size: 12.5px; font-weight: 500; }
+.brief.doc { max-width: 78ch; font-size: 13.5px; }
+.brief.doc h3 { margin: var(--space-3) 0 4px; }
+.brief.doc p, .brief.doc ul { margin: 0 0 4px; }
+.brief.doc ul { padding-left: 1.2em; }
+.original summary { cursor: pointer; color: var(--text-muted); font-size: 12.5px; }
+.original[open] summary { margin-bottom: var(--space-2); }
 /* Layout A (laptop and up): the Applications page is exactly the viewport's height and never
    scrolls. The title stays at the top; below it the left column holds the pipeline (what it
    needs, at most 45%; its rows scroll inside while the stage strip and the column headings stay)
@@ -458,11 +477,11 @@ main:has(.apps) { max-width: 1880px; }
 
 /* The pipeline table: fixed columns, one line per row; long text ends in an ellipsis (full text on hover). */
 .app-list table { table-layout: fixed; width: 100%; }
-.app-list .col-company { width: 22%; }
-.app-list .col-role { width: 23%; }
-.app-list .col-stage { width: 15%; }
-.app-list .col-next-task { width: 20%; }
-.app-list .col-comment { width: 20%; }
+.app-list .col-company { width: 20%; }
+.app-list .col-role { width: 21%; }
+.app-list .col-stage { width: 14%; }
+.app-list .col-next-task { width: 18%; }
+.app-list .col-comment { width: auto; }
 .app-list :is(th, td), .app-list :is(th, td):first-child, .app-list :is(th, td):last-child { padding: 9px 8px; }
 .app-list :is(th, td):first-child { padding-left: var(--space-4); }
 .app-list :is(th, td):last-child { padding-right: var(--space-4); }
@@ -594,12 +613,34 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .agent-filter { display: inline-flex; gap: 4px; }
 .agent-filter .view-btn { height: 26px; font-size: 12.5px; background: none; cursor: pointer; }
 .agent-filter[hidden] { display: none; }
-.card-agent .msgs { max-height: min(46vh, 520px); overflow-y: auto; padding-right: 4px; }
+/* The thread scrolls as one: no message has a scrollbar of its own, however long. */
+.card-agent .msgs { max-height: min(60vh, 640px); overflow-y: auto; padding-right: 4px; }
 .msg-about { padding: 0 6px; border-radius: var(--radius-full); border: 1px solid var(--border-strong); color: var(--text-muted);
   font-size: 11px; line-height: 16px; white-space: nowrap; max-width: 18em; overflow: hidden; text-overflow: ellipsis; }
 a.msg-about:hover { color: var(--text); text-decoration: none; border-color: var(--accent); }
-.agent-about { display: flex; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text-muted); overflow-wrap: anywhere; }
-.agent-about input { accent-color: var(--accent); }
+/* "About:" the ticked targets, as chips with × (links), then Clear all. */
+.agent-about { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12.5px; color: var(--text-muted); }
+.about-label { font-weight: 600; color: var(--text-muted); }
+.about-chip { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 1px 4px 1px 9px; border-radius: var(--radius-full);
+  background: var(--accent-soft); border: 1px solid var(--accent); color: var(--accent-text); }
+.about-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 26em; }
+.about-chip a { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--accent-text); }
+.about-chip a:hover { background: var(--accent); color: var(--on-accent); text-decoration: none; }
+.about-clear { font-size: 12px; color: var(--text-muted); }
+/* The ☐ that ticks a row (or My CV, or the open panel) for the Agent box: a link, so it works without the script. */
+.sel-tick { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12.5px; }
+.sel-tick:hover { text-decoration: none; color: var(--text); }
+.sel-tick .box { flex: none; width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-strong); display: grid; place-items: center; }
+.sel-tick:hover .box { border-color: var(--accent); }
+.sel-tick.is-on .box { background: var(--accent); border-color: var(--accent); }
+.sel-tick.is-on .box::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--on-accent); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.sel-tick:focus-visible { outline: none; box-shadow: var(--ring); border-radius: 4px; }
+.sel-tick.has-text { height: 28px; padding: 0 10px; border: 1px solid var(--border-strong); border-radius: var(--radius-full); }
+.sel-tick.has-text.is-on { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+.page-head-actions { display: inline-flex; align-items: center; gap: 8px; }
+.app-list .col-sel { width: 40px; }  /* border-box: the cell's 16px left padding + the 15px box */
+.app-list :is(th, td):first-child:is(.col-sel, :has(> .sel-tick)) { padding-right: 0; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .thread { display: grid; gap: var(--space-2); }
 .msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
 .msg[hidden] { display: none; }
@@ -608,7 +649,8 @@ a.msg-about:hover { color: var(--text); text-decoration: none; border-color: var
 .msg-meta { display: flex; align-items: baseline; gap: 6px; font-size: 11.5px; color: var(--text-faint); }
 .msg-who { font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
 .msg-agent .msg-who { color: var(--accent-text); }
-.msg-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; max-height: 18em; overflow-y: auto; }
+.msg-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+.msg-meta { flex-wrap: wrap; }
 .thread-state { display: flex; align-items: center; gap: 8px; color: var(--accent-text); font-weight: 500; }
 .thread-empty { font-size: 12.5px; }
 .spinner { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent;
@@ -654,6 +696,8 @@ form.ask textarea::placeholder { color: var(--text-faint); }
   body.is-asking .panel { display: none; }
   body.is-asking:has(.panel) { overflow: auto; }
   body.is-asking .agent-back { display: inline-flex; }
+  .panel-head .sel-tick.has-text .sel-text { display: none; }  /* phones: the box only (it has its label) */
+  .panel-head .sel-tick.has-text { padding: 0 8px; }
   .toasts { left: var(--space-3); right: var(--space-3); bottom: var(--space-3); align-items: stretch; }
   .toast { max-width: none; }
 }
@@ -679,9 +723,11 @@ form.ask textarea::placeholder { color: var(--text-faint); }
   .app-list tr.group-row { padding: 0; }
   .app-list tr.group-row th { display: block; flex: 1 1 100%; padding: var(--space-2) var(--space-4); }
   .app-list :is(th, td), .app-list :is(th, td):first-child, .app-list :is(th, td):last-child { padding: 0; }
-  .app-list td:first-child, .app-list td:nth-child(4), .app-list td:nth-child(5) { flex: 1 1 100%; }
-  .app-list td:nth-child(4):has(.muted) { display: none; }
-  .offer-list td:nth-child(2), .offer-list td:nth-child(3) { flex: 1 1 60%; }
+  /* the tick (first cell) sits before the company, which takes the rest of its line */
+  .app-list td:nth-child(2) { flex: 1 1 0; }
+  .app-list td:nth-child(5), .app-list td:nth-child(6) { flex: 1 1 100%; }
+  .app-list td:nth-child(5):has(.muted) { display: none; }
+  .offer-list td:nth-child(3), .offer-list td:nth-child(4) { flex: 1 1 60%; }
 }
 @media (max-width: 480px) {
   .sidebar nav a .icon { display: none; }

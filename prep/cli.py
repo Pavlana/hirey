@@ -32,6 +32,8 @@
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
     python -m prep.cli review [--all]                  (read-only: the top 3 open tasks in review order)
     python -m prep.cli thread pending
+    python -m prep.cli brief next | queue (--job ID | APP_ID) [--redo]   (job briefs for the panel)
+    python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
@@ -126,6 +128,9 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     if line:
         print(line + "\n")
     line = _thread_line(db.pending_messages(conn))
+    if line:
+        print(line + "\n")
+    line = _brief_line(db.open_briefs(conn))
     if line:
         print(line + "\n")
 
@@ -526,13 +531,24 @@ def _thread_line(messages: list[dict]) -> str:
     ids = {m["application_id"] for m in messages if m["application_id"] is not None}
     jobs = any(m["application_id"] is None and m.get("getjo_job_id") for m in messages)
     cv = any(m["application_id"] is None and not m.get("getjo_job_id") and m.get("topic") == "cv" for m in messages)
+    compare = any(m["application_id"] is None and m.get("topic") == db.COMPARE for m in messages)
     general = any(m["application_id"] is None and not m.get("getjo_job_id") and not m.get("topic") for m in messages)
     apps = ", ".join([str(a) for a in sorted(ids)] + (["job offers"] if jobs else []) + (["my CV"] if cv else [])
-                     + (["general"] if general else []))
+                     + (["comparisons"] if compare else []) + (["general"] if general else []))
     claimed = sum(1 for m in messages if m.get("claimed"))
     busy = f"; {claimed} already being answered by another session" if claimed else ""
     noun = "message" if len(messages) == 1 else "messages"
     return f"Agent thread: {len(messages)} {noun} waiting (applications {apps}){busy}. Run /ask to answer."
+
+
+def _brief_line(requests: list[dict]) -> str:
+    """One line: job briefs waiting for the agent (a count only)."""
+    if not requests:
+        return ""
+    claimed = sum(1 for r in requests if r.get("claimed"))
+    busy = f"; {claimed} already being written by another session" if claimed else ""
+    noun = "brief" if len(requests) == 1 else "briefs"
+    return f"Job briefs: {len(requests)} {noun} waiting{busy}. Run /research briefs to write them."
 
 
 def _messages_query(conn: sqlite3.Connection) -> str:
@@ -562,6 +578,8 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
                 ("SELECT application_id, kind, status, claimed_at FROM agent_requests "
                  "WHERE status IN ('pending', 'claimed') ORDER BY id", _queue_line),
                 (_messages_query(conn), _thread_line),
+                ("SELECT NULL, 'brief', status, claimed_at FROM brief_requests "
+                 "WHERE status IN ('pending', 'claimed') ORDER BY requested_at", _brief_line),
             ):
                 try:
                     rows = conn.execute(query).fetchall()
@@ -569,7 +587,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
                     continue
                 found = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff,
                           "getjo_job_id": r[4] if len(r) > 4 else None, "topic": r[5] if len(r) > 5 else None}
-                         for r in rows if r[1] in (*db.REQUEST_KINDS, "message")]
+                         for r in rows if r[1] in (*db.REQUEST_KINDS, "message", "brief")]
                 lines.append(line(found))
     except sqlite3.Error:
         return 0
@@ -626,6 +644,10 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     for r in sorted(claimed, key=lambda r: db.REQUEST_KINDS.index(r["kind"])):  # the fit before tailoring
         if r["kind"] == "research":
             _print_research_step(conn, settings, private_dir, app_id, slug, bool(r["force"]))
+            if app.get("getjo_job_id") and (r["force"] or not db.job_briefs(conn, {app["getjo_job_id"]})):
+                _print_brief_step(settings, app["getjo_job_id"], f"#{app_id} (from the job description)")
+                if not any(c["kind"] in ("cv_fit", "tailor") for c in claimed):  # those steps print it
+                    _print_job_description(settings, app)
         elif r["kind"] == "cv_fit":
             _print_fit_step(settings, private_dir, app, slug)
         elif r["kind"] == "tailor":
@@ -743,6 +765,93 @@ def _print_review_tasks(conn: sqlite3.Connection, after_id: int) -> None:
         print(f"  both results in for #{t['application_id']}: added {_task_line(dict(t))}")
 
 
+BRIEF_FORMAT = """\
+  format (Markdown, at most {words} words, plain and precise; no pay, salary, bonus or currency at all):
+    <key facts: one line, e.g. hybrid 2 days · Python · LLM APIs · Senior · London>
+    ## Summary
+    <one line: what the role is>
+    ## Must-haves
+    - <requirement> (the posting's words, shortest form)
+    ## Nice-to-haves
+    - ...
+    ## Where & terms
+    - location, office days or remote, seniority, contract (permanent / fixed-term / contractor)
+    ## Team & product
+    - ...
+    ## Interview process
+    - only if the posting states it; else leave the section out
+    ## Red flags / notable
+    - anything unusual (vague role, huge scope, on-call, travel, visa); leave out if none"""
+
+
+def _print_brief_step(settings: Settings, job_id: str, label: str) -> None:
+    print(f"\nJob brief for {label}:")
+    print(BRIEF_FORMAT.format(words=db.MAX_BRIEF_WORDS))
+    print(f"  then: python -m prep.cli brief save --job {job_id} <<'BRIEF' … BRIEF")
+
+
+def cmd_brief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Job briefs: `next` claims the oldest waiting one and prints the packet; `save` stores the text
+    from stdin (or --file); `show` prints it; `queue` asks for one (--redo replaces an existing one)."""
+    if args.brief_cmd == "next":
+        return _brief_next(args, settings, conn)
+    job_id = _brief_job(args, conn)
+    if args.brief_cmd == "save":
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        db.save_brief(conn, job_id, text)
+        log.info("job brief saved")  # never the text
+        print(f"Saved the brief of job {job_id}; the panel shows it.")
+        return 0
+    if args.brief_cmd == "queue":
+        created = db.queue_brief(conn, job_id, force=args.redo)
+        print(f"Job brief for {job_id}: {'queued' if created else 'already queued'}")
+        return 0
+    found = db.job_briefs(conn, {job_id}).get(job_id)
+    print(found["brief"] if found else f"No brief for job {job_id} yet.")
+    return 0
+
+
+def _brief_job(args: argparse.Namespace, conn: sqlite3.Connection) -> str:
+    """The getjo job id from --job or an application (which must be linked to a getjo job)."""
+    if (args.job is None) == (args.app_id is None):
+        raise ValueError("give an application id or --job, one of them")
+    if args.job:
+        return args.job
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    if not app["getjo_job_id"]:
+        raise ValueError(f"application {args.app_id} is not linked to a getjo job, so it has no brief")
+    return app["getjo_job_id"]
+
+
+def _brief_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Claim the oldest waiting brief and print the job, its description and the format."""
+    waiting = [r for r in db.open_briefs(conn) if not r["claimed"]]
+    job_id = next((r["getjo_job_id"] for r in waiting if db.claim_brief(conn, r["getjo_job_id"])), None)
+    if job_id is None:
+        busy = any(r["claimed"] for r in db.open_briefs(conn))
+        print("Nothing pending" + (" (some briefs are being written by another session)" if busy else "") + ".")
+        return 0
+    try:
+        with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+            job = getjo.get_job(gconn, job_id)
+    except (getjo.GetjoUnavailable, sqlite3.Error):
+        job = None
+    shown = job or db.job_decisions(conn).get(job_id) or {"company": "?", "title": "?", "location": None, "url": None}
+    tracked = db.find_by_job(conn, job_id)
+    print(f"Job {job_id}: {shown['company']} — {shown['title']}"
+          + (f" (application #{tracked['id']})" if tracked else " (new offer, not tracked)"))
+    print(f"  location: {shown['location'] or '–'}" + (f" · link: {shown['url']}" if shown["url"] else ""))
+    if db.job_briefs(conn, {job_id}):
+        print("  Redo requested: write the brief again from the description")
+    _print_brief_step(settings, job_id, "this job")
+    _print_job_description(settings, {"getjo_job_id": job_id})
+    left = len([r for r in db.open_briefs(conn) if not r["claimed"]])
+    print(f"\nBriefs still waiting after this one: {left}")
+    return 0
+
+
 def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     app = db.get_application(conn, args.app_id)
     if app is None:
@@ -831,6 +940,8 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
                 about = f"about job offer {m['getjo_job_id']} (/ask job {m['id']})"
             elif m["topic"] == "cv":
                 about = f"about the master CV (/ask cv {m['id']})"
+            elif m["topic"] == db.COMPARE:
+                about = f"comparing several jobs (/ask compare {m['id']})"
             else:
                 about = "about the whole search (/ask general)"
             print(f"message {m['id']} {about} (sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
@@ -842,6 +953,8 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     if args.message is not None:  # /ask job MSG: whatever the message is about
         if args.app_id is not None or args.job or args.cv:
             raise ValueError("give an application, --job, --cv or --message, not more than one")
+        if db.message_topic(conn, args.message) == db.COMPARE:
+            return _compare_show(args, settings, conn)
         args.app_id, job_id = db.message_subject(conn, args.message)
         if args.app_id is None and job_id:
             args.job = job_id
@@ -902,6 +1015,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
             print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
     else:
         print("  private_dir is not set: no research, CV fit or CV files")
+    _print_brief(conn, app.get("getjo_job_id"))
     _print_job_description(settings, app)
     print(f"\nStage: {db.status_label(app['status'])} · tier {app['tier'] or '–'}")
     tasks = db.app_tasks(conn).get(app["id"], [])
@@ -911,7 +1025,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
     print(f"Comments ({len(found)}, newest first; refs for comments amend/remove):")
     print("\n".join(_comment_line(c) for c in found) or "  none")
 
-    _print_messages(db.thread(conn, app["id"]), f"Messages about #{app['id']}")
+    _print_messages(db.thread(conn, app["id"]), f"Messages about #{app['id']}", conn)
     _print_claim(args, claimed, db.pending_messages(conn, app["id"]))
     return 0
 
@@ -933,7 +1047,7 @@ def _general_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
               + (f" · next: {nxt['title']}" if nxt else "") + comment)
     print()
     _print_review(conn)
-    _print_messages(db.thread(conn, limit=GENERAL_CONTEXT), f"The conversation (latest {GENERAL_CONTEXT})")
+    _print_messages(db.thread(conn, limit=GENERAL_CONTEXT), f"The conversation (latest {GENERAL_CONTEXT})", conn)
     _print_claim(args, claimed, [m for m in db.pending_messages(conn)
                                  if m["application_id"] is None and not m["getjo_job_id"] and not m["topic"]])
     return 0
@@ -978,8 +1092,9 @@ def _job_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     else:
         print("  private_dir is not set: no research or CV files")
     print("  no CV fit or tailored CV: those come once the job is marked Interested")
+    _print_brief(conn, args.job)
     _print_job_description(settings, {"getjo_job_id": args.job})
-    _print_messages(db.thread(conn, job_id=args.job), f"Messages about job {args.job}")
+    _print_messages(db.thread(conn, job_id=args.job), f"Messages about job {args.job}", conn)
     _print_claim(args, claimed, db.pending_messages(conn, job_id=args.job))
     return 0
 
@@ -1014,21 +1129,110 @@ def _cv_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
               f"({'exists' if path.is_file() else 'missing'})")
     if not files:
         print("  none")
-    _print_messages(db.thread(conn, topic="cv"), "Messages about the master CV")
+    _print_messages(db.thread(conn, topic="cv"), "Messages about the master CV", conn)
     _print_claim(args, claimed, db.pending_messages(conn, topic="cv"))
     return 0
+
+
+def _compare_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """`thread show --message MSG` for a comparison (2-4 ticked jobs, applications or My CV): each
+    target's context (stage, tier, brief, file paths, CV fit score, job description), then the
+    messages about any of them. --claim takes this one message only."""
+    claimed = [args.message] if args.claim and db.claim_message(conn, args.message) else []
+    targets = db.message_targets(conn, [args.message]).get(args.message, [])
+    print(f"Message {args.message} compares {len(targets)} targets. Answer per target, then the differences, "
+          "pros and cons and the fit of each. Context:")
+    private_dir = settings.private_dir
+    for n, t in enumerate(targets, 1):
+        print(f"\n=== {n}. ", end="")
+        if t["application_id"] is not None:
+            app = db.get_application(conn, t["application_id"])
+            print(f"Application #{app['id']}: {app['company']} — {app['role']} [{db.status_label(app['status'])}] "
+                  f"tier {app['tier'] or '–'}")
+            if app["link"]:
+                print(f"  link: {app['link']}")
+            slug = db.company_slug(app["company"])
+            profile, fit = db.company_profile(conn, slug), db.cv_fit(conn, app["id"])
+            if private_dir:
+                company = Path(profile["file_path"]) if profile else research.company_file(private_dir, slug)
+                print(f"  company research: {company} ({'exists' if company.is_file() else 'missing'})")
+                fit_path = Path(fit["file_path"]) if fit else research.fit_file(private_dir, app["id"], slug)
+                note = f", score {fit['score']}/5, top gaps: {'; '.join(fit['top_gaps'])}" if fit else ""
+                print(f"  CV fit: {fit_path} ({'exists' if fit_path.is_file() else 'missing'}{note})")
+            _print_brief(conn, app["getjo_job_id"])
+            _print_job_description(settings, app)
+        elif t["getjo_job_id"]:
+            job_id = t["getjo_job_id"]
+            try:
+                with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+                    job = getjo.get_job(gconn, job_id)
+            except (getjo.GetjoUnavailable, sqlite3.Error):
+                job = None
+            shown = job or db.job_decisions(conn).get(job_id) or {"company": "?", "title": "?", "location": None,
+                                                                    "score": None, "url": None}
+            print(f"Job offer {job_id}: {shown['company']} — {shown['title']} (not tracked)")
+            print(f"  score {shown['score'] if shown['score'] is not None else '–'} · {shown['location'] or 'no location'}"
+                  + (f" · state:{_job_flags(job, None, settings.stale_days) or ' open'}" if job else ""))
+            if shown["url"]:
+                print(f"  link: {shown['url']}")
+            if private_dir:
+                company = research.company_file(private_dir, db.company_slug(shown["company"]))
+                if company.is_file():
+                    print(f"  company research: {company} (exists)")
+            _print_brief(conn, job_id)
+            _print_job_description(settings, {"getjo_job_id": job_id})
+        else:
+            print("My CV (the master CV)")
+            if private_dir:
+                cv = cvfile.cv_path(private_dir)
+                text = cvfile.read_cv(private_dir)
+                print(f"  CV: {cv} ({'missing' if text is None else f'{research.word_count(text)} words'}; never edit it here)")
+    if private_dir:
+        cv = private_dir / research.CV_FILE
+        print(f"\nCV for the fit of each role: {cv} ({'exists' if cv.is_file() else 'missing'})")
+    seen: dict[int, dict] = {}
+    for t in targets:
+        found = (db.thread(conn, t["application_id"]) if t["application_id"] is not None
+                 else db.thread(conn, job_id=t["getjo_job_id"]) if t["getjo_job_id"] else db.thread(conn, topic=t["topic"]))
+        seen.update({m["id"]: m for m in found})
+    seen.update({m["id"]: m for m in db.thread(conn) if m["id"] == args.message})
+    messages = [seen[k] for k in sorted(seen)][-GENERAL_CONTEXT:]
+    _print_messages(messages, f"Messages about these targets (latest {GENERAL_CONTEXT})", conn)
+    _print_claim(args, claimed, [m for m in db.pending_messages(conn) if m["id"] == args.message])
+    return 0
+
+
+def _print_brief(conn: sqlite3.Connection, job_id: str | None) -> None:
+    """The job's brief (the agent's summary of the description), or how to write one."""
+    if not job_id:
+        return
+    found = db.job_briefs(conn, {job_id}).get(job_id)
+    if found is None:
+        print(f"  job brief: none yet (write one: python -m prep.cli brief save --job {job_id}, text on stdin)")
+        return
+    print(f"  job brief ({found['updated_at'][:10]}):")
+    print("\n".join(f"    {line}" for line in found["brief"].splitlines()))
 
 
 GENERAL_CONTEXT = 30  # messages of the whole conversation shown with a general question
 
 
-def _print_messages(messages: list[dict], title: str) -> None:
+def _target_name(t: dict) -> str:
+    return (f"#{t['application_id']} {t['company']}" if t["application_id"] is not None
+            else f"job {t['getjo_job_id']}" if t["getjo_job_id"] else "my CV" if t["topic"] == "cv" else "?")
+
+
+def _print_messages(messages: list[dict], title: str, conn: sqlite3.Connection | None = None) -> None:
     print(f"\n{title} ({len(messages)} message{'' if len(messages) == 1 else 's'}, oldest first):")
+    compared = (db.message_targets(conn, [m["id"] for m in messages if m.get("topic") == db.COMPARE])
+                if conn is not None else {})
     for m in messages:
         who = f"agent, reply to {m['reply_to']}" if m["author"] == "agent" else f"user, {m['status']}"
         about = (f"#{m['application_id']} {m['company']}" if m["application_id"] is not None
                  else f"job {m['getjo_job_id']}" if m.get("getjo_job_id")
-                 else "my CV" if m.get("topic") == "cv" else "whole search")
+                 else "my CV" if m.get("topic") == "cv"
+                 else "comparing " + " · ".join(_target_name(t) for t in compared.get(m["id"], []))
+                 if m.get("topic") == db.COMPARE else "whole search")
         print(f"\n  [message {m['id']} · {who} · {about} · {m['created_at'][:16].replace('T', ' ')} UTC]")
         print("\n".join(f"    {line}" for line in m["body"].splitlines()))
     if not messages:
@@ -1059,8 +1263,10 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
     reply_id = db.reply_message(conn, app_id, args.to, text)
     job = db.message_subject(conn, args.to)[1]
+    topic = db.message_topic(conn, args.to)
     about = (f"about #{app_id}" if app_id is not None else f"about job offer {job}" if job
-             else "about the master CV" if db.message_topic(conn, args.to) == "cv" else "about the whole search")
+             else "about the master CV" if topic == "cv" else "comparing several jobs" if topic == db.COMPARE
+             else "about the whole search")
     print(f"Reply {reply_id} saved {about}; message {args.to} answered. The dashboard's Agent box shows it.")
     return 0
 
@@ -1275,6 +1481,20 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--file", help="a file holding the reply (default: stdin)")
     hsub.add_parser("pending", help="user messages waiting for the agent")
     p.set_defaults(func=cmd_thread)
+
+    p = sub.add_parser("brief", help="job briefs: the agent's short summary of a job description, shown in the panel")
+    bsub = p.add_subparsers(dest="brief_cmd", required=True)
+    bsub.add_parser("next", help="claim the oldest waiting brief and print the job, its description and the format")
+    for name, text in (("save", "store the brief (text on stdin or --file)"), ("show", "print the brief"),
+                       ("queue", "ask for a brief (--redo: write it again)")):
+        t = bsub.add_parser(name, help=text)
+        t.add_argument("app_id", type=int, nargs="?", help="an application linked to a getjo job")
+        t.add_argument("--job", help="a getjo job id")
+        if name == "save":
+            t.add_argument("--file", help="a file holding the brief (default: stdin)")
+        if name == "queue":
+            t.add_argument("--redo", action="store_true")
+    p.set_defaults(func=cmd_brief)
 
     p = sub.add_parser("review", help="read-only: the top 3 open tasks in the order to look at them, and the agent's work")
     p.add_argument("--all", action="store_true", help="every open task, not only the top 3")

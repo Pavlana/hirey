@@ -103,4 +103,6 @@ data/        local databases (gitignored)
 - Master CV (used by /ask, My CV panel): `python -m prep.cli cv show|skills|history|draft`,
   `cv save --note "..." [--to MSG]` (backup first, atomic), `cv restore V`, `cv diff V`;
   `thread show --cv [--claim]`
+- Job briefs (used by /research and /ask): `python -m prep.cli brief next`, `brief save (--job ID | APP)` (text on
+  stdin), `brief show`, `brief queue [--redo]`; `thread show --message MSG` prints a comparison (`/ask compare MSG`)
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`
