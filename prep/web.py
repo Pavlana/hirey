@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, cvcheck, cvfile, cvpdf, db, getjo, research, stats
+from prep import assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, research, stats
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -1648,15 +1648,16 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
         meta = f' {score} <span class="mono muted">{h(fit["checked_at"])}</span>'
         cards.append(_artifact("card-fit", "CV fit", meta, actions, gaps))
     if versions:
+        ai = "done" if check and check.get("summary") else ("pending" if "cv_eval" in open_kinds else "none")
         items = "".join(
             f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
             f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
             + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
             + _open_link(app["id"], "tailor", version=v["version"])
-            + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check) if v is versions[-1] else "") + "</li>"
+            + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check, ai) if v is versions[-1] else "") + "</li>"
             for v in reversed(versions))
         actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
-        body = (f'<ul class="versions">{items}</ul>' + _check_body(check, versions[-1]["version"]) +
+        body = (f'<ul class="versions">{items}</ul>' + _check_body(check, versions[-1]["version"], ai) +
                 '<p class="muted">Ask the agent for changes; each one is a new version. Tell it which file you sent.</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
@@ -1665,22 +1666,31 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
 CHECK_TONES = {"ready": "success", "look": "warning", "blocked": "danger"}
 
 
-def _verdict_badge(check: dict | None) -> str:
-    return _badge(cvcheck.LABELS[check["verdict"]], CHECK_TONES[check["verdict"]]) if check else ""
+def _verdict_badge(check: dict | None, ai: str = "none") -> str:
+    """The verdict, and "AI check pending" while the AI check of that version is queued (`ai`: done,
+    pending or none, as db.eval_state), so a rules-only Ready never reads as the final word."""
+    badge = _badge(cvcheck.LABELS[check["verdict"]], CHECK_TONES[check["verdict"]]) if check else ""
+    return badge + (_badge("AI check pending") if ai == "pending" else "")
 
 
-def _check_body(check: dict | None, version: int) -> str:
-    """The latest version's check: its flagged lines (in line order, as stored; marked by severity) and the
-    changes vs cv.md. Every value escaped; a finding's text never holds pay (cvcheck)."""
+def _check_body(check: dict | None, version: int, ai: str = "none") -> str:
+    """The latest version's check: the AI check's scores when in, its flagged lines (in line order, as
+    stored; marked by severity) and the changes vs cv.md. Every value escaped; a finding's text never
+    holds pay (cvcheck, cveval)."""
     if check is None:
         return f'<p class="muted">v{h(version)} is not checked yet: tailor check checks it.</p>'
+    scores = ""
+    if ai == "done":
+        why = check["summary"].get("skim_why")
+        scores = (f'<p class="muted">AI check: {h(cveval.summary_line(check))}</p>'
+                  + (f'<p class="muted">Skim: {h(why)}</p>' if why else ""))
     items = "".join(
         f'<li class="finding-{h(f["severity"])}">{h(f["message"])}'
         + (f'<br><span class="mono muted">{h(f["text"])}</span>' if f["text"] else "") + "</li>"
         for f in check["findings"])
     findings = f'<ul class="check-findings">{items}</ul>' if items else ""
     changes = "".join(f"<li>{h(c)}</li>" for c in check["changes"])
-    return (f'<div class="cv-check">{findings}'
+    return (f'<div class="cv-check">{scores}{findings}'
             + (f'<p class="muted">Changes vs cv.md</p><ul class="gaps">{changes}</ul>' if changes else "") + "</div>")
 
 
@@ -2064,8 +2074,9 @@ def tailored_pdf(settings: Settings, query: dict[str, list[str]], today: str) ->
     pdf = research.inside(settings.private_dir, str(cvpdf.pdf_path(path))) if recorded and path else None
     if pdf is None or not pdf.is_file():
         return _text(404, "No PDF for this version yet: python -m prep.cli tailor pdf APP --version N makes it.")
+    name = re.sub(r"[^\w.-]", "_", pdf.name, flags=re.A)  # outside the f-string: Python 3.11 refuses a backslash there
     return 200, [("Content-Type", "application/pdf"),
-                 ("Content-Disposition", f'inline; filename="{re.sub(r"[^\w.-]", "_", pdf.name, flags=re.A)}"'), *PDF_HEADERS], pdf.read_bytes()
+                 ("Content-Disposition", f'inline; filename="{name}"'), *PDF_HEADERS], pdf.read_bytes()
 
 
 # --- HTML helpers ---------------------------------------------------------------------

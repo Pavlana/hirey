@@ -63,7 +63,7 @@ a committed file.
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
-(`cv.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
+(`cv.example.md`, `cv-facts.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
 
 ## Layout
 
@@ -73,6 +73,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
+             cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
              assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
@@ -115,6 +116,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
   `tailor check APP [--version N]` (checks a version again without WeasyPrint);
+  `tailor eval APP [--version N]` (stores the AI check queued by every tailor save, written in a separate pass);
   `cv sent APP FILE_NAME`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`

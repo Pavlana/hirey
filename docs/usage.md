@@ -178,6 +178,19 @@ panel's Tailored CV card has **PDF** next to the latest version.
 made-up example CV. It needs the venv from Setup (and `pdf_python` in the settings, for the
 skills); without it, tailored CVs are still saved, just without a PDF.
 
+### Checks of a tailored CV
+
+Each saved version is checked so that only the flagged lines need reading. Rule checks run at
+once (pages, contacts, placeholders, pay, dates, other companies, the job's keywords, wording).
+Every save also queues an AI check, done by the agent in a separate pass from the one that wrote
+the CV: every changed or added claim traced to `cv.md`, the facts bank or the agreed wording
+(an unsourced claim blocks), the CV fit rubric on the tailored copy compared with the master CV's
+fit, and a six-second skim of the top of page one. The card shows one verdict (Ready, Look at
+these lines, Blocked), "AI check pending" until the AI check is in, then its scores.
+`python -m prep.cli tailor eval APP` stores the agent's result. The facts bank holds true facts
+that `cv.md` leaves out: copy `cv-facts.example.md` to `private_dir/cv-facts.md` (or set
+`facts_file`) and keep it private.
+
 Queued work is picked up three ways:
 
 - The committed SessionStart hook (`.claude/settings.json`) lists pending work at the start of

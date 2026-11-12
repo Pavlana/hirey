@@ -7,7 +7,7 @@
 # Each key can also be set with an environment variable, which wins over the file:
 #   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET,
 #   PREP_NO_RESPONSE_DAYS, PREP_RESEARCH_MAX_AGE_DAYS, PREP_ASSISTANT_TASK,
-#   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN, PREP_PDF_PYTHON
+#   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN, PREP_PDF_PYTHON, PREP_FACTS_FILE
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
 # "../getjo" would point somewhere different in every worktree.
@@ -61,3 +61,8 @@ private_dir = "/absolute/path/to/inter_prep"
 # tailored CV. Needed when the skills run a Python without it, e.g. from a dev3 worktree: point it
 # at the venv in the main checkout (README, "PDF of a tailored CV").
 # pdf_python = "/absolute/path/to/inter_prep/.venv/bin/python"
+
+# Optional. The facts bank: true facts not in cv.md (template: cv-facts.example.md). Claims in a
+# tailored CV may trace to cv.md or to this file; the AI check flags anything else. Default:
+# cv-facts.md in private_dir.
+# facts_file = "/absolute/path/to/inter_prep/cv-facts.md"

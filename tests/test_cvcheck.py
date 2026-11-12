@@ -252,13 +252,13 @@ class CliTest(IsolatedTestCase):
     def test_save_stores_and_prints_the_check(self) -> None:
         write(self.file, CLEAN)
         out = self.save(pages=3)
-        self.assertIn("  Check: Blocked\n    [block] The PDF has 3 pages; keep it to 2\n", out)
+        self.assertIn(f"  Check: Blocked{PENDING.format(app=self.app)}\n    [block] The PDF has 3 pages; keep it to 2\n", out)
         self.assertIn("    - Summary: 1 line reworded\n", out)
         with closing(db.connect(self.prep_db)) as conn:
             self.assertEqual(db.cv_check(conn, self.app, 1)["verdict"], "blocked")
         with mock.patch("prep.cvpdf.write_pdf", return_value=(self.file.with_suffix(".pdf"), 2)):
             out = self.run_cli("tailor", "pdf", str(self.app))[1]
-        self.assertIn("  Check: Ready\n", out, "tailor pdf checks again with the new page count")
+        self.assertIn(f"  Check: Ready{PENDING.format(app=self.app)}\n", out, "tailor pdf checks again with the new page count")
 
     def test_a_failed_check_never_undoes_the_save_and_nothing_is_logged(self) -> None:
         write(self.file, CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £90,000"))
@@ -274,6 +274,9 @@ class CliTest(IsolatedTestCase):
         self.assertIn("no check: OSError", out)
 
 
+PENDING = " (AI check pending: run python -m prep.cli research next {app} in a separate pass)"
+
+
 class CheckCommandTest(CliTest):
     def test_check_again_without_weasyprint(self) -> None:
         write(self.file, CLEAN)
@@ -282,10 +285,10 @@ class CheckCommandTest(CliTest):
             self.assertEqual(db.cv_check(conn, self.app, 1)["verdict"], "look", "no PDF yet")
         with mock.patch("prep.cvpdf.write_pdf", side_effect=AssertionError("never renders")):
             out = self.run_cli("tailor", "check", str(self.app))[1]
-            self.assertIn("v1 (" + self.file.name + f") for #{self.app}: no PDF\n  Check: Look at these lines", out)
+            self.assertIn("v1 (" + self.file.name + f") for #{self.app}: no PDF\n  Check: Look at these lines (AI check pending", out)
             with mock.patch("prep.cvpdf.page_count", return_value=2):
                 out = self.run_cli("tailor", "check", str(self.app), "--version", "1")[1]
-        self.assertIn("PDF 2 pages\n  Check: Ready\n", out)
+        self.assertIn(f"PDF 2 pages\n  Check: Ready{PENDING.format(app=self.app)}\n", out)
         code, _, err = self.run_cli("tailor", "check", str(self.app), "--version", "5")
         self.assertEqual((code, "no tailored CV v5" in err), (2, True))
 

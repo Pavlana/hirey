@@ -40,3 +40,6 @@ config/settings.toml
 
 # Private agent skill (dev3 build-board workflow)
 .claude/skills/board/
+
+# Facts bank (true facts not in cv.md; template: cv-facts.example.md)
+cv-facts.md

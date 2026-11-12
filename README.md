@@ -43,7 +43,11 @@ WeasyPrint, renders the tailored CV PDF), 530 unit tests.
   gets an ATS-friendly PDF and a **rule check** that gives a verdict (Ready / Look at these
   lines / Blocked). The check flags changed dates, another company's name, missing must-have
   keywords, pay, and signs of machine-written text (stock phrases, repeated openers, bullets
-  with no numbers). It also lists what changed against the master CV.
+  with no numbers). It also lists what changed against the master CV. Every save also queues an
+  **AI check** run in a separate pass from the one that wrote the CV: each changed or added claim
+  is traced to the master CV or a private facts bank (an unsourced claim blocks), the CV fit is
+  scored again on the tailored copy and compared with the master CV's, and the top of page one
+  gets a six-second skim score. Its findings join the same verdict.
 - **One conversation with the agent.** The Agent box on the Applications page is a chat thread.
   Ticking rows sets what a message is about: one job (tracked or not), the master CV, nothing
   (the whole search), or two to four jobs for a side-by-side **comparison** of differences, pros
@@ -120,7 +124,7 @@ The dashboard-side boundaries are enforced in code and covered by tests. The age
 | The model never acts in the world | No code path applies to jobs, sends email or posts. Agents edit only local files and the local database through `prep.cli`. |
 | Ids-only pings | The dashboard sends the agent a fixed command with record ids. Message text, CV text and pay never leave the database through the ping. |
 | Prompt injection from pasted text | The skills treat emails and job descriptions as data, never as instructions. A pasted email maps to a narrow set of commands: stage, comment, task. Its text stays out of comments. |
-| No invented experience | Tailoring and CV edits may rephrase, reorder and cut, never add. Missing facts become questions in the thread. A rule check blocks changed dates and flags another company's name in each tailored CV. |
+| No invented experience | Tailoring and CV edits may rephrase, reorder and cut, never add. Missing facts become questions in the thread. A rule check blocks changed dates and flags another company's name in each tailored CV, and a separate AI pass blocks any claim it cannot trace to the master CV or the facts bank. |
 | Read-only upstream | getjo's database is opened with SQLite `mode=ro`. A write attempt fails, and a test checks that. inter_prep never imports getjo code. |
 | Local only | The dashboard binds to loopback and refuses other addresses. It checks the Host header (DNS rebinding) and rejects cross-origin POSTs. CSP is `'self'`, there are no external requests, and every database value is escaped. |
 | Personal data stays out of git | CV, notes, research, tailored CVs and databases are gitignored. `prep/privacy.py` fails a test and a pre-commit hook if any of them is tracked. Pay is never rendered or logged, and the skills keep it out of agent files. |
@@ -153,7 +157,7 @@ is in [docs/usage.md](docs/usage.md). It covers the venv and the launchd job, wh
 ```
 prep/            db.py (schema, migrations, queue, stage rules) · cli.py (every command the agents use)
                  web.py (dashboard) · stats.py + charts.py (numbers, SVG) · getjo.py (read-only view)
-                 research.py · cvfile.py · cvcheck.py (tailored CV rules) · cvpdf.py (PDF)
+                 research.py · cvfile.py · cvcheck.py (tailored CV rules) · cveval.py (AI check) · cvpdf.py (PDF)
                  assistant.py (ids-only ping) · privacy.py · static/
 .claude/skills/  today, applied, stage, task, research, ask, mock, debrief: the agent's instructions, each
                  backed by python -m prep.cli

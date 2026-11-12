@@ -37,6 +37,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_ASSISTANT_PROJECT": "",
             "PREP_DEV3_BIN": "",
             "PREP_PDF_PYTHON": "",
+            "PREP_FACTS_FILE": "",
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()

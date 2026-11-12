@@ -33,6 +33,7 @@
 │ prep/cvfile.py  master CV versions  │
 │ prep/cvpdf.py   tailored CV → PDF   │
 │ prep/cvcheck.py tailored CV check   │
+│ prep/cveval.py  AI check of a CV    │
 │ prep/assistant.py  dev3 message     │
 └───────▲──────────────────▲──────────┘
         │                  │
@@ -160,7 +161,7 @@
 
 13. Agent research and CV fit. The agent, not the dashboard, researches the company and
    checks the CV against the job. The dashboard and the CLI only queue requests in
-   `agent_requests` (kind `research` or `cv_fit`, status `pending` → `claimed` → `done`,
+   `agent_requests` (kind `research` or `cv_fit`; `tailor` and `cv_eval` in step 16; status `pending` → `claimed` → `done`,
    `force` for Redo). A partial unique index allows one open request per application and kind,
    so a double click never queues twice. Requests come from entering Interested
    (`db.stage_tasks`, so an offer's Interested button, `/applied --status to_apply` and a move to
@@ -362,6 +363,33 @@
    counted in the file and its Flate-compressed object streams; no PDF is a look as before). The Tailored CV card shows the verdict badge beside
    the latest version's PDF link, its flagged lines and the changes; a version saved before checks
    existed reads "not checked yet".
+   AI check (`prep/cveval.py`): `db.save_tailored_cv` also queues an `agent_requests` row of kind
+   `cv_eval` in the same transaction (`INSERT OR IGNORE`: an open one is reused, since it always
+   checks the latest version), so every save, a revision through /ask included, gets one;
+   `tailor save` pings the standing assistant like other queued work. `research next` prints its
+   packet only once no tailor request is open for that application, and prints the version file
+   and number, cv.md, the facts bank, `_style.md`, the job description, the master CV's fit score and
+   the result file, never the tailor note or the thread: the /research skill runs it in a fresh
+   subagent, a separate pass from the one that wrote the CV. The agent writes
+   `cv-tailored/<version file stem>.eval.md` (TOML front matter: `version`, `fit_score` and
+   `skim_score` 1-5, `skim_why`, `[[claims]]` with `quote`, `source` cv.md / facts / style / none
+   and `note`, `[[must_haves]]` with `term` and `covered`; rubric in the skill) and runs
+   `tailor eval APP [--version N] [--file PATH]`. `cveval.read_eval` validates it and
+   `cveval.findings` maps it with fixed rules, source "ai": a claim with source `none` blocks (its
+   line found in the version by the quoted words, so model line numbers are never trusted; a quote
+   not found keeps no line); must-haves not covered ask for a look, except terms the version's front
+   matter already lists under `keywords` or `gaps` (the rule checks handle those); a `fit_score`
+   below the master CV's `cv_fits.score` for the same job asks for a look (compared in code); a
+   `skim_score` of `cveval.LOW_SKIM` (2) or less asks for a look. The agent's notes are dropped from
+   a finding when they mention pay. `db.save_cv_eval` stores them through `save_cv_check` (merged
+   with the rule findings into one verdict; a rule re-check keeps them) with a `summary` (JSON
+   column added by MIGRATIONS: fit, master fit, skim and why, claim and must-have counts), and
+   closes the `cv_eval` request only when that version is still the latest, so a version saved
+   while the check ran is checked next. `db.eval_state` is done, pending or none (versions saved
+   before AI checks). The CLI's check line and the card's verdict carry "AI check pending" until it
+   is in (the panel is busy and polls meanwhile), then the scores line (`cveval.summary_line`) and
+   the skim's why. The facts bank is the `facts_file` setting, default `private_dir/cv-facts.md`
+   (`config.facts_path`; template `cv-facts.example.md`), read by the rule checks too.
 17. Mark applied and Skip. The panel's two direct actions, both only while the application is
    Interested. Mark applied (`/applications/apply`) moves it to Applied today through
    `db.move_application` (Applied stage tasks, `date_applied`). Its Undo
@@ -621,14 +649,15 @@ keys `dashboard_port` (default 8765), `weekly_target` (applications per week, de
 queued in the background; others when their panel is first opened), and
 the standing-assistant keys `assistant_task` (a dev3 task seq), `assistant_project` (a dev3
 project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI), and `pdf_python`
-(absolute path to a Python with WeasyPrint, for the tailored CV PDF; step 16). It is looked up as
+(absolute path to a Python with WeasyPrint, for the tailored CV PDF; step 16), and `facts_file`
+(absolute path to the facts bank, default `private_dir/cv-facts.md`; step 16). It is looked up as
 `$INTERPREP_SETTINGS`, then `config/settings.toml` in the checkout, then
 `~/.config/inter_prep/settings.toml`. The per-user file is the normal place, because dev3
 worktrees, launchd and the Claude app all find it without a shell environment.
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
 `PREP_BRIEF_AUTO_MIN_SCORE`,
-`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` and `PREP_PDF_PYTHON` override single keys. Set to
+`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`, `PREP_PDF_PYTHON` and `PREP_FACTS_FILE` override single keys. Set to
 an empty string, the three assistant keys are cleared (`config.CLEARABLE`): a demo on example
 data runs with `PREP_ASSISTANT_TASK=` and never messages the assistant named in the file. An
 empty path or number override is ignored (an empty `PREP_DB` never means the default). A relative `prep_db`

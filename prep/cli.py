@@ -31,13 +31,14 @@
     python -m prep.cli feedback export [--out PATH]
     python -m prep.cli queue                          (read-only: counts and application ids)
     python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
-    python -m prep.cli research queue APP_ID [--kind research|cv_fit] [--redo]
+    python -m prep.cli research queue APP_ID [--kind research|cv_fit|tailor|cv_eval] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
     python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
     python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin; makes the PDF, checks it)
     python -m prep.cli tailor pdf APP_ID [--version N]   (the PDF next to a version's file, default the latest; checks it again)
     python -m prep.cli tailor check APP_ID [--version N]   (checks a version again; pages from its PDF, no WeasyPrint)
+    python -m prep.cli tailor eval APP_ID [--version N] [--file PATH]   (stores the AI check from <version>.eval.md)
     python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
                                                        (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
@@ -63,7 +64,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, cvcheck, cvfile, cvpdf, db, getjo, research
+from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -776,7 +777,10 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
         print("Nothing pending" + (" (some requests are being done by another session)" if others else "") + ".")
         return 0
     app_id = args.app_id or pending[0]["application_id"]
-    claimed = [r for r in pending if r["application_id"] == app_id and db.claim_request(conn, r["id"])]
+    tailoring = any(r["application_id"] == app_id and r["kind"] == "tailor" for r in db.open_requests(conn, app_id))
+    claimed = [r for r in pending if r["application_id"] == app_id
+               and not (r["kind"] == "cv_eval" and tailoring)  # checked after the new version is saved
+               and db.claim_request(conn, r["id"])]
     if not claimed:
         print("Another session claimed this work first; run research next again.")
         return 0
@@ -799,6 +803,9 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
         elif r["kind"] == "tailor":
             _print_tailor_step(conn, settings, private_dir, app, slug,
                                job=not any(c["kind"] == "cv_fit" for c in claimed))  # the fit step printed it
+        elif r["kind"] == "cv_eval":
+            _print_eval_step(conn, settings, private_dir, app,
+                             job=not any(c["kind"] in ("cv_fit", "tailor") for c in claimed))
     print(f"\nApplications still waiting after this one: {remaining}")
     return 0
 
@@ -856,6 +863,32 @@ def _print_tailor_step(conn: sqlite3.Connection, settings: Settings, private_dir
     print("    job needs that cv.md does not answer becomes a question in the note. No pay.")
     print(f"  then: python -m prep.cli tailor save {app['id']} with the thread note on stdin "
           "(what was tailored, then the questions)")
+    if job:
+        _print_job_description(settings, app)
+
+
+def _print_eval_step(conn: sqlite3.Connection, settings: Settings, private_dir: Path, app: dict,
+                     job: bool = True) -> None:
+    """The AI check of the latest tailored version: only the files it needs, never the tailor note or
+    the thread, so the check is a separate pass from the one that wrote the CV."""
+    current = db.tailored_cv(conn, app["id"])
+    print("\nAI check of the tailored CV (a separate pass: run it in a fresh subagent given only this part):")
+    if current is None:
+        print("  no tailored CV yet: nothing to check")
+        return
+    version = Path(current["file_path"])
+    facts = config.facts_path(settings)
+    fit = db.cv_fit(conn, app["id"])
+    print(f"  version: {current['version']} ({version})")
+    print(f"  CV: {private_dir / research.CV_FILE}")
+    print(f"  facts bank: {facts} ({'exists' if facts and facts.is_file() else 'missing'})")
+    style = research.style_file(private_dir)
+    print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
+    print(f"  master CV fit: {fit['score']}/5 ({fit['file_path']})" if fit else "  master CV fit: none yet")
+    print(f"  file: {cveval.eval_file(version)}")
+    print("  rubric (the AI check section of the /research skill): grounding of every changed or added claim,")
+    print("    the CV fit rubric on this version, and the six-second skim of the top third of page one.")
+    print(f"  then: python -m prep.cli tailor eval {app['id']}")
     if job:
         _print_job_description(settings, app)
 
@@ -1039,11 +1072,14 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         return _tailor_pdf(args, settings, conn, app)
     if args.tailor_cmd == "check":
         return _tailor_check(args, settings, conn, app)
+    if args.tailor_cmd == "eval":
+        return _tailor_eval(args, settings, conn, app)
     path = Path(args.file).expanduser() if args.file else _next_tailored_file(settings, conn, app)
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
     _, body = research.split_front_matter(path.read_text(encoding="utf-8"))  # the same +++ block as the other files
     note = sys.stdin.read()
+    mark = db.last_request_id(conn)
     version = db.save_tailored_cv(conn, args.app_id, str(path), note, args.to)
     log.info("tailored cv v%s saved for application %s", version, args.app_id)  # never the CV or the note
     print(f"Saved tailored CV v{version} ({path.name}) for #{args.app_id}; the note is in the thread"
@@ -1053,6 +1089,7 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
     pages = _print_pdf(settings, path, required=False)
     _print_check(settings, conn, args.app_id, version, pages)
+    _notify_new(settings, conn, mark)  # the AI check queued by the save
     return 0
 
 
@@ -1060,17 +1097,28 @@ def _print_check(settings: Settings, conn: sqlite3.Connection, app_id: int, vers
     """Run the rule checks on a saved version (cvcheck), store them and print the verdict, the flagged
     lines and the changes against cv.md. A failed check never undoes the save."""
     try:
-        found = cvcheck.run(conn, settings.private_dir, app_id, version, pages)
+        found = cvcheck.run(conn, settings.private_dir, app_id, version, pages, config.facts_path(settings))
     except Exception as e:  # the version is saved; the check can be redone with tailor pdf
         log.warning("tailored cv check failed: %s", type(e).__name__)
         print(f"  no check: {type(e).__name__}; retry with tailor check")
         return
     log.info("tailored cv v%s checked: %s, %s findings", version, found["verdict"], len(found["findings"]))  # never the CV
-    print(f"  Check: {cvcheck.LABELS[found['verdict']]}")
-    for f in found["findings"]:
-        print(f"    [{f['severity']}] {f['message']}" + (f": {f['text']}" if f["text"] else ""))
+    _print_found(conn, app_id, version, found)
     for line in found["changes"]:
         print(f"    - {line}")
+
+
+def _print_found(conn: sqlite3.Connection, app_id: int, version: int, found: dict) -> None:
+    """The verdict, whether the AI check is in (with its scores), and the flagged lines."""
+    latest = db.tailored_cv(conn, app_id)
+    state = db.eval_state(conn, app_id, found) if latest and latest["version"] == version else (
+        "done" if found.get("summary") else "none")
+    ai = {"done": "AI check: " + cveval.summary_line(found),
+          "pending": f"AI check pending: run python -m prep.cli research next {app_id} in a separate pass",
+          "none": "no AI check"}[state]
+    print(f"  Check: {cvcheck.LABELS[found['verdict']]} ({ai})")
+    for f in found["findings"]:
+        print(f"    [{f['severity']}] {f['message']}" + (f": {f['text']}" if f["text"] else ""))
 
 
 def _print_pdf(settings: Settings, path: Path, required: bool) -> int | None:
@@ -1116,6 +1164,19 @@ def _tailor_check(args: argparse.Namespace, settings: Settings, conn: sqlite3.Co
     print(f"Tailored CV v{version['version']} ({path.name}) for #{app['id']}: "
           + (f"PDF {cvpdf.page_note(pages)}" if pages else "no PDF"))
     _print_check(settings, conn, app["id"], version["version"], pages)
+    return 0
+
+
+def _tailor_eval(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    """Store the AI check of a version (default the latest) from its .eval.md file (or --file)."""
+    version, path = _chosen_version(conn, app, args.version)
+    file = Path(args.file).expanduser() if args.file else cveval.eval_file(path)
+    if not file.is_file():
+        raise SystemExit(f"error: no file at {file}")
+    found = cveval.save(conn, app["id"], version["version"], file)
+    log.info("tailored cv v%s ai check saved: %s", version["version"], found["verdict"])  # never the CV or the findings
+    print(f"Saved the AI check of tailored CV v{version['version']} ({path.name}) for #{app['id']}")
+    _print_found(conn, app["id"], version["version"], found)
     return 0
 
 
@@ -1744,6 +1805,10 @@ def build_parser() -> argparse.ArgumentParser:
     t = tsub.add_parser("pdf", help="make the PDF next to a version's file (same name, .pdf) and check it again; needs WeasyPrint")
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest version")
+    t = tsub.add_parser("eval", help="store the AI check (grounding, fit, skim) of a version from its .eval.md file")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--version", type=int, help="default: the latest")
+    t.add_argument("--file", help="default: the version's file with .eval.md")
     t = tsub.add_parser("check", help="check a version again (pages from its existing PDF; no WeasyPrint needed)")
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest version")

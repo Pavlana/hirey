@@ -7,8 +7,8 @@ in the version's .md file. The verdict follows from all findings (db.check_verdi
 at these lines, or Ready. The rules store their findings as source "rules" (db.save_cv_check); an AI
 check stores its own source on the same row and the verdict covers both.
 
-Dates and claims may come from cv.md or from the facts bank, private_dir/cv-facts.md (true facts
-not in the master CV). Findings may quote a CV line, but never one that mentions pay. None of this
+Dates and claims may come from cv.md or from the facts bank (setting facts_file, default
+private_dir/cv-facts.md: true facts not in the master CV). Findings may quote a CV line, but never one that mentions pay. None of this
 is logged.
 """
 
@@ -384,16 +384,17 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
 
 
 def run(conn: sqlite3.Connection, private_dir: Path | None, app_id: int, version: int,
-        pages: int | None) -> dict:
+        pages: int | None, facts_path: Path | None = None) -> dict:
     """Check tailored version `version` of an application, store the rule findings and the changes,
-    and return the stored check (with the verdict). `pages`: the PDF's page count, None without a PDF."""
+    and return the stored check (with the verdict). `pages`: the PDF's page count, None without a PDF.
+    `facts_path`: the facts bank (config.facts_path), default private_dir/cv-facts.md."""
     app = db.get_application(conn, app_id)
     row = next((v for v in db.tailored_versions(conn, app_id) if v["version"] == version), None)
     if app is None or row is None:
         raise LookupError(f"no tailored CV v{version} on application {app_id}")
     text = Path(row["file_path"]).read_text(encoding="utf-8")
     master = cvfile.read_cv(private_dir) if private_dir else None
-    facts_path = facts_file(private_dir) if private_dir else None
+    facts_path = facts_path or (facts_file(private_dir) if private_dir else None)
     facts = facts_path.read_text(encoding="utf-8") if facts_path and facts_path.is_file() else None
     others = [a["company"] for a in db.list_applications(conn) if a["id"] != app_id]
     findings = check(text, app["company"], others, master, facts, pages, int(db.today_iso()[:4]), app["role"])
