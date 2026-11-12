@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage, or a mock interview (started from the panel, or an answer while one is in progress). Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
@@ -78,6 +78,12 @@ Every job with a brief prints it (`job brief`: the key facts line and short sect
 first; the full description follows for anything it leaves out.
 
 ## 3. Decide what the message is
+
+**A mock interview** (a message `Start a mock interview: … (<stage>)` from the panel's Mock
+interview control, a request such as "mock me for system design", or any message while a mock is in
+progress: the latest agent reply about this application ends with the `— Mock · … · question N of M`
+footer): follow `.claude/skills/mock/SKILL.md`. It asks one question per reply, then scores the
+answers, records the session with its gaps and drill tasks, and replies with the scores.
 
 **A comparison** (`/ask compare MSG`, "which fits me better?", "compare these", or any question
 about several ticked jobs): `thread show --message MSG --claim` prints each target in turn
