@@ -20,8 +20,7 @@ class DbTest(unittest.TestCase):
 
     def test_creates_tables(self) -> None:
         names = {r[0] for r in self.conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        self.assertTrue({"applications", "interviews", "tasks", "gaps", "status_history"} <= names)
-        self.assertNotIn("sessions", names)
+        self.assertTrue({"applications", "interviews", "tasks", "gaps", "status_history", "sessions"} <= names)
         self.assertNotIn("cards", names)
 
     def test_connect_is_idempotent(self) -> None:

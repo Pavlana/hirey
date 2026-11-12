@@ -17,7 +17,8 @@
 │ prep/db.py      prep.db             │        │ companies/, fit/,         │
 │   applications, status_history,     │        │ cv-tailored/ (written by  │
 │   application_comments, interviews, │        │ /research and /ask),      │
-│   tasks, gaps, job_decisions,       │        │ cv-history/ (cvfile.py);  │
+│   tasks, gaps, sessions,            │
+│   job_decisions,                    │        │ cv-history/ (cvfile.py);  │
 │   agent_requests, company_profiles, │        │ read only by skills that  │
 │   cv_fits, tailored_cvs,            │        │ need them                 │
 │   tailored_cv_versions,             │        └───────────────────────────┘
@@ -388,6 +389,24 @@
    in full without it). With a brief, the facts line shows as chips, the sections through
    `render_markdown` (escaped), and the original behind Show original. `thread show` prints the
    brief for an application, a job offer and each target of a comparison.
+22. Practice sessions, gaps and drills (Phase 3 data layer; no skill or dashboard view yet).
+   `sessions` holds one row per practice session: date, kind (`db.SESSION_KINDS`: `mock`, `real`
+   for a real interview debriefed), optional application and interview stage (`db.INTERVIEW_STAGES`),
+   scores per area as a JSON object (`{"system design": 3}`, whole numbers 1–5) and the path of its
+   transcript or notes, which must be under `private_dir` (a relative `--file` goes to
+   `private_dir/sessions/`). `prep.cli session add --kind K [--app ID] [--stage S] [--date D]
+   [--score AREA=N ...] [--file F] [--gap TEXT ...] [--due D]` calls `db.record_session`: it checks
+   every value first (nothing is written when one is wrong), inserts the session, then
+   `db.add_gap_drills` handles the named weaknesses. Each one matches an open gap with the same text
+   (ignoring case and spacing, as for CV fit gaps) or becomes a new gap with `gaps.session_id`
+   pointing at the session, `session` set to its kind and the session's application. A matched gap
+   (for example one from a CV fit) gets the session only when it has none. Every named gap without an
+   open task gets one `drill` task, "Drill: <gap>" (`tasks.gap_id`, the gap's application, `--due` or
+   undated), so the application's next action follows. CV fit gaps get no drill until a session or
+   `gap add` names them. `prep.cli gap add TEXT ... [--session ID] [--app ID] [--due D]` does the
+   same without a new session; `gap list [--all | --closed]` shows each gap with its open drill count;
+   `gap close ID` (`db.close_gap`) closes the gap and marks its open tasks done. `session list`
+   prints the sessions newest first. A session on an application blocks Undo Interested, as gaps do.
 
 ## Dashboard
 
