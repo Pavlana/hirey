@@ -448,9 +448,10 @@
    `/ask <app> <message>` like any message (step 15). /ask hands it to the /mock skill, which reads
    the stage's generic question set (`.claude/skills/mock/questions/<stage>.md`: score areas, rubric,
    questions) and the job's brief, description and company file, and replies with one question at a
-   time. Each question ends with a fixed footer ("— Mock · <stage> · question N of M …"); a new
-   message on an application whose latest agent reply carries it is an answer, so the thread itself
-   is the mock's state (no table). After the last answer or "end mock", `prep.cli mock path APP
+   time. Each question ends with a fixed footer ("— Mock · <stage> · question N of M …") and the
+   last reply with "— Mock · <stage> · finished."; while the most recent agent reply with a "— Mock ·"
+   line is a question, a new message on that application is an answer, so the thread itself is the
+   mock's state (no table). The control is hidden on a closed application and the endpoint refuses one. After the last answer or "end mock", `prep.cli mock path APP
    --stage S` prints the next free `private_dir/sessions/mock-<app>-<stage>-<date>.md` (creating the
    folder, refusing without `private_dir`); the skill writes only that mock's questions and answers
    (pay replaced) with the scores and gaps there, records it with `session add --kind mock --app APP

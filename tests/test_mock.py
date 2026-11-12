@@ -48,7 +48,8 @@ class StartTest(WebTestCase):
         json_headers = {**HOST, "Accept": "application/json"}
         with mock.patch.object(assistant, "notify_message_in_background") as bg:
             for form in ({"app_id": STARK, "stage": "offer"}, {"app_id": STARK, "stage": "../x"},
-                         {"app_id": STARK}, {"app_id": 999, "stage": "technical"}, {"stage": "technical"}):
+                         {"app_id": STARK}, {"app_id": 999, "stage": "technical"}, {"stage": "technical"},
+                         {"app_id": CYBERDYNE, "stage": "technical"}):
                 with self.subTest(form=form):
                     status, _, out = self.post("/applications/mock", form, json_headers)
                     self.assertEqual(status, 400)
@@ -136,3 +137,4 @@ class QuestionSetTest(IsolatedTestCase):
         self.assertIn(db.MOCK_START.split(":")[0], skill)
         self.assertIn("mock path", skill)
         self.assertIn("session add --kind mock", skill)
+        self.assertIn("· finished.", skill, "the end marker that closes a mock")

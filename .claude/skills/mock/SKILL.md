@@ -1,6 +1,6 @@
 ---
 name: mock
-description: Run a mock interview for one application in the inter_prep Agent box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest agent reply about that application ends with the "Mock ·" footer); also when the user types /mock APP [stage].
+description: Run a mock interview for one application in the inter_prep Agent box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest "Mock ·" line in agent replies about that application is a question footer, not "finished"); also when the user types /mock APP [stage].
 ---
 
 # /mock
@@ -30,9 +30,16 @@ Every reply that asks a mock question ends with this line, exactly:
 — Mock · <Stage label> (<stage>) · question N of M. Answer here, or say "end mock" to stop.
 ```
 
-A mock is **in progress** for an application when the latest agent reply about it ends with that
-footer. That is how a later `/ask APP MSG` knows the new message is an answer. The final reply
-(scores) has no footer, so the mock is over.
+The final reply (scores, or a stop) ends with the end line instead:
+
+```
+— Mock · <Stage label> (<stage>) · finished.
+```
+
+A mock is **in progress** for an application when the most recent agent reply about it that has a
+`— Mock ·` line has a question footer, not `finished`. Other replies may come in between (a
+tailored CV note, an answer to another question); they do not end the mock. That is how a later
+`/ask APP MSG` knows the new message is an answer.
 
 ## 1. Start
 
@@ -78,8 +85,8 @@ Reply with `thread reply --to MSG`, short: the question only, then the footer.
 
 ## 3. Finish
 
-1. Nothing answered: reply "Mock stopped before the first answer; nothing recorded." (no footer)
-   and stop.
+1. Nothing answered: reply "Mock stopped before the first answer; nothing recorded." with the end
+   line, and stop.
 2. The transcript file: `python -m prep.cli mock path APP --stage S` prints the next free
    `private_dir/sessions/mock-<app>-<stage>-<date>.md`. Write it there and nowhere else:
    - a heading with the stage, the date and the application (`#APP Company — Role`);
@@ -101,7 +108,7 @@ Reply with `thread reply --to MSG`, short: the question only, then the footer.
      --gap "Stating complexity before coding"
    ```
 
-6. Reply (`thread reply --to MSG`, no footer): the scores per area (`problem solving 3/5`), one or
+6. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
    two lines on what went well, each gap with its drill task id from the output (`(task #41)`), and
    one line that the transcript is saved privately. No file path, no pay.
 

@@ -81,8 +81,8 @@ first; the full description follows for anything it leaves out.
 
 **A mock interview** (a message `Start a mock interview: … (<stage>)` from the panel's Mock
 interview control, a request such as "mock me for system design", or any message while a mock is in
-progress: the latest agent reply about this application ends with the `— Mock · … · question N of M`
-footer): follow `.claude/skills/mock/SKILL.md`. It asks one question per reply, then scores the
+progress: the most recent agent reply about this application with a `— Mock ·` line has the
+`question N of M` footer, not `finished`): follow `.claude/skills/mock/SKILL.md`. It asks one question per reply, then scores the
 answers, records the session with its gaps and drill tasks, and replies with the scores.
 
 **A comparison** (`/ask compare MSG`, "which fits me better?", "compare these", or any question

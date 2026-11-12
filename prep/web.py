@@ -554,6 +554,8 @@ def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: 
     stage, never free text) about the application and ping `/ask <app> <message>` like any message.
     The agent runs the mock in the Agent box (/mock). The JSON reply is the thread."""
     app_id = _app_id(conn, form)
+    if db.get_application(conn, app_id)["status"] in db.CLOSED_STATUSES:
+        raise BadRequest("This application is closed; a mock is for an open one.")
     stage = form.get("stage") or ""
     if stage not in db.INTERVIEW_STAGES:
         raise BadRequest("Pick an interview stage for the mock.")
