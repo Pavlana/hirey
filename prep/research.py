@@ -63,7 +63,7 @@ def role_short_word(value: str) -> str:
 
 
 def tailored_file(private_dir: Path, company: str, role_short: str, day: str, version: int) -> Path:
-    """cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md, e.g. CV_OpenAI_FDE_210926_1.md."""
+    """cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md, e.g. CV_Globex_FDE_210926_1.md."""
     stamp = date.fromisoformat(day).strftime("%d%m%y")
     return private_dir / TAILORED_DIR / f"CV_{company_word(company)}_{role_short_word(role_short)}_{stamp}_{version}.md"
 

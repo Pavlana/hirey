@@ -21,13 +21,13 @@ PAY = "£123,456"
 class NamingTest(IsolatedTestCase):
     def test_file_name(self) -> None:
         private = Path("/p")
-        self.assertEqual(research.tailored_file(private, "OpenAI", "FDE", "2026-09-21", 1),
-                         private / "cv-tailored" / "CV_OpenAI_FDE_210926_1.md")
+        self.assertEqual(research.tailored_file(private, "Globex", "FDE", "2026-09-21", 1),
+                         private / "cv-tailored" / "CV_Globex_FDE_210926_1.md")
         self.assertEqual(research.tailored_file(private, "Globex Labs Ltd.", "AI eng", "2026-01-05", 12).name,
                          "CV_GlobexLabs_AIEng_050126_12.md")
         self.assertEqual(research.company_word("Ünïcode / Co & <x>"), "NCodeCoX")  # non-ASCII letters dropped
         self.assertEqual(research.company_word("!!!"), "Company")
-        self.assertEqual(research.role_short_word("Forward Deployed Engineer"), "ForwardDeplo")  # 12 at most
+        self.assertEqual(research.role_short_word("Senior Platform Engineer"), "SeniorPlatfo")  # 12 at most
         with self.assertRaises(ValueError):
             research.role_short_word("--")
 
@@ -103,7 +103,7 @@ class StorageTest(IsolatedTestCase):
             db.undo_interested(self.conn, "greenhouse:acme-rockets:1001")
 
     def test_private_copies_are_never_committed(self) -> None:
-        self.assertTrue(privacy.is_forbidden("cv-tailored/CV_OpenAI_FDE_210926_1.md"))
+        self.assertTrue(privacy.is_forbidden("cv-tailored/CV_Globex_FDE_210926_1.md"))
 
 
 class CliTest(IsolatedTestCase):

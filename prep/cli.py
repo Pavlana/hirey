@@ -1607,7 +1607,7 @@ def build_parser() -> argparse.ArgumentParser:
     vsub = p.add_subparsers(dest="cv_cmd", required=True)
     v = vsub.add_parser("sent", help="the file name of the tailored version the user sent")
     v.add_argument("app_id", type=int)
-    v.add_argument("name", help="e.g. CV_OpenAI_FDE_210926_2 (with or without .md)")
+    v.add_argument("name", help="e.g. CV_Globex_FDE_210926_2 (with or without .md)")
     vsub.add_parser("show", help="print cv.md and whether it matches a saved version")
     vsub.add_parser("skills", help="the skills section, grouped by theme")
     vsub.add_parser("history", help="the saved versions, newest first")

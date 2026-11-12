@@ -8,7 +8,7 @@
   The job runs the venv's Python in that checkout (.venv/bin/python, made in README "Setup"),
   so a Homebrew python3 update does not change the interpreter under it.
   launchd does not read shell profiles: settings come from ~/.config/inter_prep/settings.toml.
-  Install / uninstall steps: README.md, "Dashboard".
+  Install / uninstall steps: docs/usage.md, "Keep it running with launchd".
 -->
 <plist version="1.0">
 <dict>

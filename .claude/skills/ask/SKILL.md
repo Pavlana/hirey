@@ -195,7 +195,7 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
 5. "I sent v2" or a file name: `python -m prep.cli cv sent APP FILE_NAME` (see the table above).
 
 **About the master CV** (`/ask cv MSG`, tagged "My CV"): a change to `cv.md` itself, such as "add
-Terraform to my skills", "shorten my summary", "copy the summary from CV_OpenAI_FDE_210926_2 into
+Terraform to my skills", "shorten my summary", "copy the summary from CV_Globex_FDE_210926_2 into
 my main CV", "undo that", or a question about it. `thread show --cv --claim` prints `cv.md`'s
 path and state, its skills, the saved versions (`vN`, newest first, the current one marked) and
 every tailored CV file with its path.
