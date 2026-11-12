@@ -32,6 +32,12 @@
   "gaps": [
     {"date": "2026-01-15", "session": "mock", "gap": "Explain a load balancer health check end to end"}
   ],
+  "sessions": [
+    {"date": "2026-01-06", "kind": "mock", "stage": "technical", "scores": {"coding": 2, "communication": 3}},
+    {"date": "2026-01-12", "kind": "mock", "stage": "system_design", "scores": {"system design": 2, "communication": 3}},
+    {"date": "2026-01-15", "kind": "mock", "stage": "technical", "scores": {"coding": 3, "system design": 3}},
+    {"date": "2026-01-19", "kind": "real", "stage": "recruiter_call", "scores": {"communication": 4}}
+  ],
   "messages": [
     {"application": 1, "question": "What's their interview process? Any London office?",
      "reply": "4 stages: recruiter call, live coding (Python, 60 min), system design, panel with the hiring manager.\nLondon office in Shoreditch, hybrid 2 days a week; the role is listed as London or remote (UK).\nSources: https://careers.acme-rockets.example/process https://acme-rockets.example/offices"}

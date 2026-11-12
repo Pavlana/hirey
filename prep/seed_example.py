@@ -92,7 +92,7 @@ def build_getjo_db(path: Path, jobs: list[dict], old_schema: bool = False) -> No
 
 
 def build_prep_db(path: Path, data: dict) -> None:
-    """Create prep.db at `path` from fixture applications, tasks, gaps and Agent thread messages
+    """Create prep.db at `path` from fixture applications, tasks, gaps, practice sessions and Agent thread messages
     (replaces any existing file)."""
     path.unlink(missing_ok=True)
     conn = db.connect(path)
@@ -107,6 +107,8 @@ def build_prep_db(path: Path, data: dict) -> None:
         db.next_actions_to_tasks(conn)  # next actions are tasks now, as the migration does for older databases
         for gap in data.get("gaps", []):
             db.add_gap(conn, gap["gap"], gap.get("date"), gap.get("session"))
+        for s in data.get("sessions", []):  # practice sessions, scores only (no application, no gaps)
+            db.record_session(conn, s["kind"], s["date"], stage=s.get("stage"), scores=s.get("scores"))
         for task in data.get("tasks", []):
             task_id = db.add_task(conn, task["title"], task.get("kind", "admin"), task.get("due_date"))
             if task.get("done_at"):

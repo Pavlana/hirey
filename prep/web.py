@@ -680,8 +680,29 @@ def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> 
                 cls="card-funnel")
         + _card("Applications per week", per_week + _note(f"Week starting Monday. Target {target} per week."),
                 cls="card-weeks")
+        + practice_section(conn)
     )
     return "Dashboard", f"Pipeline and progress · {today}", content
+
+
+def practice_section(conn: sqlite3.Connection) -> str:
+    """Practice: session and open-gap tiles, then each area's 1-5 scores over time (stats.practice)."""
+    p = stats.practice(conn)
+    tiles = (
+        _tile("Practice sessions", str(p["sessions"]), f"<small>{p['mock']} mock · {p['real']} real</small>")
+        + _tile("Open gaps", str(p["open_gaps"]), "<small>including CV fit gaps</small>",
+                "warning" if p["open_gaps"] else "")
+    )
+    rows = [
+        (h(area), charts.trend(points), str(len(points)), h(points[0][1]), h(points[-1][1]),
+         h(f"{points[-1][1] - points[0][1]:+d}") if len(points) > 1 else "–")
+        for area, points in p["areas"]
+    ]
+    table = _table(("Area", "", ("Sessions", "num"), ("First", "num"), ("Latest", "num"), ("Change", "num")),
+                   rows, "No practice scores yet.", hint="python -m prep.cli session add --kind mock --score AREA=N")
+    note = _note("Score 1-5 per session, oldest on the left.") if rows else ""
+    return (f'<div class="tiles tiles-practice">{tiles}</div>'
+            + _card("Practice scores by area", table + note, count=len(rows), cls="card-practice"))
 
 
 LOCATION_LABELS = {"london": "London", "remote": "Remote", "other": "Other"}
