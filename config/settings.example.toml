@@ -7,7 +7,7 @@
 # Each key can also be set with an environment variable, which wins over the file:
 #   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET,
 #   PREP_NO_RESPONSE_DAYS, PREP_RESEARCH_MAX_AGE_DAYS, PREP_ASSISTANT_TASK,
-#   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN
+#   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN, PREP_PDF_PYTHON
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
 # "../getjo" would point somewhere different in every worktree.
@@ -56,3 +56,8 @@ private_dir = "/absolute/path/to/inter_prep"
 # assistant_project = "00000000-0000-0000-0000-000000000000"
 # Optional. Absolute path to the dev3 CLI. Default: dev3 on PATH, else ~/.dev3.0/bin/dev3.
 # dev3_bin = "/absolute/path/to/dev3"
+
+# Optional. Absolute path to a Python that has WeasyPrint (requirements.txt), for the PDF of each
+# tailored CV. Needed when the skills run a Python without it, e.g. from a dev3 worktree: point it
+# at the venv in the main checkout (README, "PDF of a tailored CV").
+# pdf_python = "/absolute/path/to/inter_prep/.venv/bin/python"

@@ -32,7 +32,8 @@
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
     python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
-    python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin)
+    python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin; makes the PDF)
+    python -m prep.cli tailor pdf APP_ID [--version N]   (the PDF next to a version's file, default the latest)
     python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
                                                        (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
@@ -58,7 +59,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, cvfile, db, getjo, research
+from prep import assistant, cvfile, cvpdf, db, getjo, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -962,6 +963,8 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         raise LookupError(f"no application with id {args.app_id}")
     if args.tailor_cmd == "path":
         return _tailor_path(args, settings, conn, app)
+    if args.tailor_cmd == "pdf":
+        return _tailor_pdf(args, settings, conn, app)
     path = Path(args.file).expanduser() if args.file else _next_tailored_file(settings, conn, app)
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
@@ -974,6 +977,44 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     words = research.word_count(body)
     print(f"  {words} words" + (f": WARNING, over {research.TAILOR_MAX_WORDS:,} (about two pages); cut older "
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
+    _print_pdf(settings, path, required=False)
+    return 0
+
+
+def _print_pdf(settings: Settings, path: Path, required: bool) -> bool:
+    """Make the PDF next to a tailored file and print its path and page count. Without WeasyPrint it
+    says so; `tailor save` (not required) still succeeds, `tailor pdf` fails."""
+    try:
+        pdf, pages = cvpdf.write_pdf(path, settings.pdf_python)
+    except cvpdf.PdfUnavailable as e:
+        if required:
+            raise SystemExit(f"error: no PDF: {e}") from None
+        print(f"  no PDF: {e}; make it later with tailor pdf")
+        return False
+    except Exception as e:  # the version is saved already; a failed render must not look like a failed save
+        if required:
+            raise
+        log.warning("tailored cv pdf failed: %s", type(e).__name__)
+        print(f"  no PDF: the render failed ({type(e).__name__}); retry with tailor pdf")
+        return False
+    log.info("tailored cv pdf made (%s pages)", pages)  # never the CV
+    print(f"  PDF: {pdf} ({cvpdf.page_note(pages)})")
+    return True
+
+
+def _tailor_pdf(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    versions = db.tailored_versions(conn, app["id"])
+    if not versions:
+        raise SystemExit(f"error: #{app['id']} has no tailored CV yet")
+    chosen = [v for v in versions if args.version in (None, v["version"])]
+    if not chosen:
+        raise SystemExit(f"error: #{app['id']} has no tailored CV v{args.version} "
+                         f"(versions 1 to {versions[-1]['version']})")
+    path = Path(chosen[-1]["file_path"])
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    print(f"Tailored CV v{chosen[-1]['version']} ({path.name}) for #{app['id']}")
+    _print_pdf(settings, path, required=True)
     return 0
 
 
@@ -1568,6 +1609,9 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("app_id", type=int)
     t.add_argument("--to", type=int, help="the user message this revision answers")
     t.add_argument("--file", help="default: the path `tailor path` prints")
+    t = tsub.add_parser("pdf", help="make the PDF next to a version's file (same name, .pdf); needs WeasyPrint")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--version", type=int, help="default: the latest version")
     p.set_defaults(func=cmd_tailor)
 
     p = sub.add_parser("thread", help="the Agent thread on an application's panel (used by /ask)")

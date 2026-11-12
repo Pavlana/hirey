@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>$title</title>
+<!--
+  The tailored CV as a PDF (prep/cvpdf.py fills $title and $body; $body is the CV's Markdown as
+  escaped HTML). Built to be read by applicant tracking systems as well as people: one column in
+  reading order, real text in a common font (selectable, no ligatures), headings as headings, no
+  tables, images, columns, headers or footers carrying content. A4; a normal CV fits two pages.
+-->
+<style>
+@page {
+  size: A4;
+  margin: 16mm 18mm 16mm 18mm;
+}
+html {
+  font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
+  font-size: 10pt;
+  line-height: 1.38;
+  color: #1a1a1a;
+  font-variant-ligatures: none;
+  font-kerning: normal;
+}
+body { margin: 0; }
+h2, h3, h4 { font-weight: 700; break-after: avoid; }
+/* "# Name": the first heading is the candidate's name */
+h2 {
+  font-size: 19pt;
+  line-height: 1.15;
+  margin: 0 0 2pt 0;
+  letter-spacing: 0.2pt;
+}
+/* the line(s) under the name: title, contact details */
+h2 + p { margin: 0 0 4pt 0; color: #3d3d3d; }
+/* "## Summary", "## Experience": section headings */
+h3 {
+  font-size: 10.5pt;
+  text-transform: uppercase;
+  letter-spacing: 0.8pt;
+  margin: 12pt 0 5pt 0;
+  padding-bottom: 2pt;
+  border-bottom: 0.75pt solid #9a9a9a;
+}
+h4 { font-size: 10pt; margin: 8pt 0 2pt 0; }
+p { margin: 0 0 5pt 0; orphans: 2; widows: 2; }
+ul { margin: 2pt 0 7pt 0; padding-left: 0; list-style: none; }
+/* the bullet is text in the line (hanging), so it is extracted with its item, not apart from it */
+li { margin: 0 0 2pt 0; padding-left: 10pt; text-indent: -10pt; break-inside: avoid; }
+li::before { content: "•\2002"; }
+/* a role line ("**Senior Engineer — Company**, 2019–2024") stays with its bullets */
+p:has(+ ul) { break-after: avoid; margin-bottom: 1pt; }
+strong { font-weight: 700; }
+a { color: inherit; text-decoration: none; }
+</style>
+</head>
+<body>
+$body
+</body>
+</html>

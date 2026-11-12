@@ -28,7 +28,11 @@ a committed file.
 
 ## Rules
 
-- Python 3.11+, standard library only. No frameworks, ORMs or pydantic.
+- Python 3.11+. Standard library by default. A third-party library is allowed only when it does
+  something hard to do well without it, is widely used and maintained, brings few dependencies,
+  is pinned to an exact version in `requirements.txt`, and the PR that adds it says why.
+  Frameworks, ORMs and pydantic stay out. Today: WeasyPrint, for the tailored CV PDF only
+  (`prep/cvpdf.py` imports it lazily, so everything else runs without it).
 - Type hints on public functions. Small functions. No abstractions before two real uses.
 - Settings are read with `tomllib` from `$INTERPREP_SETTINGS`, else `config/settings.toml`
   (gitignored, per-checkout override), else `~/.config/inter_prep/settings.toml` (the normal
@@ -67,6 +71,7 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
+             md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
              assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/ — each SKILL.md calls python -m prep.cli <command>
@@ -77,6 +82,7 @@ scripts/     pre-commit (privacy check on staged files)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in README)
 docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow)
 data/        local databases (gitignored)
+requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 ```
 
 ## Commands
@@ -101,7 +107,9 @@ data/        local databases (gitignored)
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
-  `tailor save APP [--to MSG]` (note on stdin); `cv sent APP FILE_NAME`
+  `tailor save APP [--to MSG]` (note on stdin; also makes the PDF); `tailor pdf APP [--version N]`;
+  `cv sent APP FILE_NAME`
+- PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
 - Master CV (used by /ask, My CV panel): `python -m prep.cli cv show|skills|history|draft`,
   `cv save --note "..." [--to MSG]` (backup first, atomic), `cv restore V`, `cv diff V`;

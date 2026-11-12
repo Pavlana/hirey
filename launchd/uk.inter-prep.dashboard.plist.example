@@ -3,9 +3,10 @@
 <!--
   launchd agent for the inter_prep dashboard (http://localhost:8765/ opens Applications;
   the Dashboard is at /dashboard).
-  Copy to ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist and replace both placeholders:
-    /ABSOLUTE/PATH/TO/python3    a Python 3.11+ interpreter (output of: command -v python3)
+  Copy to ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist and replace the placeholder:
     /ABSOLUTE/PATH/TO/inter_prep the MAIN checkout, never a dev3 worktree (worktrees are deleted)
+  The job runs the venv's Python in that checkout (.venv/bin/python, made in README "Setup"),
+  so a Homebrew python3 update does not change the interpreter under it.
   launchd does not read shell profiles: settings come from ~/.config/inter_prep/settings.toml.
   Install / uninstall steps: README.md, "Dashboard".
 -->
@@ -15,7 +16,7 @@
     <string>uk.inter-prep.dashboard</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/ABSOLUTE/PATH/TO/python3</string>
+        <string>/ABSOLUTE/PATH/TO/inter_prep/.venv/bin/python</string>
         <string>-m</string>
         <string>prep.web</string>
     </array>
