@@ -30,6 +30,10 @@ TASK_KINDS = ("apply", "prep", "drill", "admin")
 # closed: an auto task left open when its application moved to another stage (not work done).
 TASK_STATUSES = ("todo", "done", "closed")
 GAP_STATUSES = ("open", "closed")
+# A practice session: a mock interview (run by the agent or elsewhere) or a real one, debriefed.
+SESSION_KINDS = ("mock", "real")
+# Each gap named in a session gets one open drill task (add_gap_drills); closing the gap completes it.
+DRILL_TITLE = "Drill: {gap}"
 DECISIONS = ("interested", "applied", "skipped")
 # Labels read back by job_decisions(): a tracked job reads as "interested" while its application
 # is to_apply and as "applied" once it moves on, whatever was stored.
@@ -134,6 +138,20 @@ CREATE TABLE IF NOT EXISTS gaps (
     session TEXT,                       -- where the gap showed up (mock, interview, ...)
     gap     TEXT NOT NULL,
     status  TEXT NOT NULL DEFAULT 'open'
+);
+
+-- A practice session (mock or a real interview debriefed): scores per area, 1-5, as a JSON object
+-- ({"system design": 3}); the transcript or notes are private_dir/sessions/<file>. Gaps it found
+-- point back at it (gaps.session_id).
+CREATE TABLE IF NOT EXISTS sessions (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    date           TEXT NOT NULL,
+    kind           TEXT NOT NULL,       -- mock / real
+    application_id INTEGER REFERENCES applications(id),
+    stage          TEXT,                -- an interview stage (INTERVIEW_STAGES)
+    scores         TEXT NOT NULL DEFAULT '{}',
+    file_path      TEXT,
+    created_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -330,7 +348,8 @@ CREATE INDEX IF NOT EXISTS idx_targets_app ON agent_message_targets(application_
 MIGRATIONS: dict[str, dict[str, str]] = {
     "status_history": {"comment": "TEXT"},  # the comment given with a stage change
     "tasks": {"stage": "TEXT"},             # the stage whose STAGE_TASKS created it; NULL if hand-made
-    "gaps": {"application_id": "INTEGER REFERENCES applications(id)"},  # e.g. a gap found by a CV fit
+    # application_id: e.g. a gap found by a CV fit; session_id: the practice session that first named it.
+    "gaps": {"application_id": "INTEGER REFERENCES applications(id)", "session_id": "INTEGER REFERENCES sessions(id)"},
     # cv_sent: the file name of the tailored CV version the user says was sent (`cli cv sent`), with its
     # version and when that was recorded; NULL until then. Older rows may hold a frozen copy's path.
     # role_short: the short role name in tailored CV file names (FDE, AIEng), chosen once by the agent.
@@ -1056,7 +1075,7 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str, today: str | None = N
 def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
     """Undo Interested on a job: delete the decision and the to_apply application it created, with
     its queued requests, so the job is new again. Only while nothing else has happened to it: still
-    to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, CV fit or tier, and no
+    to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, sessions, CV fit or tier, and no
     request taken by the agent. Messages asked about the job before Interested (they carry its id) do
     not count: they go back to the job. Raises ValueError otherwise. Returns the deleted application id."""
     app = find_by_job(conn, getjo_job_id)
@@ -1074,6 +1093,7 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
                        AND (getjo_job_id IS NULL OR getjo_job_id != :job))
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
+            OR EXISTS (SELECT 1 FROM sessions WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM tailored_cvs WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM agent_requests WHERE application_id = :id AND status != 'pending')
@@ -1316,11 +1336,11 @@ def add_interview(conn: sqlite3.Connection, application_id: int, day: str, stage
 
 
 def add_gap(conn: sqlite3.Connection, gap: str, day: str | None = None, session: str | None = None,
-            application_id: int | None = None) -> int:
+            application_id: int | None = None, session_id: int | None = None) -> int:
     day = day or today_iso()
     _check_date("date", day)
-    cursor = conn.execute("INSERT INTO gaps (date, session, gap, application_id) VALUES (?, ?, ?, ?)",
-                          (day, session, gap, application_id))
+    cursor = conn.execute("INSERT INTO gaps (date, session, gap, application_id, session_id) VALUES (?, ?, ?, ?, ?)",
+                          (day, session, gap, application_id, session_id))
     conn.commit()
     return cursor.lastrowid
 
@@ -1343,9 +1363,144 @@ def add_open_gaps(conn: sqlite3.Connection, gaps: list[str], session: str, appli
     return ids
 
 
-def close_gap(conn: sqlite3.Connection, gap_id: int) -> None:
+def close_gap(conn: sqlite3.Connection, gap_id: int) -> list[int]:
+    """Close a gap and mark its open tasks (its drill) done. Closing a closed gap changes nothing.
+    Returns the ids of the tasks completed."""
+    if conn.execute("SELECT 1 FROM gaps WHERE id = ?", (gap_id,)).fetchone() is None:
+        raise LookupError(f"no gap with id {gap_id}")
+    tasks = conn.execute("SELECT id, application_id FROM tasks WHERE gap_id = ? AND status = 'todo'",
+                         (gap_id,)).fetchall()
     conn.execute("UPDATE gaps SET status = 'closed' WHERE id = ?", (gap_id,))
+    conn.execute("UPDATE tasks SET status = 'done', done_at = ? WHERE gap_id = ? AND status = 'todo'",
+                 (now_iso(), gap_id))
     conn.commit()
+    for app_id in {t["application_id"] for t in tasks if t["application_id"] is not None}:
+        sync_next_action(conn, app_id)
+    return [t["id"] for t in tasks]
+
+
+def list_gaps(conn: sqlite3.Connection, status: str | None = "open") -> list[dict]:
+    """Gaps with the given status (all when None), oldest first, each with `drill_open`: its open tasks."""
+    _check("status", status, GAP_STATUSES)
+    where = "WHERE g.status = ?" if status else ""
+    rows = conn.execute(
+        f"""
+        SELECT g.*, (SELECT COUNT(*) FROM tasks t WHERE t.gap_id = g.id AND t.status = 'todo') AS drill_open
+        FROM gaps g {where} ORDER BY g.id
+        """,
+        (status,) if status else (),
+    )
+    return [dict(r) for r in rows]
+
+
+def add_gap_drills(conn: sqlite3.Connection, gaps: list[str], session_id: int | None = None,
+                   application_id: int | None = None, due_date: str | None = None,
+                   day: str | None = None) -> dict:
+    """Record the weaknesses a session named: each becomes a new open gap, or matches an open gap with
+    the same text (ignoring case and spacing), such as one from a CV fit. A new gap points at the
+    session; a matched one gets the session only when it has none. Each named gap without an open task
+    gets one drill task (DRILL_TITLE, kind drill, due_date). With a session, the application defaults
+    to the session's and the gap's `session` label is its kind.
+    Returns {"gaps": ids, one per distinct weakness named, "new_gaps": ids created, "tasks": drill task ids}."""
+    day = day or today_iso()
+    _check_date("date", day)
+    _check_date("due_date", due_date)
+    label = None
+    if session_id is not None:
+        session = get_session(conn, session_id)
+        if session is None:
+            raise LookupError(f"no session with id {session_id}")
+        label = session["kind"]
+        application_id = application_id if application_id is not None else session["application_id"]
+    if application_id is not None and get_application(conn, application_id) is None:
+        raise LookupError(f"no application with id {application_id}")
+    open_gaps = {_gap_key(r["gap"]): dict(r) for r in conn.execute(
+        "SELECT id, gap, application_id, session_id FROM gaps WHERE status = 'open' ORDER BY id DESC")}
+    found = {"gaps": [], "new_gaps": [], "tasks": []}
+    for text in gaps:
+        key = _gap_key(text)
+        if not key:
+            continue
+        gap = open_gaps.get(key)
+        if gap is None:
+            gap_id = add_gap(conn, " ".join(text.split()), day, label, application_id, session_id)
+            gap = open_gaps[key] = {"id": gap_id, "application_id": application_id, "session_id": session_id}
+            found["new_gaps"].append(gap_id)
+        elif gap["id"] in found["gaps"]:
+            continue
+        elif session_id is not None and gap["session_id"] is None:
+            conn.execute("UPDATE gaps SET session_id = ? WHERE id = ?", (session_id, gap["id"]))
+            conn.commit()
+            gap["session_id"] = session_id
+        found["gaps"].append(gap["id"])
+        if conn.execute("SELECT 1 FROM tasks WHERE gap_id = ? AND status = 'todo'", (gap["id"],)).fetchone() is None:
+            found["tasks"].append(add_task(conn, DRILL_TITLE.format(gap=" ".join(text.split())), "drill", due_date,
+                                           gap["application_id"] or application_id, gap["id"]))
+    return found
+
+
+# --- practice sessions ---------------------------------------------------------
+
+def _check_scores(scores: dict[str, int] | None) -> dict[str, int]:
+    checked = {}
+    for area, score in (scores or {}).items():
+        area = " ".join(str(area).split())
+        if not area:
+            raise ValueError("a score needs an area name")
+        if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
+            raise ValueError(f"the score for {area!r} must be a whole number from 1 to 5; got {score!r}")
+        checked[area] = score
+    return checked
+
+
+def record_session(conn: sqlite3.Connection, kind: str, day: str | None = None, application_id: int | None = None,
+                   stage: str | None = None, scores: dict[str, int] | None = None, file_path: str | None = None,
+                   gaps: list[str] | None = None, due_date: str | None = None) -> dict:
+    """Record a mock or a real interview: the session row, then its gaps with one drill task per gap
+    without one (add_gap_drills). Everything is checked before the first write, so a bad score or stage
+    records nothing. Returns add_gap_drills' result with "session_id"."""
+    day = day or today_iso()
+    _check("kind", kind, SESSION_KINDS)
+    if kind is None:
+        raise ValueError("a session needs a kind")
+    _check("stage", stage, INTERVIEW_STAGES)
+    _check_date("date", day)
+    _check_date("due_date", due_date)
+    checked = _check_scores(scores)
+    if application_id is not None and get_application(conn, application_id) is None:
+        raise LookupError(f"no application with id {application_id}")
+    cursor = conn.execute(
+        "INSERT INTO sessions (date, kind, application_id, stage, scores, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (day, kind, application_id, stage, json.dumps(checked), file_path, now_iso()),
+    )
+    conn.commit()
+    found = add_gap_drills(conn, gaps or [], cursor.lastrowid, application_id, due_date, day)
+    return {"session_id": cursor.lastrowid, **found}
+
+
+def get_session(conn: sqlite3.Connection, session_id: int) -> dict | None:
+    row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["scores"] = json.loads(d["scores"] or "{}")
+    return d
+
+
+def list_sessions(conn: sqlite3.Connection) -> list[dict]:
+    """Every session, newest first, with its application's company (None without one)."""
+    rows = conn.execute(
+        """
+        SELECT s.*, a.company FROM sessions s LEFT JOIN applications a ON a.id = s.application_id
+        ORDER BY s.date DESC, s.id DESC
+        """
+    )
+    found = []
+    for r in rows:
+        d = dict(r)
+        d["scores"] = json.loads(d["scores"] or "{}")
+        found.append(d)
+    return found
 
 
 # --- agent research queue and results ---------------------------------------------

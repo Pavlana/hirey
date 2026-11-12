@@ -87,6 +87,9 @@ data/        local databases (gitignored)
 - Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ... [--comment ...]`,
   `python -m prep.cli comment ID "..."`
 - Tasks: `python -m prep.cli task add|list|done`
+- Practice sessions and gaps: `python -m prep.cli session add --kind mock|real [--app ID] [--stage S]
+  [--score AREA=N ...] [--file F] [--gap TEXT ...]`, `session list`, `gap add|list|close`
+  (each named gap gets one drill task; closing a gap completes it)
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then
   `PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or

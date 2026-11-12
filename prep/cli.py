@@ -12,6 +12,12 @@
     python -m prep.cli task done TASK_ID
     python -m prep.cli task edit TASK_ID [--title T] [--due DATE | --no-due]
     python -m prep.cli task delete TASK_ID
+    python -m prep.cli session add --kind mock|real [--app ID] [--stage S] [--date DATE] [--score AREA=N ...]
+                                   [--file PATH] [--gap TEXT ...] [--due DATE]   (one drill task per gap)
+    python -m prep.cli session list
+    python -m prep.cli gap add TEXT ... [--session ID] [--app ID] [--due DATE]   (one drill task per gap)
+    python -m prep.cli gap list [--all | --closed]
+    python -m prep.cli gap close GAP_ID                    (its open drill tasks are marked done)
     python -m prep.cli skip APP_ID --reason R [--comment TEXT]   (Interested only, as the panel's Skip)
     python -m prep.cli cv sent APP_ID FILE_NAME           (which tailored CV version was sent)
     python -m prep.cli cv show | skills | history         (the master CV, its skills, its saved versions)
@@ -460,6 +466,73 @@ def cmd_task(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
         task = db.delete_task(conn, args.task_id)
         print(f"Deleted: {_task_line(task)}")
     return 0
+
+
+def _score(value: str) -> tuple[str, int]:
+    """AREA=N from --score, N a whole number from 1 to 5."""
+    area, sep, score = value.rpartition("=")
+    if not sep or not area.strip() or not score.strip().isdigit() or not 1 <= int(score) <= 5:
+        raise argparse.ArgumentTypeError(f"not a score: {value!r} (use AREA=N, N from 1 to 5)")
+    return area.strip(), int(score)
+
+
+def _session_file(settings: Settings, value: str) -> str:
+    """A session file must be under private_dir: transcripts and notes never go into the repo."""
+    private = _private_dir(settings).resolve()
+    path = Path(value).expanduser()
+    path = (path if path.is_absolute() else private / "sessions" / path).resolve()
+    if not path.is_relative_to(private):
+        raise ValueError(f"the session file must be under private_dir ({private}); got {path}")
+    return str(path)
+
+
+def _print_drills(conn: sqlite3.Connection, found: dict) -> None:
+    print(f"  gaps: {len(found['gaps'])} ({len(found['new_gaps'])} new)")
+    for task_id in found["tasks"]:
+        print(f"  added {_task_line(_get_task(conn, task_id))}")
+
+
+def cmd_session(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.session_cmd == "add":
+        file_path = _session_file(settings, args.file) if args.file else None
+        found = db.record_session(conn, args.kind, args.date, args.app, args.stage, dict(args.score),
+                                  file_path, args.gap, args.due)
+        log.info("session %s recorded, %s new gaps", found["session_id"], len(found["new_gaps"]))  # never the gaps
+        print(f"Recorded session {_session_line(db.get_session(conn, found['session_id']))}")
+        _print_drills(conn, found)
+    elif args.session_cmd == "list":
+        print("\n".join(_session_line(s) for s in db.list_sessions(conn)) or "no sessions")
+    return 0
+
+
+def _session_line(s: dict) -> str:
+    app = f" — #{s['application_id']}" + (f" {s['company']}" if s.get("company") else "") if s["application_id"] else ""
+    stage = f" {db.status_label(s['stage'])}" if s["stage"] else ""
+    scores = ", ".join(f"{area} {n}/5" for area, n in s["scores"].items())
+    return f"#{s['id']} {s['date']} {s['kind']}{stage}{app}" + (f" ({scores})" if scores else "")
+
+
+def cmd_gap(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.gap_cmd == "add":
+        found = db.add_gap_drills(conn, args.gaps, args.session, args.app, args.due)
+        log.info("%s gaps named, %s new", len(found["gaps"]), len(found["new_gaps"]))
+        print(f"Gaps: {', '.join(f'#{g}' for g in found['gaps']) or 'none'}")
+        _print_drills(conn, found)
+    elif args.gap_cmd == "list":
+        status = None if args.all else ("closed" if args.closed else "open")
+        print("\n".join(_gap_line(g) for g in db.list_gaps(conn, status)) or "no gaps")
+    elif args.gap_cmd == "close":
+        tasks = db.close_gap(conn, args.gap_id)
+        print(f"Closed gap #{args.gap_id}; {len(tasks)} drill task{'s' if len(tasks) != 1 else ''} done")
+    return 0
+
+
+def _gap_line(g: dict) -> str:
+    where = f" ({g['session']})" if g["session"] else ""
+    links = "".join(f" {label}#{g[col]}" for label, col in (("app ", "application_id"), ("session ", "session_id"))
+                    if g[col] is not None)
+    closed = " (closed)" if g["status"] == "closed" else ""
+    return f"#{g['id']} {g['date']} {g['gap']}{where}{links} — {g['drill_open']} open drill{closed}"
 
 
 FEEDBACK_FIELDS = ("getjo_job_id", "decision", "reason", "comment", "decided_at", "company", "title",
@@ -1425,6 +1498,36 @@ def build_parser() -> argparse.ArgumentParser:
     t = tsub.add_parser("delete", help="delete a task")
     t.add_argument("task_id", type=int)
     p.set_defaults(func=cmd_task)
+
+    p = sub.add_parser("session", help="practice sessions: mocks and real interviews, with their gaps")
+    ssub = p.add_subparsers(dest="session_cmd", required=True)
+    t = ssub.add_parser("add", help="record a session; each gap named gets a drill task")
+    t.add_argument("--kind", required=True, choices=db.SESSION_KINDS)
+    t.add_argument("--app", type=int, help="related application id")
+    t.add_argument("--stage", choices=db.INTERVIEW_STAGES)
+    t.add_argument("--date", type=parse_day, help="the session's date (default today)")
+    t.add_argument("--score", type=_score, action="append", default=[], metavar="AREA=N",
+                   help="a 1-5 score for one area; repeat per area")
+    t.add_argument("--file", help="transcript or notes, under private_dir (relative: private_dir/sessions/)")
+    t.add_argument("--gap", action="append", default=[], help="a weakness found; repeat per gap")
+    t.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
+    ssub.add_parser("list", help="every session, newest first")
+    p.set_defaults(func=cmd_session)
+
+    p = sub.add_parser("gap", help="gaps and their drill tasks")
+    gsub = p.add_subparsers(dest="gap_cmd", required=True)
+    t = gsub.add_parser("add", help="add gaps (or match open ones); each gets a drill task")
+    t.add_argument("gaps", nargs="+")
+    t.add_argument("--session", type=int, help="the session that found them")
+    t.add_argument("--app", type=int, help="related application id (default: the session's)")
+    t.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
+    t = gsub.add_parser("list")
+    group = t.add_mutually_exclusive_group()
+    group.add_argument("--all", action="store_true")
+    group.add_argument("--closed", action="store_true")
+    t = gsub.add_parser("close", help="close a gap; its open drill tasks are marked done")
+    t.add_argument("gap_id", type=int)
+    p.set_defaults(func=cmd_gap)
 
     p = sub.add_parser("feedback", help="export interested/applied/skipped labels for getjo")
     fsub = p.add_subparsers(dest="feedback_cmd", required=True)
