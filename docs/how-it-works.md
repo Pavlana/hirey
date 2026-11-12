@@ -420,7 +420,9 @@
    `record_session` adds the session (kind `real` or `mock`; the stage defaults to the application's
    when that is an interview stage) with its gaps and drill tasks (step 22), and the application's
    open "Debrief — what to improve" task (`db.DEBRIEF_TASK`, added on Rejected and No response) is
-   completed. An outcome in the same text (next round, rejection) is recorded by `/stage`.
+   completed. An outcome in the same text is recorded by `/stage`: a next round or offer after the
+   debrief (the application is still at the interview's stage), a rejection or withdrawal before it
+   (with `--stage`), so the Debrief task it adds is completed.
 
 ## Dashboard
 

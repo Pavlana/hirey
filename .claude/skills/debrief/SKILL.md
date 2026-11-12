@@ -44,14 +44,16 @@ Never put pay, salary or anything the user asked to keep out into any field.
 
 ```bash
 python -m prep.cli debrief --kind real --app ID [--stage S] --date YYYY-MM-DD \
-  --questions "Q1
-Q2" --went-well "…" --to-improve "…" \
-  --score coding=3 --score communication=4 --gap "Consistent hashing" --gap "STAR stories: shorter" \
-  [--due YYYY-MM-DD] --transcript <<'EOF'
+  --questions 'Q1
+Q2' --went-well '…' --to-improve '…' \
+  --score coding=3 --score communication=4 --gap 'Consistent hashing' --gap 'STAR stories: shorter' \
+  [--due YYYY-MM-DD] --transcript <<'TRANSCRIPT_END'
 <the transcript or notes, as given>
-EOF
+TRANSCRIPT_END
 ```
 
+- Quote every text value in single quotes: pasted text can hold `$` or backticks, which double
+  quotes would expand. Write a `'` inside as `'\''`.
 - `--transcript` saves stdin to `private_dir/sessions/DATE-COMPANY-STAGE-debrief.md` (never
   overwriting; the output prints the path). Pass the text as the user gave it; leave out pay.
   With only a short spoken summary, `--transcript` is still worth it: it keeps the notes.
@@ -59,11 +61,16 @@ EOF
   otherwise leave it out.
 - The application's open "Debrief — what to improve" task is completed by the command.
 
-## 4. The outcome is /stage's job
+## 4. The outcome is /stage's job — order matters
 
-If the text also says what happens next — passed, invited to the next round with a date, rejected,
-an offer — record that as /stage does (`python -m prep.cli update ID --status S [--interview-date D]
---comment "…"`), after the debrief. Do not repeat the debrief in the comment.
+If the text also says what happens next, record that as /stage does (`python -m prep.cli update ID
+--status S [--interview-date D] --comment '…'`). Do not repeat the debrief in the comment.
+
+- **Next round or an offer**: run `debrief` first, then `update`. The application is still at the
+  interview's stage, so the debrief fills the interview row /stage stored and takes its stage.
+- **Rejected or withdrawn**: run `update` first, then `debrief` with an explicit `--stage` (the
+  application is no longer at an interview stage). The rejection adds the "Debrief — what to
+  improve" task, and the debrief then completes it.
 
 ## 5. Reply
 
