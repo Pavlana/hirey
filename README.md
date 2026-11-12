@@ -10,7 +10,8 @@ boards, scores jobs against a CV and stores them in SQLite. inter_prep reads get
 read-only to show strong matches not yet tracked. getjo is optional: without it, everything
 except the match list works.
 
-Standard library only, Python 3.11+.
+Python 3.11+, standard library by default. One pinned library, WeasyPrint (`requirements.txt`),
+makes the PDF of each tailored CV; everything else runs without it.
 
 ## Setup
 
@@ -20,6 +21,28 @@ mkdir -p ~/.config/inter_prep
 cp config/settings.example.toml ~/.config/inter_prep/settings.toml
 # edit it: absolute paths for getjo_db, prep_db, private_dir
 python -m unittest
+```
+
+The tailored CV PDF (and the launchd job below) use a virtual environment in the main checkout.
+WeasyPrint needs Pango from Homebrew on macOS:
+
+```bash
+brew install pango
+/opt/homebrew/opt/python@3.14/bin/python3.14 -m venv .venv    # a versioned Python, not the python3 alias
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m unittest                                    # now also runs the PDF render tests
+```
+
+A venv belongs to one Python minor version: after moving to a new one (3.14 to 3.15), delete
+`.venv` and create it again with the new interpreter. Patch updates need nothing. If WeasyPrint
+reports that it cannot load a library (`gobject-2.0`, `pango-1.0`), run it with
+`DYLD_FALLBACK_LIBRARY_PATH=/opt/homebrew/lib`.
+
+The skills run the system `python3`, and a dev3 worktree has no venv, so point the settings at
+this one for the PDF step:
+
+```toml
+pdf_python = "/absolute/path/to/inter_prep/.venv/bin/python"
 ```
 
 The settings file is looked up in this order:
@@ -32,7 +55,7 @@ The per-user file is the normal place: every checkout and git worktree, a launch
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
-`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN`. Use absolute paths, with `prep_db`
+`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` and `PREP_PDF_PYTHON`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
 `PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
 on example data never messages the standing assistant; empty path and number overrides are
@@ -66,6 +89,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 | `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
 |            | `python -m prep.cli queue`                                           | Read-only: counts and application ids of queued research (used by the SessionStart hook) |
+|            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file; `tailor save` makes it too |
 | `/ask`     | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
@@ -149,6 +173,18 @@ file, `private_dir/cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md` (for ex
 `CV_Globex_FDE_210926_2.md`), and every version is kept; `cv.md` is never changed. Changes are
 asked for in the Agent box and saved as the next version. Telling the agent which file was sent
 ("sent CV_Globex_FDE_210926_2") marks that version as sent.
+
+### PDF of a tailored CV
+
+Every saved version also gets a PDF beside it, `CV_<Company>_<RoleShort>_<DDMMYY>_<n>.pdf`, made
+from one committed template (`prep/cv_template.html`): A4, one column, a common font and real,
+selectable text with no tables or images, so applicant tracking systems parse it as written. A
+normal CV fits two pages; the page count is printed and a longer one gets a warning. The
+panel's Tailored CV card has **PDF** next to the latest version.
+`python -m prep.cli tailor pdf APP [--version N]` makes or remakes one, and
+`.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` shows the template on the
+made-up example CV. It needs the venv from Setup (and `pdf_python` in the settings, for the
+skills); without it, tailored CVs are still saved, just without a PDF.
 
 Queued work is picked up three ways:
 
@@ -248,21 +284,21 @@ and restarts it if it stops. launchd does not read shell profiles, so the dashbo
 settings from `~/.config/inter_prep/settings.toml` (set `prep_db` and `getjo_db` there).
 Use the main checkout, not a dev3 worktree, which is deleted when its task completes.
 
-Install, from the main checkout:
+Install, from the main checkout, once its `.venv` exists (Setup):
 
 ```bash
-sed -e "s|/ABSOLUTE/PATH/TO/python3|$(command -v python3)|" \
-    -e "s|/ABSOLUTE/PATH/TO/inter_prep|$PWD|g" \
+sed -e "s|/ABSOLUTE/PATH/TO/inter_prep|$PWD|g" \
     launchd/uk.inter-prep.dashboard.plist.example > ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 plutil -lint ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 open http://localhost:8765    # Applications; the Dashboard is at /dashboard
 ```
 
-(`cp` the template and edit the two placeholders by hand if preferred.) The interpreter must
-be a real Python 3.11+ binary such as `/opt/homebrew/bin/python3`: if `command -v python3`
-prints a pyenv or asdf shim, put the real path in instead, because a shim depends on shell
-state that launchd does not have.
+(`cp` the template and edit the placeholder by hand if preferred.) The job runs the venv's
+Python, `.venv/bin/python` in the main checkout, never the `python3` on the PATH or a pyenv or
+asdf shim: launchd has no shell state, and the venv keeps its interpreter when Homebrew's
+`python3` moves to a newer version. After a Python minor upgrade, recreate `.venv` (Setup)
+and restart the job (`launchctl kickstart -k`, below).
 
 Everyday commands (run from anywhere):
 

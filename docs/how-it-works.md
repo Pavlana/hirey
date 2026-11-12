@@ -29,6 +29,7 @@
 │ prep/web.py     dashboard server    │
 │ prep/research.py results files      │
 │ prep/cvfile.py  master CV versions  │
+│ prep/cvpdf.py   tailored CV → PDF   │
 │ prep/assistant.py  dev3 message     │
 └───────▲──────────────────▲──────────┘
         │                  │
@@ -308,6 +309,22 @@
    copies nothing. A tailored copy saved before versions were kept becomes one version row on
    the next connect (`db._backfill_tailored_versions`; the file keeps its old name). A tailored
    copy blocks Undo Interested. Tailored files are agent-written: never pay.
+   PDF: `prep/cvpdf.py` turns a version's Markdown into a PDF beside it, same name with `.pdf`
+   (`CV_Globex_FDE_210926_2.pdf`, gitignored like every `*.pdf`). The front matter is dropped, the
+   body goes through `prep/md.py` (the dashboard's escaped Markdown subset, here with http(s) and
+   mailto links kept) into the committed template `prep/cv_template.html`: A4, one column in
+   reading order, a common sans font with ligatures off, bullets as text in the line, no tables,
+   images, headers or footers, so applicant tracking systems read the text as written. WeasyPrint
+   renders it (the only third-party library, `requirements.txt`, imported only here). `tailor save`
+   makes the PDF of the version it saves and prints the page count, with a warning above two
+   pages (a CV of `TAILOR_MAX_WORDS` words fits two); a failed or impossible render prints
+   "no PDF: …" and never undoes the save. `tailor pdf APP [--version N]` (re)makes one, the latest
+   by default, and fails when it cannot. When the running Python cannot load WeasyPrint (the
+   skills use the system `python3`; a worktree has no venv), the `pdf_python` setting names one
+   that can, and `cvpdf` runs `pdf_python -m prep.cvpdf IN OUT` from the same checkout. The panel's
+   Tailored CV card shows **PDF** on the latest version once its file exists; `/research/pdf?app=ID&v=N`
+   serves it inline (only the `.pdf` beside a recorded version inside `private_dir`, else 404), with
+   its own headers since the pages' CSP can block the browser's PDF viewer.
 17. Mark applied and Skip. The panel's two direct actions, both only while the application is
    Interested. Mark applied (`/applications/apply`) moves it to Applied today through
    `db.move_application` (Applied stage tasks, `date_applied`). Its Undo
@@ -494,7 +511,8 @@ request line and status only, never request bodies or skip comments.
 
 ### launchd
 
-`launchd/uk.inter-prep.dashboard.plist.example` runs `python -m prep.web` from the main
+`launchd/uk.inter-prep.dashboard.plist.example` runs `.venv/bin/python -m prep.web` (the main
+checkout's venv, so a Homebrew `python3` update leaves it alone) from the main
 checkout with `RunAtLoad` and `KeepAlive`, so the dashboard starts at login and restarts if it
 exits. Output goes to the main checkout's `data/dashboard.log` (gitignored). launchd starts
 processes without a shell profile, so the server finds `prep_db` and `getjo_db` through
@@ -510,14 +528,15 @@ keys `dashboard_port` (default 8765), `weekly_target` (applications per week, de
 `brief_auto_min_score` (default 8, from 1 to 10: new offers scored at least this get a job brief
 queued in the background; others when their panel is first opened), and
 the standing-assistant keys `assistant_task` (a dev3 task seq), `assistant_project` (a dev3
-project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI). It is looked up as
+project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI), and `pdf_python`
+(absolute path to a Python with WeasyPrint, for the tailored CV PDF; step 16). It is looked up as
 `$INTERPREP_SETTINGS`, then `config/settings.toml` in the checkout, then
 `~/.config/inter_prep/settings.toml`. The per-user file is the normal place, because dev3
 worktrees, launchd and the Claude app all find it without a shell environment.
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
 `PREP_BRIEF_AUTO_MIN_SCORE`,
-`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT` and `PREP_DEV3_BIN` override single keys. Set to
+`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` and `PREP_PDF_PYTHON` override single keys. Set to
 an empty string, the three assistant keys are cleared (`config.CLEARABLE`): a demo on example
 data runs with `PREP_ASSISTANT_TASK=` and never messages the assistant named in the file. An
 empty path or number override is ignored (an empty `PREP_DB` never means the default). A relative `prep_db`

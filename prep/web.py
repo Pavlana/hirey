@@ -38,7 +38,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, cvfile, db, getjo, research, stats
+from prep import assistant, charts, cvfile, cvpdf, db, getjo, research, stats
+from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep.web")
@@ -201,6 +202,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return 303, [("Location", moved)], b""
     if path == "/applications/thread":
         return thread_json(settings, query, today)
+    if path == "/research/pdf":
+        return tailored_pdf(settings, query, today)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
         "/dashboard": dashboard_page,
@@ -1217,7 +1220,7 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     elif focus:
         job_id = focus["app"]["getjo_job_id"]
         brief = _brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id else ""
-        panel = _panel(conn, focus, today, f, brief, bool(job_id) and job_id in briefs["open"])
+        panel = _panel(conn, focus, today, f, brief, bool(job_id) and job_id in briefs["open"], settings.private_dir)
     elif job:
         brief = _brief_section(job["id"], briefs, found["description"], home_url(f),
                                gone=not job["first_seen"] and found["description"] is None)
@@ -1400,7 +1403,8 @@ def _age_text(days: int) -> str:
     return f'{days} day{"s" if days != 1 else ""} in this stage' if days > 0 else "new today"
 
 
-def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = "", brief_busy: bool = False) -> str:
+def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = "", brief_busy: bool = False,
+           private_dir: Path | None = None) -> str:
     """The side panel, top to bottom: header (with the Ask-about tick), the job brief (`brief`, from
     _brief_section; none without a getjo job), the latest comment (read-only), shortcut buttons, tasks
     (tick to mark done), the agent's results (company research, CV fit, tailored CV versions) and
@@ -1429,7 +1433,7 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         + _comments_section(conn, app["id"])
         + _shortcuts(conn, app, found, versions, here)
         + _panel_tasks(r["tasks"], today, here)
-        + _research_cards(app, found, versions, here)
+        + _research_cards(app, found, versions, here, private_dir)
         + _history(conn, app["id"])
         + "</div></aside>"
     )
@@ -1540,6 +1544,15 @@ def _open_link(app_id: int, kind: str, label: str = "Open", version: int | None 
     return f'<a class="btn btn-ghost btn-sm" href="{h("/research/file?" + urlencode(pairs))}">{h(label)}</a>'
 
 
+def _pdf_link(private_dir: Path | None, app_id: int, version: dict) -> str:
+    """PDF beside the latest tailored version, once its PDF is made (on `tailor save`, or `tailor pdf`)."""
+    pdf = research.inside(private_dir, str(cvpdf.pdf_path(Path(version["file_path"]))))
+    if pdf is None or not pdf.is_file():
+        return ""
+    href = "/research/pdf?" + urlencode([("app", app_id), ("v", version["version"])])
+    return f'<a class="btn btn-ghost btn-sm" href="{h(href)}" target="_blank" rel="noopener">PDF</a>'
+
+
 def _artifact(card_id: str, title: str, meta: str, actions: str, body: str) -> str:
     return (f'<section class="artifact" id="{card_id}"><div class="artifact-head"><strong>{h(title)}</strong>{meta}'
             f'<span class="artifact-actions">{actions}</span></div>{body}</section>')
@@ -1550,7 +1563,7 @@ def _fit_tone(score: int) -> str:
     return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
 
 
-def _research_cards(app: dict, found: dict, versions: list[dict], here: str) -> str:
+def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None) -> str:
     """The agent's results, each with Open and Redo: company research (with the tier the research
     set and why), the CV fit with its top gaps, and every tailored CV version (the sent one marked).
     A card shows once there is a result; queued work shows on its shortcut button."""
@@ -1583,7 +1596,8 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str) -> 
             f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
             f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
             + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
-            + _open_link(app["id"], "tailor", version=v["version"]) + "</li>"
+            + _open_link(app["id"], "tailor", version=v["version"])
+            + (_pdf_link(private_dir, app["id"], v) if v is versions[-1] else "") + "</li>"
             for v in reversed(versions))
         actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
         body = (f'<ul class="versions">{items}</ul>'
@@ -1956,49 +1970,24 @@ def research_file_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return title, f'{app["role"]} · {path.name}', content
 
 
-_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
-_ITALIC = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])")
+# The PDF is sent with its own headers: the pages' CSP (default-src 'none') can stop the browser's PDF viewer.
+PDF_HEADERS = [("Content-Security-Policy", "frame-ancestors 'none'"), ("X-Content-Type-Options", "nosniff"),
+               ("Referrer-Policy", "same-origin"), ("Cache-Control", "no-store")]
 
 
-def _inline(text: str) -> str:
-    """Escape, then turn **bold** and *italic* into <strong> and <em>. The markers are matched in
-    the escaped text, so nothing from the file can add markup."""
-    return _ITALIC.sub(r"<em>\1</em>", _BOLD.sub(r"<strong>\1</strong>", h(text)))
-
-
-def render_markdown(text: str) -> str:
-    """A small, safe subset of Markdown: headings, bullet lists, paragraphs, **bold** and *italic*.
-    Every piece of text is escaped; no links, images or raw HTML are produced."""
-    out: list[str] = []
-    para: list[str] = []
-    items: list[str] = []
-
-    def flush() -> None:
-        if para:
-            out.append(f"<p>{_inline(' '.join(para))}</p>")
-            para.clear()
-        if items:
-            out.append("<ul>" + "".join(f"<li>{_inline(i)}</li>" for i in items) + "</ul>")
-            items.clear()
-
-    for line in text.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            flush()
-        elif stripped.startswith("#"):
-            flush()
-            level = min(len(stripped) - len(stripped.lstrip("#")) + 1, 4)
-            out.append(f"<h{level}>{_inline(stripped.lstrip('#').strip())}</h{level}>")
-        elif stripped[:2] in ("- ", "* "):
-            if para:
-                flush()
-            items.append(stripped[2:].strip())
-        else:
-            if items:
-                flush()
-            para.append(stripped)
-    flush()
-    return "".join(out) or '<p class="muted">No notes.</p>'
+def tailored_pdf(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
+    """The PDF of a tailored CV version, inline. Only the .pdf beside a version file recorded in prep.db,
+    inside private_dir, is read; anything else is a 404."""
+    app_param, version = (query.get("app") or [""])[0], (query.get("v") or [""])[0]
+    if not app_param.isdigit() or not version.isdigit():
+        return _text(404, "Not found.")
+    with closing(_connect(settings, today)) as conn:
+        recorded, path = research.result_path(conn, settings.private_dir, int(app_param), "tailor", int(version))
+    pdf = research.inside(settings.private_dir, str(cvpdf.pdf_path(path))) if recorded and path else None
+    if pdf is None or not pdf.is_file():
+        return _text(404, "No PDF for this version yet: python -m prep.cli tailor pdf APP --version N makes it.")
+    return 200, [("Content-Type", "application/pdf"),
+                 ("Content-Disposition", f'inline; filename="{re.sub(r"[^\w.-]", "_", pdf.name, flags=re.A)}"'), *PDF_HEADERS], pdf.read_bytes()
 
 
 # --- HTML helpers ---------------------------------------------------------------------

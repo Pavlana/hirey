@@ -1,0 +1,6 @@
+# Third-party libraries, each pinned to an exact version; why each one is allowed is in the PR that
+# added it (rule: CLAUDE.md, "Rules"). Only the tailored CV PDF needs them; everything else in the
+# app is standard library and runs without this file.
+#
+# WeasyPrint: HTML/CSS to PDF for the tailored CV. It also needs Pango (macOS: brew install pango).
+weasyprint==70.0

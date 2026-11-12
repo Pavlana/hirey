@@ -162,7 +162,9 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 ### Tailoring rules (here and in /ask revisions)
 
 - **Length**: two pages at most; one is fine. `tailor save` prints the word count and warns above
-  1,000 words. UK conventions: no photo, date of birth or marital status.
+  1,000 words, then makes the PDF beside the file and prints its page count, with a WARNING above
+  two pages. Keep the Markdown plain (headings, paragraphs, `-` bullets, bold, `[text](https://…)`
+  links): that is all the PDF template lays out. UK conventions: no photo, date of birth or marital status.
 - **Structure**: a 2–3 line summary written for this role; within each role, bullets ordered by
   relevance to the job; older or unrelated roles shrunk to one line; skills grouped by theme with
   the job's must-haves first.
@@ -217,7 +219,10 @@ Questions (the CV does not say):
 NOTE
 ```
 
-Each save records the file `tailor path` printed as the next version (v1, v2, …). A Redo ("New
+Each save records the file `tailor path` printed as the next version (v1, v2, …) and makes its
+PDF (`CV_….pdf` beside it, shown as PDF in the panel). Over two pages: save a shorter version
+right away. "no PDF: …" (WeasyPrint not reachable) leaves the save valid: say so in one line;
+`python -m prep.cli tailor pdf APP` makes it later. A Redo ("New
 from cv.md" in the panel) writes a new version from the current `cv.md`. Nothing is recorded as
 sent until the user says which file they sent (`python -m prep.cli cv sent APP FILE_NAME`, done
 by /ask).
