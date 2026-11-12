@@ -222,7 +222,11 @@ NOTE
 Each save records the file `tailor path` printed as the next version (v1, v2, …) and makes its
 PDF (`CV_….pdf` beside it, shown as PDF in the panel). Over two pages: save a shorter version
 right away. "no PDF: …" (WeasyPrint not reachable) leaves the save valid: say so in one line;
-`python -m prep.cli tailor pdf APP` makes it later. A Redo ("New
+`python -m prep.cli tailor pdf APP` makes it later. The save also prints the automatic check
+("Check: Ready", "Look at these lines" or "Blocked", with the flagged lines; the panel shows it
+too). Blocked: fix those lines in a new version right away (`tailor path APP --copy`, edit,
+`tailor save`). Look at these lines: fix what is wrong; leave what is right (a date from the
+facts bank, a true fact) for the user. A Redo ("New
 from cv.md" in the panel) writes a new version from the current `cv.md`. Nothing is recorded as
 sent until the user says which file they sent (`python -m prep.cli cv sent APP FILE_NAME`, done
 by /ask).

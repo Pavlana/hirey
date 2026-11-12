@@ -13,15 +13,16 @@
                    ▼
 ┌─────────────────────────────────────┐        ┌───────────────────────────┐
 │ inter_prep                          │        │ private_dir (gitignored)  │
-│ prep/getjo.py   matches, open/closed│        │ cv.md, notes/, sessions/, │
-│ prep/db.py      prep.db             │        │ companies/, fit/,         │
-│   applications, status_history,     │        │ cv-tailored/ (written by  │
-│   application_comments, interviews, │        │ /research and /ask),      │
-│   tasks, gaps, sessions,            │
+│ prep/getjo.py   matches, open/closed│        │ cv.md, cv-facts.md,       │
+│ prep/db.py      prep.db             │        │ notes/, sessions/,        │
+│   applications, status_history,     │        │ companies/, fit/,         │
+│   application_comments, interviews, │        │ cv-tailored/ (written by  │
+│   tasks, gaps, sessions,            │        │ /research and /ask),      │
 │   job_decisions,                    │        │ cv-history/ (cvfile.py);  │
 │   agent_requests, company_profiles, │        │ read only by skills that  │
 │   cv_fits, tailored_cvs,            │        │ need them                 │
 │   tailored_cv_versions,             │        └───────────────────────────┘
+│   tailored_cv_checks,               │
 │   agent_messages, cv_versions,      │
 │   agent_message_targets,            │
 │   job_briefs, brief_requests        │
@@ -31,6 +32,7 @@
 │ prep/research.py results files      │
 │ prep/cvfile.py  master CV versions  │
 │ prep/cvpdf.py   tailored CV → PDF   │
+│ prep/cvcheck.py tailored CV check   │
 │ prep/assistant.py  dev3 message     │
 └───────▲──────────────────▲──────────┘
         │                  │
@@ -326,6 +328,28 @@
    Tailored CV card shows **PDF** on the latest version once its file exists; `/research/pdf?app=ID&v=N`
    serves it inline (only the `.pdf` beside a recorded version inside `private_dir`, else 404), with
    its own headers since the pages' CSP can block the browser's PDF viewer.
+   Check: after the PDF, `tailor save` checks the version (`prep/cvcheck.py`, `cvcheck.run`), so
+   reviewing a tailored CV means reading only the flagged lines and skimming the PDF. Rule checks,
+   no AI: the PDF has at most `cvpdf.MAX_PAGES` pages (no PDF: page count unknown); an email and a
+   link are there and every email, link and phone in cv.md's header (the lines before the first
+   `##`) is kept; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
+   lorem ipsum, `??`); no pay (`db.PAY_PATTERN`, unless the line is the user's own line from cv.md;
+   the line is never quoted); dates (a range that runs backwards, a future year, a year that
+   neither cv.md nor the facts bank `private_dir/cv-facts.md` mentions: tailoring never changes
+   dates); no other application's company name (legal suffixes dropped, names in cv.md such as a
+   past employer left out). Each finding is `block` or `look` with the line number in the .md file
+   (front matter counted) and the line, never one that mentions pay. The verdict follows
+   (`db.check_verdict`): Blocked when any finding blocks, Look at these lines when any asks for a
+   look, else Ready. `cvcheck.changes` lists what changed against cv.md: sections added, removed or
+   moved, per section lines reworded, cut or added (or reordered), and the word counts. Both go
+   into `tailored_cv_checks` (one row per version) through `db.save_cv_check(conn, app, v, source,
+   findings, changes)`, which replaces only that source's findings ("rules" here) and works the
+   verdict out again from all of them: a later checker (AI) adds its own source to the same row
+   and verdict. The CLI prints the verdict, flagged lines and changes, and logs only the verdict
+   and counts; a failed check prints "no check: …" and never undoes the save. `tailor pdf` checks
+   the version again with the new page count. The Tailored CV card shows the verdict badge beside
+   the latest version's PDF link, its flagged lines and the changes; a version saved before checks
+   existed reads "not checked yet".
 17. Mark applied and Skip. The panel's two direct actions, both only while the application is
    Interested. Mark applied (`/applications/apply`) moves it to Applied today through
    `db.move_application` (Applied stage tasks, `date_applied`). Its Undo

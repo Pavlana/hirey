@@ -25,6 +25,7 @@ TAILORED_DIR = "cv-tailored"
 STYLE_FILE = "_style.md"  # agreed wording reused in every tailored copy (e.g. a career gap line)
 TAILOR_MAX_WORDS = 1_000  # about two pages; one is fine
 CV_FILE = "cv.md"
+FACTS_FILE = "cv-facts.md"  # the facts bank: true facts about the user not in cv.md
 
 
 def company_file(private_dir: Path, slug: str) -> Path:

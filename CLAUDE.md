@@ -59,7 +59,7 @@ a committed file.
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `cv-facts.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
@@ -72,6 +72,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
+             cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
@@ -112,7 +113,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
-  `tailor save APP [--to MSG]` (note on stdin; also makes the PDF); `tailor pdf APP [--version N]`;
+  `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
   `cv sent APP FILE_NAME`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`

@@ -569,6 +569,11 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .version-name { font-size: 12.5px; overflow-wrap: anywhere; }
 .versions li .btn { margin-left: auto; }
+.cv-check { display: grid; gap: 4px; margin-top: 8px; }
+.check-findings { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.check-findings .finding-block::marker { color: var(--danger); }
+.check-findings .finding-look::marker { color: var(--warning); }
+.cv-check .muted { margin: 4px 0 0; }
 .doc { max-width: 72ch; line-height: 1.55; }
 .doc h2, .doc h3, .doc h4 { margin: var(--space-4) 0 var(--space-2); }
 .doc h2:first-child, .doc h3:first-child { margin-top: 0; }

@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, cvfile, cvpdf, db, getjo, research, stats
+from prep import assistant, charts, cvcheck, cvfile, cvpdf, db, getjo, research, stats
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -1472,7 +1472,8 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         + _comments_section(conn, app["id"])
         + _shortcuts(conn, app, found, versions, here)
         + _panel_tasks(r["tasks"], today, here)
-        + _research_cards(app, found, versions, here, private_dir)
+        + _research_cards(app, found, versions, here, private_dir,
+                          db.cv_check(conn, app["id"], versions[-1]["version"]) if versions else None)
         + _history(conn, app["id"])
         + "</div></aside>"
     )
@@ -1616,9 +1617,11 @@ def _fit_tone(score: int) -> str:
     return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
 
 
-def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None) -> str:
+def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None,
+                    check: dict | None = None) -> str:
     """The agent's results, each with Open and Redo: company research (with the tier the research
-    set and why), the CV fit with its top gaps, and every tailored CV version (the sent one marked).
+    set and why), the CV fit with its top gaps, and every tailored CV version (the sent one marked;
+    the latest with its PDF, its check's verdict, flagged lines and changes vs cv.md: `check`).
     A card shows once there is a result; queued work shows on its shortcut button."""
     profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
     cards = []
@@ -1650,13 +1653,35 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
             f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
             + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
             + _open_link(app["id"], "tailor", version=v["version"])
-            + (_pdf_link(private_dir, app["id"], v) if v is versions[-1] else "") + "</li>"
+            + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check) if v is versions[-1] else "") + "</li>"
             for v in reversed(versions))
         actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
-        body = (f'<ul class="versions">{items}</ul>'
+        body = (f'<ul class="versions">{items}</ul>' + _check_body(check, versions[-1]["version"]) +
                 '<p class="muted">Ask the agent for changes; each one is a new version. Tell it which file you sent.</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
+
+
+CHECK_TONES = {"ready": "success", "look": "warning", "blocked": "danger"}
+
+
+def _verdict_badge(check: dict | None) -> str:
+    return _badge(cvcheck.LABELS[check["verdict"]], CHECK_TONES[check["verdict"]]) if check else ""
+
+
+def _check_body(check: dict | None, version: int) -> str:
+    """The latest version's check: its flagged lines (block first in line order, as stored) and the
+    changes vs cv.md. Every value escaped; a finding's text never holds pay (cvcheck)."""
+    if check is None:
+        return f'<p class="muted">v{h(version)} is not checked yet: tailor pdf checks it again.</p>'
+    items = "".join(
+        f'<li class="finding-{h(f["severity"])}">{h(f["message"])}'
+        + (f'<br><span class="mono muted">{h(f["text"])}</span>' if f["text"] else "") + "</li>"
+        for f in check["findings"])
+    findings = f'<ul class="check-findings">{items}</ul>' if items else ""
+    changes = "".join(f"<li>{h(c)}</li>" for c in check["changes"])
+    return (f'<div class="cv-check">{findings}'
+            + (f'<p class="muted">Changes vs cv.md</p><ul class="gaps">{changes}</ul>' if changes else "") + "</div>")
 
 
 def _history(conn: sqlite3.Connection, app_id: int) -> str:
