@@ -224,17 +224,138 @@ def changes(master: str | None, tailored: str) -> list[str]:
         out.append(f"{name}: " + ", ".join(parts))
     if not out:
         out.append("Same text as cv.md")
-    return out + [f"{words} words (cv.md: {research.word_count(master_body)})"]
+    gaps = _terms(front_matter(tailored), "gaps")
+    return out + [f"{words} words (cv.md: {research.word_count(master_body)})"] + (
+        [f"Not claimed (gaps): {', '.join(gaps)}"] if gaps else [])
+
+
+# Job terms: recruiter systems match the posting's words literally. The tailored file's front matter
+# lists the job's must-have terms (keywords) in the posting's wording, and the ones the CV cannot
+# truthfully claim (gaps); every other keyword must appear in the body as written.
+SENIORITY = {"senior", "sr", "junior", "jr", "mid", "mid-level", "graduate", "intern"}
+TITLE_SPLIT = re.compile(r"\s*(?:,|\(|\s[-–—|]\s|/|\bat\b)\s*", re.IGNORECASE)
+# Words and habits that make a CV read as machine-written to a recruiter. Only lines the agent wrote
+# (not the user's own lines from cv.md) are looked at; every finding is a look, never a block.
+STOCK_PHRASES = (
+    "spearheaded", "spearheading", "leveraged", "leveraging", "passionate", "results-driven", "dynamic",
+    "seamless", "seamlessly", "robust", "delve", "delved", "fast-paced", "cutting-edge", "synergy",
+    "synergies", "proven track record", "detail-oriented", "team player", "self-starter", "go-getter",
+    "innovative", "transformative", "world-class", "best-in-class", "thought leader", "utilize", "utilized",
+    "utilise", "utilised", "showcasing", "a testament to", "tapestry", "in today's", "ever-evolving",
+    "game-changer", "game-changing", "holistic", "meticulous", "meticulously", "adept at", "pivotal",
+    "championed", "fostered", "realm",
+)
+STOCK = re.compile(r"(?<![\w-])(?:" + "|".join(re.escape(w) for w in STOCK_PHRASES) + r")(?![\w-])", re.IGNORECASE)
+BOLD = re.compile(r"\*\*[^*]+\*\*")
+SENTENCE_DASH = re.compile(r"—|\s–\s")
+MIN_OPENER_REPEATS = 3
+MIN_BULLETS_FOR_NUMBERS = 4
+
+
+def front_matter(text: str) -> dict:
+    try:
+        return research.split_front_matter(text)[0]
+    except ValueError:
+        return {}
+
+
+def _terms(front: dict, key: str) -> list[str] | None:
+    """A list of strings from the front matter, [] when absent, None when it is not a list of strings."""
+    value = front.get(key, [])
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        return None
+    return [v.strip() for v in value if v.strip()]
+
+
+def check_keywords(lines: list[tuple[int, str]], front: dict) -> list[dict]:
+    """Every must-have term (front matter `keywords`, less `gaps`) in the body, in the job's wording."""
+    keywords, gaps = _terms(front, "keywords"), _terms(front, "gaps")
+    if keywords is None or gaps is None:
+        return [_finding("keywords", "look", "keywords and gaps in the front matter must be lists of strings")]
+    if not keywords:
+        return [_finding("keywords", "look", "No keywords in the front matter: the job's must-have terms "
+                         "were not checked")]
+    body = "\n".join(line for _, line in lines)
+    skip = {g.lower() for g in gaps}
+    missing = [k for k in keywords if k.lower() not in skip and not _mentions(k, body)]
+    if not missing:
+        return []
+    return [_finding("keywords", "look", "Must-have terms not in the CV in the job's wording: "
+                     + ", ".join(missing) + " (true: add them as written; not true: list them under gaps)")]
+
+
+def title_core(role: str) -> str:
+    """The job title without seniority or what follows a comma, dash or bracket:
+    "Senior Platform Engineer, Data" -> "Platform Engineer"."""
+    words = TITLE_SPLIT.split(role.strip(), maxsplit=1)[0].split()
+    while len(words) > 1 and words[0].lower().rstrip(".") in SENIORITY:
+        words.pop(0)
+    return " ".join(words)
+
+
+def check_title(lines: list[tuple[int, str]], role: str) -> list[dict]:
+    """The job's title near the top (the name lines or the first section), where a skim starts."""
+    core = title_core(role)
+    if not core:
+        return []
+    top, sections = [], 0
+    for _, line in lines:
+        if line.startswith("## "):
+            sections += 1
+            if sections > 1:
+                break
+        top.append(line)
+    if _mentions(core, "\n".join(top)):
+        return []
+    return [_finding("title", "look", f"The job title ({core}) is not in the name line or the first section")]
+
+
+def _written(lines: list[tuple[int, str]], master: str | None) -> list[tuple[int, str]]:
+    """Body lines the agent wrote: not blank, not a heading, not one of the user's own lines from cv.md."""
+    own = {line.strip() for line in (master or "").splitlines()}
+    return [(n, line) for n, line in lines
+            if line.strip() and not line.lstrip().startswith("#") and line.strip() not in own]
+
+
+def check_style(lines: list[tuple[int, str]], master: str | None) -> list[dict]:
+    """Signs a recruiter reads as machine-written, in the lines the agent wrote: stock words, dashes in
+    sentences, many bullets starting with the same word, and rewritten bullets with no number."""
+    written = _written(lines, master)
+    out = []
+    for n, line in written:
+        words = list(dict.fromkeys(w.lower() for w in STOCK.findall(line)))
+        if words:
+            out.append(_finding("style", "look", f"Line {n}: stock words ({', '.join(words)}); say what was "
+                                "done instead", n, line))
+    dashed = [n for n, line in written if SENTENCE_DASH.search(BOLD.sub("", line))]
+    if len(dashed) >= 2:
+        out.append(_finding("style", "look", f"Dashes in {len(dashed)} written lines (lines "
+                            + ", ".join(map(str, dashed)) + "); use commas or full stops", dashed[0]))
+    bullets = [(n, line.lstrip()[2:].strip()) for n, line in written if line.lstrip()[:2] in ("- ", "* ")]
+    openers: dict[str, list[int]] = {}
+    for n, text in bullets:
+        first = re.sub(r"[^\w-]", "", BOLD.sub("", text).split(" ", 1)[0]).lower()
+        if first:
+            openers.setdefault(first, []).append(n)
+    for word, at in openers.items():
+        if len(at) >= MIN_OPENER_REPEATS:
+            out.append(_finding("style", "look", f"{len(at)} bullets start with \"{word}\" (lines "
+                                + ", ".join(map(str, at)) + "); vary the verbs", at[0]))
+    if len(bullets) >= MIN_BULLETS_FOR_NUMBERS and not any(re.search(r"\d", t) for _, t in bullets):
+        out.append(_finding("style", "look", f"None of the {len(bullets)} rewritten bullets has a number; "
+                            "ask for honest figures", bullets[0][0]))
+    return out
 
 
 def check(text: str, company: str, others: list[str], master: str | None, facts: str | None,
-          pages: int | None, this_year: int) -> list[dict]:
+          pages: int | None, this_year: int, role: str = "") -> list[dict]:
     """Every rule finding for a tailored CV's text (front matter skipped), in line order."""
     lines = body_lines(text)
     sources = "\n".join(t for t in (master, facts) if t) or None
     findings = (check_pages(pages) + check_contacts(lines, master) + check_placeholders(lines)
                 + check_pay(lines, master) + check_dates(lines, sources if master else None, this_year)
-                + check_companies(lines, company, others, sources))
+                + check_companies(lines, company, others, sources) + check_keywords(lines, front_matter(text))
+                + check_title(lines, role) + check_style(lines, master))
     return sorted(findings, key=lambda f: (f["line"] is not None, f["line"] or 0))
 
 
@@ -251,6 +372,6 @@ def run(conn: sqlite3.Connection, private_dir: Path | None, app_id: int, version
     facts_path = facts_file(private_dir) if private_dir else None
     facts = facts_path.read_text(encoding="utf-8") if facts_path and facts_path.is_file() else None
     others = [a["company"] for a in db.list_applications(conn) if a["id"] != app_id]
-    findings = check(text, app["company"], others, master, facts, pages, int(db.today_iso()[:4]))
+    findings = check(text, app["company"], others, master, facts, pages, int(db.today_iso()[:4]), app["role"])
     db.save_cv_check(conn, app_id, version, SOURCE, findings, changes(master, text))
     return db.cv_check(conn, app_id, version)

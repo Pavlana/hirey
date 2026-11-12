@@ -173,7 +173,11 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 - **Same facts in every version**: only selection, order and wording change between versions.
 - **Keyword coverage**: the note lists the job's top 5–6 requirements as covered / not covered.
   Covered means stated in the summary or a recent bullet, in the job's own wording when the skill
-  is true.
+  is true. The same terms go into the front matter (`keywords`, `gaps`, below).
+- **Title**: the job's title (without seniority) appears in the name line or the summary.
+- **Plain wording**: write like the user, not like a model. No stock words (spearheaded,
+  leveraged, passionate, results-driven, robust, seamless, innovative, …), no dashes inside
+  sentences, vary the opening verbs, and keep the figures. The check flags these in rewritten lines.
 - **Agreed wording**: `cv-tailored/_style.md` (path in the packet) holds wording agreed in earlier
   threads, such as a one-line explanation of a career gap. Reuse it in every copy. On the first
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the
@@ -198,10 +202,17 @@ in Markdown:
 job = "Role at Company"
 tailored_at = 2026-01-20
 based_on = "cv.md"
+keywords = ["Kubernetes", "Terraform", "CI/CD", "SOC 2"]   # the job's must-have terms, as the posting writes them
+gaps = ["SOC 2"]                                           # must-haves cv.md cannot truthfully claim
 +++
 
 <the tailored CV>
 ```
+
+`keywords` are copied from the job's must-haves (the brief's `## Must-haves`, else the
+description) in the posting's exact wording: applicant tracking systems match words literally,
+so "K8s" does not count for "Kubernetes". The check flags every keyword missing from the body
+unless it is in `gaps`; never move a term into the body that is not true, list it under gaps.
 
 Then save it, with a short note for the Agent thread on stdin: two or three lines on what was
 tailored, then the questions as `-` bullets (plain text; Markdown is not rendered). The note is

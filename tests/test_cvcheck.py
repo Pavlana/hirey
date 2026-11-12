@@ -29,7 +29,8 @@ Platform engineer building pipelines on public cloud.
 ## Skills
 - Terraform, Kubernetes, Python
 """
-FRONT = '+++\njob = "Engineer at Globex Labs"\ntailored_at = 2026-01-20\nbased_on = "cv.md"\n+++\n\n'
+FRONT = ('+++\njob = "Engineer at Globex Labs"\ntailored_at = 2026-01-20\nbased_on = "cv.md"\n'
+         'keywords = ["Terraform", "kubernetes", "SOC 2"]\ngaps = ["SOC 2"]\n+++\n\n')
 CLEAN = FRONT + MASTER.replace("Platform engineer building pipelines on public cloud.",
                                "Platform engineer who builds delivery pipelines for AI teams.")
 OFFSET = FRONT.count("\n")  # the body starts on this file line (a blank line)
@@ -37,7 +38,8 @@ OFFSET = FRONT.count("\n")  # the body starts on this file line (a blank line)
 
 def run_check(text: str, master: str | None = MASTER, pages: int | None = 1, others: list[str] = (),
               facts: str | None = None) -> list[dict]:
-    return cvcheck.check(text, "Globex Labs Ltd", list(others), master, facts, pages, 2026)
+    return cvcheck.check(text, "Globex Labs Ltd", list(others), master, facts, pages, 2026,
+                         "Senior Platform Engineer, Delivery")
 
 
 def checks(findings: list[dict]) -> list[tuple[str, str]]:
@@ -108,6 +110,46 @@ class RulesTest(IsolatedTestCase):
         self.assertEqual(run_check(text, others=["Initech"], facts="Contracted for Initech in 2020."), [],
                          "a name from the facts bank is fine")
 
+    def test_job_keywords_in_the_jobs_wording(self) -> None:
+        [f] = run_check(CLEAN.replace('"kubernetes"', '"K8s", "CI/CD"'))
+        self.assertEqual((f["check"], f["severity"]), ("keywords", "look"))
+        self.assertIn("not in the CV in the job's wording: K8s, CI/CD (", f["message"])
+        self.assertNotIn("SOC 2", f["message"], "a declared gap is not asked for")
+        [f] = run_check(CLEAN.replace('keywords = ["Terraform", "kubernetes", "SOC 2"]\n', ""))
+        self.assertIn("No keywords", f["message"])
+        [f] = run_check(CLEAN.replace('gaps = ["SOC 2"]', 'gaps = "SOC 2"'))
+        self.assertIn("must be lists of strings", f["message"])
+        self.assertIn("Not claimed (gaps): SOC 2", cvcheck.changes(MASTER, CLEAN))
+
+    def test_job_title_near_the_top(self) -> None:
+        self.assertEqual(cvcheck.title_core("Senior Platform Engineer, Delivery"), "Platform Engineer")
+        self.assertEqual(cvcheck.title_core("Sr. AI Engineer (Applied) - London"), "AI Engineer")
+        self.assertEqual(cvcheck.title_core("Forward Deployed Engineer at Globex"), "Forward Deployed Engineer")
+        found = cvcheck.check(CLEAN, "Globex Labs", [], MASTER, None, 1, 2026, "Site Reliability Engineer")
+        self.assertEqual(checks(found), [("title", "look")])
+        self.assertIn("(Site Reliability Engineer)", found[0]["message"])
+
+    def test_style_signs_only_in_written_lines(self) -> None:
+        text = CLEAN.replace("Platform engineer who builds delivery pipelines for AI teams.",
+                             "Passionate, results-driven platform engineer who spearheaded robust platforms.")
+        [f] = run_check(text)
+        self.assertEqual((f["check"], f["severity"]), ("style", "look"))
+        self.assertIn("stock words (passionate, results-driven, spearheaded, robust)", f["message"])
+        own = MASTER.replace("Platform engineer building pipelines on public cloud.", "A robust platform engineer.")
+        self.assertEqual(run_check(FRONT + own, master=own), [], "the user's own words are never flagged")
+        dashes = CLEAN.replace("- Moved 40 services to Terraform.", "- Moved 40 services to Terraform — fast.").replace(
+            "- Built a shared deployment pipeline.", "- Built a pipeline – shared by 12 teams.")
+        [f] = run_check(dashes)
+        self.assertRegex(f["message"], r"^Dashes in 2 written lines")
+        self.assertEqual(run_check(CLEAN.replace("- Ran Kubernetes clusters.", "- Ran Kubernetes — at scale.")), [],
+                         "one dash and dashes in bold role lines are fine")
+        bullets = CLEAN.replace("- Moved 40 services to Terraform.\n- Built a shared deployment pipeline.\n"
+                                "- Ran the on-call rotation.",
+                                "- Led a move to Terraform.\n- Led a shared pipeline.\n- Led on-call.\n- Led hiring.")
+        found = run_check(bullets)
+        self.assertEqual([f["message"].split(" (")[0] for f in found],
+                         ['4 bullets start with "led"', "None of the 4 rewritten bullets has a number; ask for honest figures"])
+
     def test_body_line_numbers_count_the_front_matter(self) -> None:
         lines = cvcheck.body_lines(CLEAN)
         self.assertEqual(lines[:2], [(OFFSET, ""), (OFFSET + 1, "# Alex Example")])
@@ -126,7 +168,7 @@ class ChangesTest(IsolatedTestCase):
         self.assertIn("Summary: 1 line reworded", found)
         self.assertIn("Experience: 1 line cut", found)
         self.assertIn("Skills: 1 line reworded", found)
-        self.assertRegex(found[-1], r"^\d+ words \(cv\.md: \d+\)$")
+        self.assertRegex(found[-2], r"^\d+ words \(cv\.md: \d+\)$")
         self.assertEqual(cvcheck.changes(MASTER, FRONT + MASTER)[0], "Same text as cv.md")
         self.assertIn("Removed section: Skills", cvcheck.changes(MASTER, FRONT + MASTER.split("## Skills")[0]))
         self.assertTrue(cvcheck.changes(None, CLEAN)[0].startswith("No cv.md"))

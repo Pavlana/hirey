@@ -337,11 +337,18 @@
    the line is never quoted); dates (a range that runs backwards, a future year, a year that
    neither cv.md nor the facts bank `private_dir/cv-facts.md` mentions: tailoring never changes
    dates); no other application's company name (legal suffixes dropped, names in cv.md or the
-   facts bank, such as a past employer or a tool, left out). Each finding is `block` or `look` with the line number in the .md file
+   facts bank, such as a past employer or a tool, left out); the job's must-have terms (the file's
+   front matter `keywords`, in the posting's wording, less `gaps`, the ones the CV cannot
+   truthfully claim) each in the body as written, since applicant tracking systems match words
+   literally (look); the job title without seniority (`cvcheck.title_core`) in the name lines or
+   the first section (look); and signs a recruiter reads as machine-written, only in lines the
+   agent wrote (not the user's own lines from cv.md): stock words (`cvcheck.STOCK_PHRASES`), dashes
+   inside sentences in two or more lines, three or more bullets opening with the same word, and four
+   or more rewritten bullets with no number (all look). Each finding is `block` or `look` with the line number in the .md file
    (front matter counted) and the line, never one that mentions pay. The verdict follows
    (`db.check_verdict`): Blocked when any finding blocks, Look at these lines when any asks for a
    look, else Ready. `cvcheck.changes` lists what changed against cv.md: sections added, removed or
-   moved, per section lines reworded, cut or added (or reordered), and the word counts. Both go
+   moved, per section lines reworded, cut or added (or reordered), the word counts and the gaps. Both go
    into `tailored_cv_checks` (one row per version) through `db.save_cv_check(conn, app, v, source,
    findings, changes)`, which replaces only that source's findings ("rules" here) and works the
    verdict out again from all of them: a later checker (AI) adds its own source to the same row
