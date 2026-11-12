@@ -75,6 +75,8 @@ class RulesTest(IsolatedTestCase):
         self.assertEqual((found[0]["line"], found[0]["text"]), (line, "- Cut costs by [X]%."))
         self.assertIn(f"Line {line}", found[0]["message"])
         self.assertEqual(run_check(CLEAN.replace("Python\n", "Python, [my site](https://example.org)\n")), [])
+        [f] = run_check(CLEAN.replace("Python\n", "Python, <https://example.org/alex>\n"))
+        self.assertEqual((f["check"], f["severity"]), ("placeholder", "look"), "an autolink prints its brackets")
 
     def test_pay_blocks_and_is_never_quoted(self) -> None:
         text = CLEAN.replace("- Ran the on-call rotation.", "- Looking for £90,000 base salary")
@@ -103,6 +105,8 @@ class RulesTest(IsolatedTestCase):
         self.assertIn("Initech", f["message"])
         self.assertEqual(run_check(CLEAN, others=["Brightwater Widgets", "Globex"]), [],
                          "a past employer in cv.md and this company's own name are fine")
+        self.assertEqual(run_check(text, others=["Initech"], facts="Contracted for Initech in 2020."), [],
+                         "a name from the facts bank is fine")
 
     def test_body_line_numbers_count_the_front_matter(self) -> None:
         lines = cvcheck.body_lines(CLEAN)

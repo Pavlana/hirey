@@ -28,6 +28,8 @@ EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 URL = re.compile(r"(?:https?://|www\.)[^\s)>\]]+|\b(?:linkedin\.com|github\.com)/[^\s)>\]]+", re.IGNORECASE)
 PHONE = re.compile(r"\+?\d[\d ().-]{7,}\d")
 MD_LINK = re.compile(r"\[[^\]]*\]\([^)]*\)")
+# <https://…> or <me@example.org>: prep/md.py does not turn these into links, so the PDF prints the brackets.
+AUTOLINK = re.compile(r"<(?:https?://|www\.)[^<>\s]+>|<[^<>\s]+@[^<>\s]+>", re.IGNORECASE)
 PLACEHOLDERS = (
     (re.compile(r"\[[^\]]*\]"), "a placeholder in brackets"),
     (re.compile(r"\b(?:TODO|TBD|TBC|FIXME|XXX+)\b"), "a placeholder"),
@@ -112,6 +114,10 @@ def check_placeholders(lines: list[tuple[int, str]]) -> list[dict]:
     out = []
     for n, line in lines:
         plain = MD_LINK.sub("", line)
+        if AUTOLINK.search(plain):
+            out.append(_finding("placeholder", "look", f"Line {n} has a link in <…>, printed with its brackets; "
+                                "write it as [text](url) or plain text", n, line))
+            plain = AUTOLINK.sub("", plain)
         for pattern, what in PLACEHOLDERS:
             if pattern.search(plain):
                 out.append(_finding("placeholder", "block", f"Line {n} has {what}", n, line))
@@ -157,13 +163,13 @@ def _mentions(name: str, text: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(name)}(?!\w)", text, re.IGNORECASE) is not None
 
 
-def check_companies(lines: list[tuple[int, str]], company: str, others: list[str], master: str | None) -> list[dict]:
-    """Another application's company named in this CV (left over from its version). Names in cv.md (a
-    past employer) and names inside this application's company are not flagged."""
+def check_companies(lines: list[tuple[int, str]], company: str, others: list[str], sources: str | None) -> list[dict]:
+    """Another application's company named in this CV (left over from its version). Names in cv.md or
+    the facts bank (`sources`: a past employer, a tool) and names inside this company's are not flagged."""
     names = set()
     for other in others:
         names |= {n for n in _company_names(other)
-                  if not _mentions(n, company) and not (master and _mentions(n, master))}
+                  if not _mentions(n, company) and not (sources and _mentions(n, sources))}
     out = []
     for n, line in lines:
         hit = next((name for name in sorted(names, key=len, reverse=True) if _mentions(name, line)), None)
@@ -228,7 +234,7 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
     sources = "\n".join(t for t in (master, facts) if t) or None
     findings = (check_pages(pages) + check_contacts(lines, master) + check_placeholders(lines)
                 + check_pay(lines, master) + check_dates(lines, sources if master else None, this_year)
-                + check_companies(lines, company, others, master))
+                + check_companies(lines, company, others, sources))
     return sorted(findings, key=lambda f: (f["line"] is not None, f["line"] or 0))
 
 

@@ -1670,7 +1670,7 @@ def _verdict_badge(check: dict | None) -> str:
 
 
 def _check_body(check: dict | None, version: int) -> str:
-    """The latest version's check: its flagged lines (block first in line order, as stored) and the
+    """The latest version's check: its flagged lines (in line order, as stored; marked by severity) and the
     changes vs cv.md. Every value escaped; a finding's text never holds pay (cvcheck)."""
     if check is None:
         return f'<p class="muted">v{h(version)} is not checked yet: tailor pdf checks it again.</p>'

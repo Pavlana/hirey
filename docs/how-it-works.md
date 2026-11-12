@@ -333,11 +333,11 @@
    no AI: the PDF has at most `cvpdf.MAX_PAGES` pages (no PDF: page count unknown); an email and a
    link are there and every email, link and phone in cv.md's header (the lines before the first
    `##`) is kept; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
-   lorem ipsum, `??`); no pay (`db.PAY_PATTERN`, unless the line is the user's own line from cv.md;
+   lorem ipsum, `??`; a `<https://…>` autolink is a look, since the PDF prints its brackets); no pay (`db.PAY_PATTERN`, unless the line is the user's own line from cv.md;
    the line is never quoted); dates (a range that runs backwards, a future year, a year that
    neither cv.md nor the facts bank `private_dir/cv-facts.md` mentions: tailoring never changes
-   dates); no other application's company name (legal suffixes dropped, names in cv.md such as a
-   past employer left out). Each finding is `block` or `look` with the line number in the .md file
+   dates); no other application's company name (legal suffixes dropped, names in cv.md or the
+   facts bank, such as a past employer or a tool, left out). Each finding is `block` or `look` with the line number in the .md file
    (front matter counted) and the line, never one that mentions pay. The verdict follows
    (`db.check_verdict`): Blocked when any finding blocks, Look at these lines when any asks for a
    look, else Ready. `cvcheck.changes` lists what changed against cv.md: sections added, removed or
