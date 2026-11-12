@@ -366,8 +366,9 @@
    AI check (`prep/cveval.py`): `db.save_tailored_cv` also queues an `agent_requests` row of kind
    `cv_eval` in the same transaction (`INSERT OR IGNORE`: an open one is reused, since it always
    checks the latest version), so every save, a revision through /ask included, gets one;
-   `tailor save` pings the standing assistant like other queued work. `research next` prints its
-   packet only once no tailor request is open for that application, and prints the version file
+   `tailor save` pings the standing assistant like other queued work. `research next` leaves it out
+   (neither picked nor claimed, so other applications' work goes first) while a tailor request is open
+   for that application, and prints the version file
    and number, cv.md, the facts bank, `_style.md`, the job description, the master CV's fit score and
    the result file, never the tailor note or the thread: the /research skill runs it in a fresh
    subagent, a separate pass from the one that wrote the CV. The agent writes
@@ -376,8 +377,8 @@
    and `note`, `[[must_haves]]` with `term` and `covered`; rubric in the skill) and runs
    `tailor eval APP [--version N] [--file PATH]`. `cveval.read_eval` validates it and
    `cveval.findings` maps it with fixed rules, source "ai": a claim with source `none` blocks (its
-   line found in the version by the quoted words, so model line numbers are never trusted; a quote
-   not found keeps no line); must-haves not covered ask for a look, except terms the version's front
+   line found in the version by the quoted words, so model line numbers are never trusted; `save`
+   refuses the file when such a quote is not in the version, since a blocking finding needs its line); must-haves not covered ask for a look, except terms the version's front
    matter already lists under `keywords` or `gaps` (the rule checks handle those); a `fit_score`
    below the master CV's `cv_fits.score` for the same job asks for a look (compared in code); a
    `skim_score` of `cveval.LOW_SKIM` (2) or less asks for a look. The agent's notes are dropped from

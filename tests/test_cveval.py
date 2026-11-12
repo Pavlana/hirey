@@ -18,6 +18,7 @@ from tests.test_web import TODAY, WebTestCase
 # The CLEAN tailored CV's lines (file line numbers, front matter counted) used below.
 SUMMARY_LINE = OFFSET + 5   # "Platform engineer who builds delivery pipelines for AI teams."
 TERRAFORM_LINE = OFFSET + 9  # "- Moved 40 services to Terraform."
+KUBERNETES_LINE = OFFSET + 14  # "- Ran Kubernetes clusters."
 
 
 def eval_text(version: int = 1, fit: int = 4, skim: int = 4, skim_why: str = "Title and AI pipelines up top",
@@ -30,7 +31,8 @@ SOURCED = ('[[claims]]\nquote = "builds delivery pipelines for AI teams"\nsource
            'note = "reworded from the summary"\n')
 UNSOURCED = ('[[claims]]\nquote = "Moved 40 services to terraform"\nsource = "none"\n'
              'note = "cv.md says 40 services; fine"\n'  # the agent's line number would be wrong: none is given
-             '[[claims]]\nquote = "Led a team of nine"\nsource = "none"\nnote = "no team size in cv.md"\n')
+             '[[claims]]\nquote = "ran kubernetes  clusters"\nsource = "none"\nnote = "no team size in cv.md"\n')
+LOST = '[[claims]]\nquote = "Led a team of nine"\nsource = "none"\nnote = "not in the CV at all"\n'
 MUST = ('[[must_haves]]\nterm = "Terraform"\ncovered = false\n'   # in the file's keywords: the rules handle it
         '[[must_haves]]\nterm = "Go"\ncovered = false\n'
         '[[must_haves]]\nterm = "Python"\ncovered = true\n')
@@ -76,10 +78,10 @@ class FindingsTest(IsolatedTestCase):
     def test_unsourced_claims_block_with_the_line_found_by_their_words(self) -> None:
         found = self.findings(claims=SOURCED + UNSOURCED)
         self.assertEqual([(f["check"], f["severity"], f["line"]) for f in found],
-                         [("grounding", "block", None), ("grounding", "block", TERRAFORM_LINE)])
-        self.assertEqual(found[1]["text"], "- Moved 40 services to Terraform.", "the line comes from the file")
-        self.assertEqual(found[0]["text"], "Led a team of nine", "a quote not in the CV is shown as quoted")
-        self.assertIn("no team size in cv.md", found[0]["message"])
+                         [("grounding", "block", TERRAFORM_LINE), ("grounding", "block", KUBERNETES_LINE)])
+        self.assertEqual(found[0]["text"], "- Moved 40 services to Terraform.", "the line comes from the file")
+        self.assertEqual(found[1]["text"], "- Ran Kubernetes clusters.", "case and spacing do not matter")
+        self.assertIn("no team size in cv.md", found[1]["message"])
 
     def test_sourced_claims_and_good_scores_flag_nothing(self) -> None:
         self.assertEqual(self.findings(claims=SOURCED, fit=4, skim=3), [])
@@ -157,6 +159,9 @@ class StorageTest(IsolatedTestCase):
 
     def test_the_file_must_be_for_that_version(self) -> None:
         db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        with self.assertRaisesRegex(ValueError, "unsourced claim 2: the quote is not in v1"):
+            self.save_eval(1, self.v1, claims=SOURCED + LOST)
+        self.assertIsNone(db.cv_check(self.conn, self.app, 1), "nothing stored")
         with self.assertRaisesRegex(ValueError, "checks v2, not v1"):
             cveval.save(self.conn, self.app, 1, write(self.tmp / "x.eval.md", eval_text(version=2)))
         with self.assertRaisesRegex(LookupError, "no tailored CV v3"):
@@ -214,10 +219,24 @@ class CliTest(IsolatedTestCase):
             code, out, _ = self.run_cli("tailor", "eval", str(self.app))
         self.assertEqual(code, 0)
         self.assertIn("Check: Blocked (AI check: fit 4/5 · skim 4/5 · 2 claims, 2 unsourced · 0/0 must-haves)", out)
-        self.assertIn("[block] No source in cv.md, the facts bank or the agreed wording: no team size", out)
+        self.assertIn("[block] No source in cv.md, the facts bank or the agreed wording: no team size in cv.md: "
+                      "- Ran Kubernetes clusters.", out)
         self.assertNotIn("team", "\n".join(logs.output))
         code, _, err = self.run_cli("tailor", "eval", str(self.app), "--file", str(self.tmp / "missing.md"))
         self.assertEqual((code, "no file at" in err), (2, True))
+
+    def test_a_check_waiting_for_a_new_version_never_holds_up_other_work(self) -> None:
+        self.save()
+        with closing(db.connect(self.prep_db)) as conn:
+            for kind in db.RESEARCH_KINDS:  # queued on entering Interested
+                db.finish_requests(conn, [self.app], kind)
+            tailor, _ = db.queue_request(conn, self.app, "tailor", force=True)
+            db.claim_request(conn, tailor)  # another session is writing the next version
+            other, _ = db.record_application(conn, "Initech Example", "Engineer", status="to_apply")
+            db.queue_request(conn, other, "research")
+        out = self.run_cli("research", "next")[1]
+        self.assertIn(f"Application #{other}: Initech Example", out)
+        self.assertIn("being done by another session", self.run_cli("research", "next")[1])
 
     def test_facts_file_setting_is_used(self) -> None:
         facts = write(self.tmp / "elsewhere" / "facts.md", "Led a team of nine in 2015.")

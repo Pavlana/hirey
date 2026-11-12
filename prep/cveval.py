@@ -18,7 +18,8 @@ the packet; the agent writes `cv-tailored/<version file stem>.eval.md` with TOML
     covered = true
 
 `save` maps it to findings with source "ai" (db.save_cv_eval merges them into the verdict): a claim with
-source "none" blocks; a must-have not covered asks for a look (unless the tailored file's front matter
+source "none" blocks (`save` refuses one whose quote is not in the CV, since a blocking finding needs
+its exact line); a must-have not covered asks for a look (unless the tailored file's front matter
 already lists it under `keywords` or `gaps`, which the rule checks handle); a fit score below the master
 CV's fit for the same job asks for a look; a skim score of 2 or less asks for a look. Claims are found
 in the CV by their quoted words, so a finding's line number comes from the file, not from the model.
@@ -172,6 +173,11 @@ def save(conn: sqlite3.Connection, app_id: int, version: int, path: Path) -> dic
     fit = db.cv_fit(conn, app_id)
     master_fit = fit["score"] if fit else None
     text = Path(row["file_path"]).read_text(encoding="utf-8")
+    lines = cvcheck.body_lines(text)
+    lost = [i for i, c in enumerate(review["claims"], 1) if c["source"] == "none" and locate(c["quote"], lines)[0] is None]
+    if lost:  # a blocking finding needs its exact line
+        raise ValueError(f"unsourced claim {', '.join(map(str, lost))}: the quote is not in v{version}; "
+                         "copy the words exactly from the CV line")
     db.save_cv_eval(conn, app_id, version, findings(review, text, master_fit), summary(review, master_fit))
     return db.cv_check(conn, app_id, version)
 

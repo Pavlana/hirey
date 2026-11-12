@@ -249,8 +249,9 @@ by /ask).
 
 Every tailor save (here or a revision through /ask) queues it; `research next` prints its packet
 after the new version is saved, never while a new version is still being written. **Run it as a
-separate pass**: hand only that packet to a fresh subagent (Agent tool) with this section, and do
-not tell it what was tailored or why. A model that just wrote the CV does not judge its own claims
+separate pass**: the user asked for this check to run in its own fresh subagent (Agent tool), so
+always spawn one, hand it only that packet and this section, and do not tell it what was tailored
+or why. A model that just wrote the CV does not judge its own claims
 well. The subagent reads the version file, `cv.md`, the facts bank (true facts not in cv.md;
 missing is fine), `_style.md` (wording agreed in the thread) and the job description, writes the
 file, and runs `python -m prep.cli tailor eval APP`.
@@ -282,8 +283,8 @@ Free notes (optional).
   `style` when it is wording agreed in `_style.md`, and `none` otherwise. A changed number, a
   stronger title ("led" for "worked on", "Lead" for "Senior"), a wider scope or a skill that is only
   in the job description is `none`. Each `none` blocks the verdict, so be exact but not petty:
-  pure rephrasing of the same fact is sourced. Quote the version's words exactly (they locate the
-  line). Agreed facts that are not in cv.md belong in the facts bank: tell the user so when one
+  pure rephrasing of the same fact is sourced. Quote the version's words exactly: they locate the
+  line, and `tailor eval` refuses an unsourced claim whose quote is not in the version. Agreed facts that are not in cv.md belong in the facts bank: tell the user so when one
   is missing there.
 - **Fit**: the CV fit rubric (the CV fit section above) applied to this version against the job,
   scored 1 to 5 without looking at the master CV's score; the code compares the two. List the

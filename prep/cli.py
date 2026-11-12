@@ -771,16 +771,16 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     """Claim the open requests of one application (the given one, else the oldest unclaimed) and
     print the work packet: what to research, where to write it, and the command that saves it."""
     private_dir = _private_dir(settings)
-    pending = [r for r in db.open_requests(conn, args.app_id) if not r["claimed"]]
+    requests = db.open_requests(conn, args.app_id)
+    tailoring = {r["application_id"] for r in requests if r["kind"] == "tailor"}
+    # The AI check waits until the new version is saved (and never blocks other applications' work).
+    pending = [r for r in requests if not r["claimed"] and not (r["kind"] == "cv_eval" and r["application_id"] in tailoring)]
     if not pending:
-        others = [r for r in db.open_requests(conn, args.app_id) if r["claimed"]]
+        others = [r for r in requests if r["claimed"] or r["kind"] == "cv_eval"]
         print("Nothing pending" + (" (some requests are being done by another session)" if others else "") + ".")
         return 0
     app_id = args.app_id or pending[0]["application_id"]
-    tailoring = any(r["application_id"] == app_id and r["kind"] == "tailor" for r in db.open_requests(conn, app_id))
-    claimed = [r for r in pending if r["application_id"] == app_id
-               and not (r["kind"] == "cv_eval" and tailoring)  # checked after the new version is saved
-               and db.claim_request(conn, r["id"])]
+    claimed = [r for r in pending if r["application_id"] == app_id and db.claim_request(conn, r["id"])]
     if not claimed:
         print("Another session claimed this work first; run research next again.")
         return 0
