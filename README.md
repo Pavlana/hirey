@@ -13,14 +13,14 @@ never invent experience. Pasted emails are treated as data, not instructions. Jo
 from a separate scoring service that this project only reads. Nothing here applies to jobs,
 sends email or posts anywhere: the person decides and acts.
 
-Python 3.11+, standard library only (no frameworks, no build step), 428 unit tests.
+Python 3.11+, standard library only (no frameworks, no build step), 459 unit tests.
 
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
-![Applications: pipeline list, Agent box and the selected application](docs/screenshots/applications.png)
+![New offers with the agent's job brief, and the Agent box](docs/screenshots/new-offers.png)
 
-| New offers and a job brief | Comparing ticked jobs | Dashboard |
+| Pipeline and an application | Comparing two ticked jobs | Dashboard |
 |---|---|---|
-| ![New offers](docs/screenshots/new-offers.png) | ![Agent box](docs/screenshots/agent-box.png) | ![Dashboard](docs/screenshots/dashboard.png) |
+| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Agent box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
 
 ## What it does
 
@@ -123,7 +123,7 @@ Example databases are built from made-up fixtures (fictional companies only).
 
 ```bash
 git clone <this repo> inter_prep && cd inter_prep
-python -m unittest                      # 428 tests, no network, no private files needed
+python -m unittest                      # 459 tests, no network, no private files needed
 python -m prep.seed_example             # data/example.db + data/example-getjo.db
 PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
   python -m prep.web --port 8766        # then open http://localhost:8766
@@ -162,7 +162,7 @@ pull request and the running dashboard.
 - **Rules for agents:** [CLAUDE.md](CLAUDE.md) sets the constraints every agent works under
   (standard library only, privacy rules, schema-migration rules, test and documentation duties).
   The same agents then *use* the project at run time through the skills in `.claude/skills/`.
-- **Quality bar:** tests for every change (428 now, no network, fixture data only), a privacy
+- **Quality bar:** tests for every change (459 now, no network, fixture data only), a privacy
   check on every commit, and `docs/how-it-works.md` kept current with each change.
 
 ## Docs
