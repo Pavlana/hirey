@@ -108,6 +108,20 @@ class StatsTest(unittest.TestCase):
         weeks = stats.applications_per_week(self.conn, TODAY, weeks=3)
         self.assertEqual(weeks, [("2026-02-23", 0), ("2026-03-02", 1), ("2026-03-09", 2)])
 
+    def test_practice(self) -> None:
+        self.assertEqual(stats.practice(self.conn),
+                         {"sessions": 0, "mock": 0, "real": 0, "open_gaps": 0, "areas": []})
+        db.record_session(self.conn, "mock", "2026-03-05", scores={"Coding": 2, "design": 3}, gaps=["Big O"])
+        db.record_session(self.conn, "real", "2026-03-09", scores={"coding": 4})
+        db.record_session(self.conn, "mock", "2026-03-01", scores={"coding": 1})  # recorded late, dated first
+        db.add_gap(self.conn, "Kafka", "2026-03-02", "cv fit")
+        p = stats.practice(self.conn)
+        self.assertEqual((p["sessions"], p["mock"], p["real"], p["open_gaps"]), (3, 2, 1, 2))
+        self.assertEqual(p["areas"], [
+            ("coding", [("2026-03-01", 1), ("2026-03-05", 2), ("2026-03-09", 4)]),  # case ignored, date order
+            ("design", [("2026-03-05", 3)]),
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

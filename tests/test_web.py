@@ -104,6 +104,31 @@ class PagesTest(WebTestCase):
         self.assertIn("target 10", body)
         self.assertNotIn(" style=", body)
 
+    def test_dashboard_practice_scores(self) -> None:
+        body = self.get("/dashboard")[2]  # the fixtures hold 4 sessions (3 mock, 1 real) and 1 open gap
+        self.assertIn("Practice sessions", body)
+        self.assertIn("3 mock · 1 real", body)
+        self.assertIn('class="chart trend"', body)
+        self.assertRegex(body, r"<td>communication</td><td><svg[^>]*>.*?</svg></td><td>3</td><td>3</td><td>4</td>"
+                               r"<td>\+1</td>")
+        self.assertIn("<td>coding</td>", body)
+        self.assertIn("<title>2026-01-15: 3</title>", body)
+        self.assertNotIn(" style=", body)
+        with self.conn() as conn:
+            db.record_session(conn, "mock", "2026-01-20", scores={"<b>x</b>": 2}, file_path="mock-secret-file.md")
+        body = self.get("/dashboard")[2]
+        self.assertIn("<td>&lt;b&gt;x&lt;/b&gt;</td>", body)
+        self.assertNotIn("<b>x</b>", body)
+        self.assertNotIn("mock-secret-file", body)  # session files live in private_dir; never shown
+
+    def test_dashboard_practice_empty(self) -> None:
+        with self.conn() as conn:
+            conn.execute("DELETE FROM sessions")
+            conn.commit()
+        body = self.get("/dashboard")[2]
+        self.assertIn("No practice scores yet.", body)
+        self.assertNotIn('class="chart trend"', body)
+
     def test_each_page_has_its_hue(self) -> None:
         for path, theme in web.PAGE_THEMES.items():
             with self.subTest(path=path):

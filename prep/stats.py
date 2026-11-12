@@ -16,8 +16,12 @@ Definitions (used everywhere, documented in docs/how-it-works.md):
 - Conversion: for each FUNNEL stage, how many submitted applications reached it or a later
   stage (cumulative, so skipped stages still count) and their share of submitted.
 - Weeks start on Monday. "Last 7 days" is today and the 6 days before it, by date_applied.
+- Practice: every row of the sessions table (mock and real), with each area's 1-5 scores in
+  session order (date, then id). Areas are grouped ignoring case; the first spelling is shown.
+  Open gaps counts every open gap, including those from CV fit checks.
 """
 
+import json
 import sqlite3
 from datetime import date, timedelta
 
@@ -138,3 +142,21 @@ def applications_per_week(conn: sqlite3.Connection, today: str | None = None,
                           weeks: int = WEEKS_SHOWN) -> list[tuple[str, int]]:
     rows = conn.execute("SELECT date_applied FROM applications WHERE date_applied IS NOT NULL")
     return _per_week([r[0] for r in rows], today, weeks)
+
+
+def practice(conn: sqlite3.Connection) -> dict:
+    """Practice sessions for the dashboard: "sessions", "mock", "real" (counts), "open_gaps" and
+    "areas", a list of (area, [(date, score), ...]) sorted by area name, scores oldest first."""
+    rows = conn.execute("SELECT date, kind, scores FROM sessions ORDER BY date, id").fetchall()
+    areas: dict[str, tuple[str, list[tuple[str, int]]]] = {}
+    for row in rows:
+        for area, score in json.loads(row["scores"] or "{}").items():
+            areas.setdefault(area.casefold(), (area, []))[1].append((row["date"], score))
+    open_gaps = conn.execute("SELECT COUNT(*) FROM gaps WHERE status = 'open'").fetchone()[0]
+    return {
+        "sessions": len(rows),
+        "mock": sum(1 for r in rows if r["kind"] == "mock"),
+        "real": sum(1 for r in rows if r["kind"] == "real"),
+        "open_gaps": open_gaps,
+        "areas": [areas[k] for k in sorted(areas)],
+    }

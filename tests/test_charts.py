@@ -36,6 +36,17 @@ class ChartsTest(unittest.TestCase):
         self.assertEqual(charts.treemap([("A", "s9", [("a", 0, "s5")])]), "")
         self.assertEqual(charts.funnel([("a", 0, None, "s5")]), "")
         self.assertEqual(charts.columns([]), "")
+        self.assertEqual(charts.trend([]), "")
+
+    def test_trend(self) -> None:
+        out = charts.trend([("2026-03-01", 1), ("2026-03-05", 5), ("<x>", 3)])
+        self.assertEqual(out.count("<circle "), 3)
+        self.assertIn("<polyline ", out)
+        self.assertIn('points="6,38 110,6 214,22"', out)  # 1 at the bottom, 5 at the top
+        self.assertIn("<title>&lt;x&gt;: 3</title>", out)
+        single = charts.trend([("2026-03-01", 4)])
+        self.assertNotIn("<polyline", single)  # one score: a dot only
+        self.assertEqual(single.count("<circle "), 1)
 
     def test_donut_segments_and_legend(self) -> None:
         out = charts.donut([("Applied", 3, "s5"), ("Offer", 1, "s10"), ("None", 0, "s1")], "applications")

@@ -343,6 +343,9 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 .treemap rect { fill-opacity: .9; }
 .funnel { max-width: 620px; margin: 0 auto; }
 .card-weeks svg.chart { max-width: 620px; margin: 0 auto; }
+.tiles-practice { margin-top: var(--space-5); }
+.chart.trend { width: 220px; min-width: 140px; }
+.chart .trend-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .funnel .funnel-empty { fill: var(--border-strong); }
 .funnel .funnel-band { opacity: .16; }
 

@@ -1,4 +1,4 @@
-"""Inline SVG charts for the dashboard: donut, treemap, funnel, columns and line.
+"""Inline SVG charts for the dashboard: donut, treemap, funnel, columns and trend.
 
 Charts are rendered on the server, so they need no script and no library. They use SVG
 presentation attributes and CSS classes only, because the Content-Security-Policy forbids
@@ -191,3 +191,27 @@ def columns(points: list[tuple[str, int]], target: int | None = None, color: str
         )
     return (f'<svg class="chart columns" viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Column chart of {len(points)} periods">{"".join(parts)}</svg>')
+
+
+def trend(points: list[tuple[str, int]], low: int = 1, high: int = 5, color: str = "s7",
+          width: int = 220, height: int = 44) -> str:
+    """A small line of scores on a fixed `low`..`high` scale, oldest first, with a dot (and a
+    tooltip) per point. One point is a dot only."""
+    if not points:
+        return ""
+    pad = 6
+    span = max(high - low, 1)
+    step = (width - 2 * pad) / max(len(points) - 1, 1)
+    x_of = lambda i: pad + i * step if len(points) > 1 else width / 2  # noqa: E731
+    y_of = lambda v: pad + (height - 2 * pad) * (1 - (min(max(v, low), high) - low) / span)  # noqa: E731
+    parts = [f'<line class="grid" x1="0" x2="{width}" y1="{_n(y_of(m))}" y2="{_n(y_of(m))}"/>' for m in (low, high)]
+    if len(points) > 1:
+        coords = " ".join(f"{_n(x_of(i))},{_n(y_of(v))}" for i, (_, v) in enumerate(points))
+        parts.append(f'<polyline class="trend-line {_c(color)}" points="{coords}" fill="none" stroke="currentColor"/>')
+    parts += [
+        f'<circle class="{_c(color)}" cx="{_n(x_of(i))}" cy="{_n(y_of(v))}" r="3.5" fill="currentColor">'
+        f"<title>{_e(label)}: {_e(v)}</title></circle>"
+        for i, (label, v) in enumerate(points)
+    ]
+    return (f'<svg class="chart trend" viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="Trend of {len(points)} scores">{"".join(parts)}</svg>')
