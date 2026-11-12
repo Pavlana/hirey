@@ -35,8 +35,9 @@
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli fit save APP_ID [--file PATH]
     python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
-    python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin; makes the PDF)
-    python -m prep.cli tailor pdf APP_ID [--version N]   (the PDF next to a version's file, default the latest)
+    python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin; makes the PDF, checks it)
+    python -m prep.cli tailor pdf APP_ID [--version N]   (the PDF next to a version's file, default the latest; checks it again)
+    python -m prep.cli tailor check APP_ID [--version N]   (checks a version again; pages from its PDF, no WeasyPrint)
     python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
                                                        (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
@@ -62,7 +63,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, cvfile, cvpdf, db, getjo, research
+from prep import assistant, cvcheck, cvfile, cvpdf, db, getjo, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -1036,6 +1037,8 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         return _tailor_path(args, settings, conn, app)
     if args.tailor_cmd == "pdf":
         return _tailor_pdf(args, settings, conn, app)
+    if args.tailor_cmd == "check":
+        return _tailor_check(args, settings, conn, app)
     path = Path(args.file).expanduser() if args.file else _next_tailored_file(settings, conn, app)
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
@@ -1048,11 +1051,29 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     words = research.word_count(body)
     print(f"  {words} words" + (f": WARNING, over {research.TAILOR_MAX_WORDS:,} (about two pages); cut older "
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
-    _print_pdf(settings, path, required=False)
+    pages = _print_pdf(settings, path, required=False)
+    _print_check(settings, conn, args.app_id, version, pages)
     return 0
 
 
-def _print_pdf(settings: Settings, path: Path, required: bool) -> bool:
+def _print_check(settings: Settings, conn: sqlite3.Connection, app_id: int, version: int, pages: int | None) -> None:
+    """Run the rule checks on a saved version (cvcheck), store them and print the verdict, the flagged
+    lines and the changes against cv.md. A failed check never undoes the save."""
+    try:
+        found = cvcheck.run(conn, settings.private_dir, app_id, version, pages)
+    except Exception as e:  # the version is saved; the check can be redone with tailor pdf
+        log.warning("tailored cv check failed: %s", type(e).__name__)
+        print(f"  no check: {type(e).__name__}; retry with tailor check")
+        return
+    log.info("tailored cv v%s checked: %s, %s findings", version, found["verdict"], len(found["findings"]))  # never the CV
+    print(f"  Check: {cvcheck.LABELS[found['verdict']]}")
+    for f in found["findings"]:
+        print(f"    [{f['severity']}] {f['message']}" + (f": {f['text']}" if f["text"] else ""))
+    for line in found["changes"]:
+        print(f"    - {line}")
+
+
+def _print_pdf(settings: Settings, path: Path, required: bool) -> int | None:
     """Make the PDF next to a tailored file and print its path and page count. Without WeasyPrint it
     says so; `tailor save` (not required) still succeeds, `tailor pdf` fails."""
     try:
@@ -1061,31 +1082,48 @@ def _print_pdf(settings: Settings, path: Path, required: bool) -> bool:
         if required:
             raise SystemExit(f"error: no PDF: {e}") from None
         print(f"  no PDF: {e}; make it later with tailor pdf")
-        return False
+        return None
     except Exception as e:  # the version is saved already; a failed render must not look like a failed save
         if required:
             raise
         log.warning("tailored cv pdf failed: %s", type(e).__name__)
         print(f"  no PDF: the render failed ({type(e).__name__}); retry with tailor pdf")
-        return False
+        return None
     log.info("tailored cv pdf made (%s pages)", pages)  # never the CV
     print(f"  PDF: {pdf} ({cvpdf.page_note(pages)})")
-    return True
+    return pages
 
 
-def _tailor_pdf(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+def _chosen_version(conn: sqlite3.Connection, app: dict, version: int | None) -> tuple[dict, Path]:
+    """The version asked for (default the latest) and its file, which must exist."""
     versions = db.tailored_versions(conn, app["id"])
     if not versions:
         raise SystemExit(f"error: #{app['id']} has no tailored CV yet")
-    chosen = [v for v in versions if args.version in (None, v["version"])]
+    chosen = [v for v in versions if version in (None, v["version"])]
     if not chosen:
-        raise SystemExit(f"error: #{app['id']} has no tailored CV v{args.version} "
+        raise SystemExit(f"error: #{app['id']} has no tailored CV v{version} "
                          f"(versions 1 to {versions[-1]['version']})")
     path = Path(chosen[-1]["file_path"])
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
-    print(f"Tailored CV v{chosen[-1]['version']} ({path.name}) for #{app['id']}")
-    _print_pdf(settings, path, required=True)
+    return chosen[-1], path
+
+
+def _tailor_check(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    """Check a version again without WeasyPrint: the page count comes from its existing PDF."""
+    version, path = _chosen_version(conn, app, args.version)
+    pages = cvpdf.page_count(cvpdf.pdf_path(path))
+    print(f"Tailored CV v{version['version']} ({path.name}) for #{app['id']}: "
+          + (f"PDF {cvpdf.page_note(pages)}" if pages else "no PDF"))
+    _print_check(settings, conn, app["id"], version["version"], pages)
+    return 0
+
+
+def _tailor_pdf(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    version, path = _chosen_version(conn, app, args.version)
+    print(f"Tailored CV v{version['version']} ({path.name}) for #{app['id']}")
+    pages = _print_pdf(settings, path, required=True)
+    _print_check(settings, conn, app["id"], version["version"], pages)
     return 0
 
 
@@ -1703,7 +1741,10 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("app_id", type=int)
     t.add_argument("--to", type=int, help="the user message this revision answers")
     t.add_argument("--file", help="default: the path `tailor path` prints")
-    t = tsub.add_parser("pdf", help="make the PDF next to a version's file (same name, .pdf); needs WeasyPrint")
+    t = tsub.add_parser("pdf", help="make the PDF next to a version's file (same name, .pdf) and check it again; needs WeasyPrint")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--version", type=int, help="default: the latest version")
+    t = tsub.add_parser("check", help="check a version again (pages from its existing PDF; no WeasyPrint needed)")
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest version")
     p.set_defaults(func=cmd_tailor)

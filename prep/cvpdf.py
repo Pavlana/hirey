@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 from string import Template
 
@@ -105,6 +106,27 @@ def _render_with(python: Path, md_path: Path, out: Path) -> int:
         last = (done.stderr.strip().splitlines() or ["no output"])[-1][:200]
         raise PdfUnavailable(f"pdf_python ({python}) failed: {last}")
     return int(found.group(1))
+
+
+_STREAM = re.compile(rb"stream\r?\n(.*?)\r?\nendstream", re.S)
+_PAGE = re.compile(rb"/Type\s*/Page(?![A-Za-z])")
+
+
+def page_count(pdf: Path) -> int | None:
+    """The pages of an existing PDF without WeasyPrint: page objects counted in the file and in its
+    Flate-compressed streams (WeasyPrint keeps them in object streams). None when the file is
+    missing or no page is found."""
+    try:
+        data = pdf.read_bytes()
+    except OSError:
+        return None
+    count = len(_PAGE.findall(data))
+    for raw in _STREAM.findall(data):
+        try:
+            count += len(_PAGE.findall(zlib.decompress(raw)))
+        except zlib.error:
+            continue
+    return count or None
 
 
 def page_note(pages: int) -> str:

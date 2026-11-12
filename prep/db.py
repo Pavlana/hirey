@@ -101,6 +101,11 @@ MAX_FACTS = 200  # characters in the key facts line (the brief's first line)
 # Pay never goes into anything the agent writes: currency signs, "80k", and pay words are refused.
 PAY_PATTERN = re.compile(r"[£$€¥]|\b\d+(?:[.,]\d+)?\s?k\b|\b(?:salary|salaries|pay|paid|compensation|remuneration|ote|"
                          r"bonus|per annum)\b", re.IGNORECASE)
+# The automatic check of each tailored CV version (prep/cvcheck.py, `tailor save`): every finding is
+# "block" (must be fixed before sending) or "look" (read this line); the verdict follows from them.
+# A finding's source says which checker wrote it ("rules" now; AI checks add their own source).
+CHECK_VERDICTS = ("ready", "look", "blocked")
+CHECK_SEVERITIES = ("block", "look")
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -255,6 +260,19 @@ CREATE TABLE IF NOT EXISTS tailored_cvs (
     file_path      TEXT NOT NULL,
     version        INTEGER NOT NULL,
     updated_at     TEXT NOT NULL
+);
+
+-- The automatic check of one tailored CV version: the verdict and its findings (JSON list of
+-- {source, check, severity, line, message, text}) from every checker, and the changes vs cv.md at
+-- check time (JSON list of short lines). Private: findings may quote CV lines (never pay).
+CREATE TABLE IF NOT EXISTS tailored_cv_checks (
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    version        INTEGER NOT NULL,
+    verdict        TEXT NOT NULL,       -- ready / look / blocked
+    findings       TEXT NOT NULL,
+    changes        TEXT NOT NULL,
+    checked_at     TEXT NOT NULL,
+    PRIMARY KEY (application_id, version)
 );
 
 -- The first Agent thread, one per application (replaced by agent_messages, which copies its rows
@@ -1793,6 +1811,50 @@ def tailored_versions(conn: sqlite3.Connection, app_id: int) -> list[dict]:
     rows = conn.execute("SELECT version, file_path, created_at FROM tailored_cv_versions WHERE application_id = ? "
                         "ORDER BY version", (app_id,))
     return [dict(r) for r in rows]
+
+
+def check_verdict(findings: list[dict]) -> str:
+    """blocked when any finding blocks, look when any asks for a look, else ready."""
+    severities = {f["severity"] for f in findings}
+    return "blocked" if "block" in severities else ("look" if "look" in severities else "ready")
+
+
+def save_cv_check(conn: sqlite3.Connection, app_id: int, version: int, source: str, findings: list[dict],
+                  changes: list[str] | None = None) -> str:
+    """Store one checker's findings for a tailored CV version and return the verdict. Only the findings
+    of `source` are replaced: those of other checkers stay (the rule checks write "rules"; an AI check
+    calls this with its own source), and the verdict is worked out again from all of them. `changes`
+    (vs cv.md) replaces the stored list when given. Each finding: check, severity, line (or None),
+    message, and optionally text (the line, never pay)."""
+    if not any(v["version"] == version for v in tailored_versions(conn, app_id)):
+        raise LookupError(f"no tailored CV v{version} on application {app_id}")
+    clean = []
+    for f in findings:
+        if f["severity"] not in CHECK_SEVERITIES:
+            raise ValueError(f"severity must be one of {', '.join(CHECK_SEVERITIES)}")
+        clean.append({"source": source, "check": f["check"], "severity": f["severity"], "line": f.get("line"),
+                      "message": f["message"], "text": f.get("text") or ""})
+    with conn:
+        old = cv_check(conn, app_id, version)
+        kept = [f for f in (old["findings"] if old else []) if f["source"] != source]
+        merged = sorted(kept + clean, key=lambda f: (f["line"] is not None, f["line"] or 0))
+        verdict = check_verdict(merged)
+        conn.execute("INSERT OR REPLACE INTO tailored_cv_checks (application_id, version, verdict, findings, changes, "
+                     "checked_at) VALUES (?, ?, ?, ?, ?, ?)",
+                     (app_id, version, verdict, json.dumps(merged),
+                      json.dumps(changes if changes is not None else (old["changes"] if old else [])), now_iso()))
+    return verdict
+
+
+def cv_check(conn: sqlite3.Connection, app_id: int, version: int) -> dict | None:
+    """The stored check of a tailored CV version (findings and changes as lists), or None (not checked yet)."""
+    row = conn.execute("SELECT * FROM tailored_cv_checks WHERE application_id = ? AND version = ?",
+                       (app_id, version)).fetchone()
+    if row is None:
+        return None
+    d = dict(row)
+    d["findings"], d["changes"] = json.loads(d["findings"]), json.loads(d["changes"])
+    return d
 
 
 def record_cv_sent(conn: sqlite3.Connection, app_id: int, name: str) -> dict:

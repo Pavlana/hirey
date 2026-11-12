@@ -173,7 +173,11 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 - **Same facts in every version**: only selection, order and wording change between versions.
 - **Keyword coverage**: the note lists the job's top 5–6 requirements as covered / not covered.
   Covered means stated in the summary or a recent bullet, in the job's own wording when the skill
-  is true.
+  is true. The same terms go into the front matter (`keywords`, `gaps`, below).
+- **Title**: the job's title (without seniority) appears in the name line or the summary.
+- **Plain wording**: write like the user, not like a model. No stock words (spearheaded,
+  leveraged, passionate, results-driven, robust, seamless, innovative, …), no dashes inside
+  sentences, vary the opening verbs, and keep the figures. The check flags these in rewritten lines.
 - **Agreed wording**: `cv-tailored/_style.md` (path in the packet) holds wording agreed in earlier
   threads, such as a one-line explanation of a career gap. Reuse it in every copy. On the first
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the
@@ -198,10 +202,17 @@ in Markdown:
 job = "Role at Company"
 tailored_at = 2026-01-20
 based_on = "cv.md"
+keywords = ["Kubernetes", "Terraform", "CI/CD", "SOC 2"]   # the job's must-have terms, as the posting writes them
+gaps = ["SOC 2"]                                           # must-haves cv.md cannot truthfully claim
 +++
 
 <the tailored CV>
 ```
+
+`keywords` are copied from the job's must-haves (the brief's `## Must-haves`, else the
+description) in the posting's exact wording: applicant tracking systems match words literally,
+so "K8s" does not count for "Kubernetes". The check flags every keyword missing from the body
+unless it is in `gaps`; never move a term into the body that is not true, list it under gaps.
 
 Then save it, with a short note for the Agent thread on stdin: two or three lines on what was
 tailored, then the questions as `-` bullets (plain text; Markdown is not rendered). The note is
@@ -222,7 +233,12 @@ NOTE
 Each save records the file `tailor path` printed as the next version (v1, v2, …) and makes its
 PDF (`CV_….pdf` beside it, shown as PDF in the panel). Over two pages: save a shorter version
 right away. "no PDF: …" (WeasyPrint not reachable) leaves the save valid: say so in one line;
-`python -m prep.cli tailor pdf APP` makes it later. A Redo ("New
+`python -m prep.cli tailor pdf APP` makes it later. `python -m prep.cli tailor check APP` checks a
+version again without WeasyPrint. The save also prints the automatic check
+("Check: Ready", "Look at these lines" or "Blocked", with the flagged lines; the panel shows it
+too). Blocked: fix those lines in a new version right away (`tailor path APP --copy`, edit,
+`tailor save`). Look at these lines: fix what is wrong; leave what is right (a date from the
+facts bank, a true fact) for the user. A Redo ("New
 from cv.md" in the panel) writes a new version from the current `cv.md`. Nothing is recorded as
 sent until the user says which file they sent (`python -m prep.cli cv sent APP FILE_NAME`, done
 by /ask).

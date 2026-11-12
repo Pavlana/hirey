@@ -186,8 +186,10 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    ```
 
    It records the file `tailor path` printed as the next version, makes its PDF (page count printed,
-   WARNING above two pages: shorten it in another version) and answers the message, so do not also
-   run `thread reply` for it. No pay in the copy or the note. "Make a PDF of v2" is
+   WARNING above two pages: shorten it in another version), checks it ("Check: Blocked" or "Look at
+   these lines" with the flagged lines: fix a blocking line in another version; keep the front
+   matter's `keywords` and `gaps` current, a term the user confirms moves from gaps into the text) and answers the
+   message, so do not also run `thread reply` for it. No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
 4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.
 5. "I sent v2" or a file name: `python -m prep.cli cv sent APP FILE_NAME` (see the table above).
