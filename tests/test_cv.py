@@ -235,13 +235,14 @@ class PanelTest(WebTestCase):
         self.assertIn('action="/cv/restore"', panel)  # v1 can be restored
         self.assertIn('href="/?cv=1&amp;compare=1"', panel)
         body = self.get("/?cv=1")[2]
-        self.assertIn('name="topic" value="cv" checked> About my CV', body)
         self.assertIn('href="/?cv=1" data-open-panel aria-current="true">My CV</a>', body)
+        body = self.get("/?cv=1&sel=cv")[2]  # ticked: My CV is what the next message is about
+        self.assertIn('<input type="hidden" name="about" value="cv"><span class="about-name">My CV</span>', body)
 
     def test_cv_and_job_panels_exclude_each_other(self) -> None:
         body = self.get("/?cv=1&app=1")[2]
         self.assertIn('data-cv="1"', body)
-        self.assertIn('data-href="/?app=1"', body, "a row opens its panel and closes My CV")
+        self.assertIn('data-href="/?app=1&amp;sel=a%3A1"', body, "a row opens its panel (ticked: nothing else is) and closes My CV")
         self.assertIn('href="/" aria-label="Close" data-close-panel', body)
         body = self.get("/?view=offers&app=1")[2]
         self.assertIn('href="/?view=offers&amp;cv=1" data-open-panel>My CV</a>', body)

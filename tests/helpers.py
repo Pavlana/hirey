@@ -32,6 +32,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_NO_RESPONSE_DAYS": "",
             "PREP_RESEARCH_MAX_AGE_DAYS": "",
             "PREP_STALE_DAYS": "",
+            "PREP_BRIEF_AUTO_MIN_SCORE": "",
             "PREP_ASSISTANT_TASK": "",
             "PREP_ASSISTANT_PROJECT": "",
             "PREP_DEV3_BIN": "",

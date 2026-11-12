@@ -35,5 +35,13 @@
   "messages": [
     {"application": 1, "question": "What's their interview process? Any London office?",
      "reply": "4 stages: recruiter call, live coding (Python, 60 min), system design, panel with the hiring manager.\nLondon office in Shoreditch, hybrid 2 days a week; the role is listed as London or remote (UK).\nSources: https://careers.acme-rockets.example/process https://acme-rockets.example/offices"}
+  ],
+  "briefs": [
+    {"job": "ashby:initech-cloud:x1",
+     "brief": "hybrid 3 days · Go · Kubernetes · Senior · Manchester\n## Summary\nSenior DevOps engineer for a fictional cloud team's internal developer platform.\n## Must-haves\n- 5+ years backend or platform work\n- Go or Python in production\n- Kubernetes and Terraform\n## Nice-to-haves\n- On-call experience\n- Postgres tuning\n## Where & terms\n- Manchester office, 3 days a week\n- Permanent, senior level\n## Team & product\n- Team of 6 owning CI/CD and the service mesh\n## Interview process\n- Recruiter call, take-home, system design, values\n## Red flags / notable\n- On-call 1 week in 6"}
+  ],
+  "comparisons": [
+    {"targets": ["a:1", "j:ashby:initech-cloud:x1"], "question": "Which of these two fits me better?",
+     "reply": "Acme Rockets fits better: Python and the platform scope match the CV; Initech asks for Go and Terraform, which the CV does not show.\n- Acme: hybrid 2 days, 4 stages\n- Initech: hybrid 3 days, on-call 1 week in 6"}
   ]
 }

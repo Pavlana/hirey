@@ -248,6 +248,11 @@ def job_url(job_id: str, view: str = "offers") -> str:
     return "/?" + urlencode([("view", view), ("job", job_id)])
 
 
+def row_url(job_id: str) -> str:
+    """A New offers row's link: opening it ticks the job, since nothing else is ticked."""
+    return "/?" + urlencode([("view", "offers"), ("job", job_id), ("sel", f"j:{job_id}")])
+
+
 class OffersViewTest(WebTestCase):
     """The New offers view in the left column of Applications (?view=offers)."""
 
@@ -269,9 +274,9 @@ class OffersViewTest(WebTestCase):
         self.assertIn("6 open · 2 closed · 3 new offers", body)
         head = body[body.index('<table id="offer-list">'):body.index("</thead>")]
         self.assertEqual([c.split(">", 1)[1].split("<", 1)[0] for c in head.split("<th scope")[1:]],
-                         ["Score", "Company", "Role", "Location"])
+                         ["", "Score", "Company", "Role", "Location"])  # the tick column first
         row = body[body.index(f'data-job="{WONKA}"'):]
-        self.assertIn(f'data-href="{h(job_url(WONKA))}"', body)
+        self.assertIn(f'data-href="{h(row_url(WONKA))}"', body)
         self.assertNotIn("<form", row[:row.index("</tr>")])  # the panel holds the actions
         same_day = [{"id": "b", "first_seen": "2026-01-18T09:00:00Z", "score": 7},
                     {"id": "a", "first_seen": "2026-01-18T08:00:00Z", "score": 9},
@@ -411,22 +416,27 @@ class OfferPanelTest(WebTestCase):
     def test_header_actions_and_description(self) -> None:
         body = self.get(job_url(WONKA))[2]
         panel = self.panel(body)
-        self.assertIn(f'<aside class="panel panel-offer" id="panel" aria-labelledby="panel-title" data-job="{WONKA}">', panel)
+        # opening it queued its brief (score 7, under brief_auto_min_score): the panel polls until it is in
+        self.assertIn(f'<aside class="panel panel-offer" id="panel" aria-labelledby="panel-title" data-job="{WONKA}" data-busy>', panel)
         head = panel[:panel.index("</header>")]
         for part in ("Wonka Systems", "Senior Python Engineer", '<span class="badge s6">7</span>', "London / Remote",
                      "seen 18 Jan", "Job posting ↗", "expires in 4 days", 'href="/?view=offers" aria-label="Close"'):
             self.assertIn(part, head)
-        shortcuts = panel[panel.index('class="shortcuts"'):panel.index('class="panel-description"')]
+        shortcuts = panel[panel.index('class="shortcuts"'):panel.index('class="panel-brief"')]
         self.assertIn('action="/offers/interested" class="inline" data-ajax="interested"', shortcuts)
         self.assertIn(f'name="return" value="{h(job_url(WONKA))}"', shortcuts)
         self.assertIn('data-skip-field="job_id" data-skip-action="/offers/skip"', shortcuts)
         self.assertIn('href="/offers/skip?job_id=ashby%3Awonka-systems%3Aw2&amp;return=', shortcuts)
-        description = panel[panel.index('class="description"'):]
-        self.assertIn("<p>About the team</p><p>A fictional team building made-up tools.\nPython, Postgres and AWS.</p>",
+        description = panel[panel.index('class="description'):]
+        self.assertIn("<h4>About the team</h4><p>A fictional team building made-up tools.\nPython, Postgres and AWS.</p>",
                       description)
-        self.assertIn(f'data-job="{WONKA}" data-company="wonka systems" data-role="senior python engineer" class="is-focus"', body)
+        self.assertIn("<h4>What you will do</h4><ul><li>Build services</li><li>Review code</li></ul>", description)
+        self.assertIn("Writing brief…", panel)
+        self.assertLess(panel.index('class="shortcuts"'), panel.index('class="panel-brief"'))  # decide at the top
+        self.assertIn(f'data-job="{WONKA}" data-key="j:{WONKA}" data-company="wonka systems" data-role="senior python engineer" class="is-focus"', body)
         about = body[body.index('class="agent-about"'):]
-        self.assertIn(f'name="job_id" value="{WONKA}" checked> About Wonka Systems — Senior Python Engineer', about[:300])
+        self.assertIn("the whole search", about[:400])  # opening only shows it; the row link ticks it
+        self.assertIn(f'data-sel="j:{WONKA}" aria-label="Ask the agent about Wonka Systems — Senior Python Engineer"', head)
         self.assertIn('data-view="offers" aria-current="true"', body)  # the list stays New offers
 
     def test_description_is_escaped_and_missing_ones_say_so(self) -> None:
@@ -445,7 +455,7 @@ class OfferPanelTest(WebTestCase):
         self.assertNotIn("javascript:", panel)
         self.assertIn("No description in getjo", self.panel(self.get(job_url("lever:empty:1"))[2]))
         self.assertEqual(web._description("Learn Fast &#xa;&#xa; Job Description: R&amp;D &lt;b&gt;"),
-                         "<p>Learn Fast</p><p>Job Description: R&amp;D &lt;b&gt;</p>")  # board entities decoded once
+                         "<h4>Learn Fast</h4><p>Job Description: R&amp;D &lt;b&gt;</p>")  # board entities decoded once
 
     def test_tracked_or_unknown_jobs(self) -> None:
         body = self.get("/?job=greenhouse%3Aacme-rockets%3A1001")[2]  # tracked: its application opens
@@ -552,7 +562,7 @@ class OfferPanelTest(WebTestCase):
         self.assertEqual((app["company"], app["status"], app["date_applied"]), ("Globex Labs", "applied", TODAY))
         body = self.get(headers["Location"])[2]
         self.assertIn("Recorded as applied", body)
-        self.assertIn(f'data-app="{app["id"]}" class="is-focus"', body)
+        self.assertIn(f'data-app="{app["id"]}" data-key="a:{app["id"]}" class="is-focus"', body)
         for _ in range(2):
             self.post("/offers/apply", {"job_id": GLOBEX})
         with self.conn() as conn:
@@ -752,7 +762,8 @@ class LandingPageTest(WebTestCase):
         js = self.get("/static/app.js")[2]
         self.assertIn('location.pathname === "/" && !location.search', js)
         self.assertIn("localStorage.getItem(VIEW_KEY)", js)
-        self.assertIn('location.replace("/?view=offers")', js)
+        self.assertIn('location.replace(`/?${query}`)', js)
+        self.assertIn('localStorage.getItem(SEL_KEY)', js)  # the ticked jobs come back too
         self.assertIn("try { localStorage.setItem(VIEW_KEY, tab.dataset.view); } catch", js)
 
     def test_new_offers_without_javascript(self) -> None:
@@ -760,7 +771,7 @@ class LandingPageTest(WebTestCase):
         form = body[body.index('class="offer-filters"'):]
         self.assertIn('<form method="get" action="/" class="offer-filters"', body)
         self.assertIn('<button class="btn btn-secondary btn-sm">Filter</button>', form[:form.index("</form>")])
-        self.assertIn(f'<a href="{h(job_url(GLOBEX))}">Globex Labs</a>', body)
+        self.assertIn(f'<a href="{h(row_url(GLOBEX))}">Globex Labs</a>', body)
 
 
 class TasksTest(WebTestCase):
@@ -836,13 +847,13 @@ class ApplicationsPageTest(WebTestCase):
         table = self.table(body)
         head = table[:table.index("</thead>")]
         labels = [c.split(">", 1)[1].split("<", 1)[0] for c in head.split("<th scope")[1:]]
-        self.assertEqual(labels, ["Company", "Role", "Stage", "Next task", "Comment"])  # no due, days, fit or tier
+        self.assertEqual(labels, ["", "Company", "Role", "Stage", "Next task", "Comment"])  # no due, days, fit or tier
         groups = [g.split('"', 1)[0] for g in table.split('<tbody data-group="')[1:]]
         self.assertEqual(groups, ["to_apply", "applied", "recruiter_call", "technical"])  # pipeline order, open only
         self.assertIn('scope="rowgroup">Coding interview <span class="count">1</span>', table)
         self.assertNotIn("Cyberdyne Example", table)  # closed: behind Show closed
         self.assertIn('href="/?closed=1" data-closed-toggle>Show closed</a>', body)
-        self.assertIn(f'data-href="/?app=3"', self.row(body, 3))
+        self.assertIn('data-href="/?app=3&amp;sel=a%3A3"', self.row(body, 3))
         rows = [{"app": {"id": i}, "next": n, "days": d} for i, n, d in (
             (1, None, 9), (2, {"due_date": None}, 3), (3, {"due_date": "2026-01-25"}, 1),
             (4, {"due_date": "2026-01-21"}, 2), (5, {"due_date": "2026-01-25"}, 8))]

@@ -100,14 +100,14 @@ class EndpointTest(WebTestCase):
         q, a = box.index("Any London office?"), box.index("4 stages: recruiter call")
         self.assertLess(q, a)  # newest at the bottom
         self.assertIn(f'<a class="msg-about" href="/?app={ACME}">Acme Rockets</a>', box)
-        self.assertIn(f'name="app_id" value="{ACME}" checked> About Acme Rockets', box)
-        self.assertIn('data-filter-chat="job"', box)
+        self.assertIn("About:</span><span class=\"muted\">the whole search", box)  # opening a job does not tick it
+        self.assertIn('data-filter-chat="sel"', box)
         self.assertIn('href="#agent" data-ask-agent>Ask the agent</a>', panel)  # phones: from the sheet to the box
         css = self.get("/static/style.css")[2]
         self.assertIn("body.is-asking .panel { display: none; }", css)
         body = self.get("/")[2]  # no panel: about the whole search
         box = body[body.index('id="agent"'):body.index("<dialog")]
-        self.assertIn("About: the whole search", box)
+        self.assertIn("the whole search", box)
         self.assertNotIn('name="app_id"', box)
         self.assertIn('<a href="https://careers.acme-rockets.example/process" rel="noreferrer noopener" target="_blank">', box)
         self.assertIn('action="/applications/message"', box)
@@ -332,6 +332,7 @@ class CliTest(IsolatedTestCase):
     def test_queue_on_a_database_without_the_thread_table(self) -> None:
         with closing(db.connect(self.prep_db)) as conn:
             db.queue_request(conn, self.app, "research")
+            conn.execute("DROP TABLE agent_message_targets")  # an older database: no thread tables at all
             conn.execute("DROP TABLE agent_messages")
             conn.execute("DROP TABLE application_messages")
             conn.commit()
@@ -491,7 +492,8 @@ class JobMessagesTest(WebTestCase):
             [_, agent] = db.thread(conn, job_id=GLOBEX_JOB)
         self.assertEqual((agent["id"], agent["getjo_job_id"], agent["application_id"]), (reply, GLOBEX_JOB, None))
         js = self.get("/static/app.js")[2]
-        self.assertIn('panel?.dataset.job ? ["job", panel.dataset.job]', js)
+        self.assertIn('li.dataset.targets', js)  # Selected: messages about any ticked target
+        self.assertIn(f'data-targets="j:{GLOBEX_JOB}"', self.get("/")[2])
 
     def test_interested_moves_the_messages_and_undo_hands_them_back(self) -> None:
         msg = self.ask()

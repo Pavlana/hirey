@@ -41,6 +41,10 @@ private_dir = "/absolute/path/to/inter_prep"
 # "may be closed" in New offers and /today (needs getjo's last_seen column).
 # stale_days = 3
 
+# Optional. New offers scored at least this get a job brief queued for the agent in the
+# background; any other offer gets one queued when its panel is first opened.
+# brief_auto_min_score = 8
+
 # Optional. The seq number of a long-running dev3 task acting as a standing assistant. When set,
 # newly queued research / CV fit requests (Interested, or the card's buttons) are also sent to it
 # as "/research <application id>" with `dev3 message`. Unset: requests wait for the next Claude

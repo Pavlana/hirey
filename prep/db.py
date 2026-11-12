@@ -82,6 +82,17 @@ MAX_MESSAGE = 20_000  # characters: room for a pasted recruiter email
 # A message about neither an application nor a job may have a topic: "cv" is the master CV (the
 # My CV panel's "About my CV" tick). A message with no application, job or topic is general.
 MESSAGE_TOPICS = ("cv",)
+# A message about 2 to MAX_TARGETS things at once (ticked rows: applications, job offers, My CV) is a
+# comparison: topic COMPARE, no application or job in its own columns; agent_message_targets lists them.
+# The topic is set by add_compare only, never taken from a form.
+COMPARE = "compare"
+MAX_TARGETS = 4
+# Job briefs: written by the agent from the getjo description, shown at the top of the panel.
+MAX_BRIEF_WORDS = 300
+MAX_FACTS = 200  # characters in the key facts line (the brief's first line)
+# Pay never goes into anything the agent writes: currency signs, "80k", and pay words are refused.
+PAY_PATTERN = re.compile(r"[£$€¥]|\b\d+(?:[.,]\d+)?\s?k\b|\b(?:salary|salaries|pay|paid|compensation|remuneration|ote|"
+                         r"bonus|per annum)\b", re.IGNORECASE)
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -263,6 +274,37 @@ CREATE TABLE IF NOT EXISTS agent_messages (
     answered_at    TEXT
 );
 
+-- What each agent message is about, one row per target: an application (application_id, with its getjo
+-- job id when it has one, so Undo Interested can hand the row back to the job), a getjo job not yet
+-- tracked (getjo_job_id only) or a topic ("cv"). A general message has none; a comparison has 2-4.
+-- agent_messages keeps its own columns for single-target messages (filled as before).
+CREATE TABLE IF NOT EXISTS agent_message_targets (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id     INTEGER NOT NULL REFERENCES agent_messages(id),
+    application_id INTEGER REFERENCES applications(id),
+    getjo_job_id   TEXT,
+    topic          TEXT
+);
+
+-- A short structured brief of a getjo job (Markdown: the key facts line, then sections), written by
+-- the agent from the description. Never pay. One per job; Redo replaces it.
+CREATE TABLE IF NOT EXISTS job_briefs (
+    getjo_job_id TEXT PRIMARY KEY,
+    brief        TEXT NOT NULL,
+    updated_at   TEXT NOT NULL
+);
+
+-- Briefs waiting for the agent, one row per getjo job (agent_requests needs an application, which a
+-- new offer does not have). pending -> claimed -> done; force: Redo.
+CREATE TABLE IF NOT EXISTS brief_requests (
+    getjo_job_id TEXT PRIMARY KEY,
+    status       TEXT NOT NULL DEFAULT 'pending',
+    force        INTEGER NOT NULL DEFAULT 0,
+    requested_at TEXT NOT NULL,
+    claimed_at   TEXT,
+    done_at      TEXT
+);
+
 -- The master CV's saved versions (private_dir/cv-history/<file_name>): each row is a state of cv.md
 -- and the note says what changed into it. Files and notes never go into git.
 CREATE TABLE IF NOT EXISTS cv_versions (
@@ -279,6 +321,8 @@ CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
 CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_id);
 CREATE INDEX IF NOT EXISTS idx_messages_app ON application_messages(application_id);
 CREATE INDEX IF NOT EXISTS idx_agent_messages_app ON agent_messages(application_id);
+CREATE INDEX IF NOT EXISTS idx_targets_message ON agent_message_targets(message_id);
+CREATE INDEX IF NOT EXISTS idx_targets_app ON agent_message_targets(application_id);
 """
 
 # Columns added after a table was first created: {table: {column: definition}}.
@@ -339,6 +383,7 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
                     next_actions_to_tasks(conn)
     _backfill_tailored_versions(conn)
     _copy_application_messages(conn)
+    _backfill_message_targets(conn)
     conn.commit()
 
 
@@ -350,6 +395,19 @@ def _copy_application_messages(conn: sqlite3.Connection) -> None:
         "claimed_at, answered_at) SELECT id, application_id, author, body, status, reply_to, created_at, claimed_at, "
         "answered_at FROM application_messages"
     )
+
+
+def _backfill_message_targets(conn: sqlite3.Connection) -> None:
+    """A message from before agent_message_targets gets one target row from its own columns (an
+    application with its getjo job id, a job, or a topic); general messages get none."""
+    conn.execute(
+        "INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
+        "SELECT m.id, m.application_id, COALESCE(m.getjo_job_id, a.getjo_job_id), m.topic "
+        "FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id "
+        "WHERE (m.application_id IS NOT NULL OR m.getjo_job_id IS NOT NULL OR m.topic IS NOT NULL) "
+        "AND COALESCE(m.topic, '') != ? "
+        "AND NOT EXISTS (SELECT 1 FROM agent_message_targets t WHERE t.message_id = m.id)",
+        (COMPARE,))
 
 
 def _backfill_tailored_versions(conn: sqlite3.Connection) -> None:
@@ -513,6 +571,8 @@ def _adopt_job_messages(conn: sqlite3.Connection, app_id: int, getjo_job_id: str
     the job id, so Undo Interested can hand them back)."""
     if getjo_job_id:
         conn.execute("UPDATE agent_messages SET application_id = ? WHERE getjo_job_id = ? AND application_id IS NULL",
+                     (app_id, getjo_job_id))
+        conn.execute("UPDATE agent_message_targets SET application_id = ? WHERE getjo_job_id = ? AND application_id IS NULL",
                      (app_id, getjo_job_id))
         conn.commit()
 
@@ -1024,6 +1084,9 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
         raise ValueError("It has moved on since; withdraw it from its card instead.")
     with conn:  # one transaction: all or nothing
         conn.execute("UPDATE agent_messages SET application_id = NULL WHERE application_id = ?", (app_id,))
+        # every target row of an application with a getjo job carries the job id: back to the job
+        conn.execute("UPDATE agent_message_targets SET application_id = NULL, getjo_job_id = :job "
+                     "WHERE application_id = :id", {"id": app_id, "job": getjo_job_id})
         for table in ("agent_requests", "status_history"):
             conn.execute(f"DELETE FROM {table} WHERE application_id = ?", (app_id,))
         conn.execute("DELETE FROM applications WHERE id = ?", (app_id,))
@@ -1603,13 +1666,81 @@ def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id:
     if job_id is not None:
         tracked = find_by_job(conn, job_id)
         app_id = tracked["id"] if tracked else None
-    cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, getjo_job_id, topic, author, body, status, created_at) "
-        "VALUES (?, ?, ?, 'user', ?, 'pending', ?)",
-        (app_id, job_id, topic, body, now_iso()),
-    )
-    conn.commit()
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO agent_messages (application_id, getjo_job_id, topic, author, body, status, created_at) "
+            "VALUES (?, ?, ?, 'user', ?, 'pending', ?)",
+            (app_id, job_id, topic, body, now_iso()),
+        )
+        if app_id is not None or job_id is not None or topic is not None:
+            _add_targets(conn, cursor.lastrowid, [(app_id, job_id, topic)])
     return cursor.lastrowid
+
+
+def target_key(application_id: int | None, getjo_job_id: str | None, topic: str | None) -> str:
+    """A target as the page names it: "a:<app id>", "j:<getjo job id>" (not tracked) or the topic ("cv")."""
+    if application_id is not None:
+        return f"a:{application_id}"
+    if getjo_job_id:
+        return f"j:{getjo_job_id}"
+    return topic or ""
+
+
+def _add_targets(conn: sqlite3.Connection, msg_id: int, targets: list[tuple]) -> None:
+    """Target rows for a message, inside the caller's transaction. An application's row carries its
+    getjo job id (so Undo Interested can hand it back); a tracked job's row gets its application."""
+    for app_id, job_id, topic in targets:
+        if app_id is not None and not job_id:
+            row = conn.execute("SELECT getjo_job_id FROM applications WHERE id = ?", (app_id,)).fetchone()
+            job_id = row[0] if row else None
+        elif app_id is None and job_id:
+            tracked = find_by_job(conn, job_id)
+            app_id = tracked["id"] if tracked else None
+        conn.execute("INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
+                     "VALUES (?, ?, ?, ?)", (msg_id, app_id, job_id, topic))
+
+
+def add_compare(conn: sqlite3.Connection, body: str, targets: list[tuple]) -> int:
+    """A user message about 2 to MAX_TARGETS targets at once ((application_id, getjo_job_id, topic)
+    each; a comparison), pending until the agent answers it. Its own columns hold topic COMPARE only."""
+    body = _message_body(body)
+    keys = []
+    for app_id, job_id, topic in targets:
+        if sum(x is not None for x in (app_id, job_id, topic)) != 1:
+            raise ValueError("each target is one application, job or topic")
+        if topic is not None and topic not in MESSAGE_TOPICS:
+            raise ValueError(f"topic must be one of {', '.join(MESSAGE_TOPICS)}")
+        if app_id is not None and get_application(conn, app_id) is None:
+            raise LookupError(f"no application with id {app_id}")
+        keys.append(target_key(app_id, job_id, topic))
+    if len(set(keys)) != len(keys):
+        raise ValueError("a target is named twice")
+    if not 2 <= len(targets) <= MAX_TARGETS:
+        raise ValueError(f"a comparison is about 2 to {MAX_TARGETS} jobs")
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO agent_messages (topic, author, body, status, created_at) VALUES (?, 'user', ?, 'pending', ?)",
+            (COMPARE, body, now_iso()))
+        _add_targets(conn, cursor.lastrowid, targets)
+    return cursor.lastrowid
+
+
+def message_targets(conn: sqlite3.Connection, msg_ids: list[int] | None = None) -> dict[int, list[dict]]:
+    """Targets by message id (all messages, or `msg_ids`), in the order they were named: dicts with
+    application_id, getjo_job_id, topic, company, role and key ("a:3", "j:…", "cv")."""
+    where = f"WHERE t.message_id IN ({','.join('?' * len(msg_ids))})" if msg_ids is not None else ""
+    if msg_ids is not None and not msg_ids:
+        return {}
+    rows = conn.execute(
+        f"SELECT t.message_id, t.application_id, t.getjo_job_id, t.topic, a.company, a.role "
+        f"FROM agent_message_targets t LEFT JOIN applications a ON a.id = t.application_id {where} ORDER BY t.id",
+        tuple(msg_ids or ()))
+    found: dict[int, list[dict]] = {}
+    for r in rows:
+        d = dict(r)
+        d["key"] = target_key(d["application_id"], d["getjo_job_id"], d["topic"])
+        found.setdefault(d.pop("message_id"), []).append(d)
+    return found
 
 
 def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None,
@@ -1620,18 +1751,20 @@ def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | Non
     conversation (with `limit`, its latest messages). company is None for a message about an
     untracked job or a topic."""
     key = app_id if app_id is not None else job_id if job_id else topic
-    where = ("WHERE m.application_id = ?" if app_id is not None else "WHERE m.getjo_job_id = ?" if job_id
-             else "WHERE m.topic = ?" if topic else "")
+    column = "application_id" if app_id is not None else "getjo_job_id" if job_id else "topic" if topic else ""
+    # its own messages, and comparisons that name it
+    where = (f"WHERE m.{column} = :key OR m.id IN (SELECT message_id FROM agent_message_targets WHERE {column} = :key)"
+             if column else "")
     rows = conn.execute(
         f"""
         SELECT * FROM (
             SELECT m.id, m.application_id, m.getjo_job_id, m.topic, a.company, m.author, m.body, m.status,
                    m.reply_to, m.created_at
             FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
-            {where} ORDER BY m.id DESC {'LIMIT ?' if limit else ''}
+            {where} ORDER BY m.id DESC {'LIMIT :limit' if limit else ''}
         ) ORDER BY id
         """,
-        tuple(x for x in (key, limit) if x is not None),
+        {"key": key, "limit": limit},
     )
     return [dict(r) for r in rows]
 
@@ -1702,6 +1835,17 @@ def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | N
     return won
 
 
+def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
+    """Take one waiting user message for this session (a comparison is claimed on its own); True if
+    this caller won it."""
+    stamp, cutoff = now_iso(), _claim_cutoff()
+    cursor = conn.execute(
+        "UPDATE agent_messages SET status = 'claimed', claimed_at = ? WHERE id = ? AND author = 'user' "
+        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, msg_id, cutoff))
+    conn.commit()
+    return cursor.rowcount == 1
+
+
 def message_application(conn: sqlite3.Connection, msg_id: int) -> int | None:
     """The application a message is about (None: an untracked job or the whole search). LookupError
     if there is none."""
@@ -1764,6 +1908,12 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
         "VALUES (?, ?, ?, 'agent', ?, ?, ?)",
         (app_id, job_id, topic, body, to_id, stamp),
     )
+    if to_id is not None:  # the reply is about what the question was about
+        conn.execute("INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
+                     "SELECT ?, application_id, getjo_job_id, topic FROM agent_message_targets WHERE message_id = ? "
+                     "ORDER BY id", (cursor.lastrowid, to_id))
+    elif app_id is not None or job_id is not None or topic is not None:
+        _add_targets(conn, cursor.lastrowid, [(app_id, job_id, topic)])
     return cursor.lastrowid
 
 
@@ -1798,3 +1948,99 @@ def all_tailored_versions(conn: sqlite3.Connection) -> list[dict]:
         "SELECT v.application_id, a.company, v.version, v.file_path, v.created_at FROM tailored_cv_versions v "
         "JOIN applications a ON a.id = v.application_id ORDER BY v.created_at DESC, v.id DESC")
     return [dict(r) for r in rows]
+
+
+# --- job briefs -----------------------------------------------------------------------
+# A short structured brief per getjo job, written by the agent (/research) from the description.
+# The page shows it at the top of the panel instead of the raw description. Requests live in
+# brief_requests (one row per job); claims older than CLAIM_HOURS count as pending again.
+
+def check_no_pay(text: str, what: str) -> None:
+    """ValueError if `text` mentions pay (a currency sign, "80k", salary, bonus…): agent-written text never does."""
+    found = PAY_PATTERN.search(text)
+    if found:
+        raise ValueError(f"{what} must not mention pay (found {found.group(0)!r}); leave it out")
+
+
+def brief_facts(brief: str) -> str:
+    """The key facts line: the brief's first non-empty line."""
+    return next((line.strip() for line in brief.splitlines() if line.strip()), "")
+
+
+def save_brief(conn: sqlite3.Connection, job_id: str, text: str) -> None:
+    """Store (or replace) the brief of getjo job `job_id` and close its brief request. The text is
+    Markdown: the key facts line first (not a heading, at most MAX_FACTS characters), then sections;
+    at most MAX_BRIEF_WORDS words and never pay."""
+    brief = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    if not brief:
+        raise ValueError("the brief is empty")
+    facts = brief_facts(brief)
+    if facts.startswith("#"):
+        raise ValueError("start with the key facts line (e.g. \"hybrid 2 days · Python · Senior · London\"), not a heading")
+    if len(facts) > MAX_FACTS:
+        raise ValueError(f"the key facts line is {len(facts)} characters; keep it to {MAX_FACTS}")
+    words = len(brief.split())
+    if words > MAX_BRIEF_WORDS:
+        raise ValueError(f"the brief has {words} words; keep it to {MAX_BRIEF_WORDS}")
+    check_no_pay(brief, "the brief")
+    stamp = now_iso()
+    with conn:
+        conn.execute("INSERT INTO job_briefs (getjo_job_id, brief, updated_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT(getjo_job_id) DO UPDATE SET brief = excluded.brief, updated_at = excluded.updated_at",
+                     (job_id, brief, stamp))
+        conn.execute("UPDATE brief_requests SET status = 'done', done_at = ? WHERE getjo_job_id = ? "
+                     "AND status IN ('pending', 'claimed')", (stamp, job_id))
+
+
+def job_briefs(conn: sqlite3.Connection, job_ids: set[str] | None = None) -> dict[str, dict]:
+    """Briefs by getjo job id (all, or those in `job_ids`): brief, facts (its first line), updated_at."""
+    rows = conn.execute("SELECT getjo_job_id, brief, updated_at FROM job_briefs")
+    return {r[0]: {"brief": r[1], "facts": brief_facts(r[1]), "updated_at": r[2]}
+            for r in rows if job_ids is None or r[0] in job_ids}
+
+
+def queue_brief(conn: sqlite3.Connection, job_id: str, force: bool = False) -> bool:
+    """Queue a brief for getjo job `job_id` (Write brief, Redo, an opened panel). False when one is
+    already open, so a double click never queues twice."""
+    stamp = now_iso()
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO brief_requests (getjo_job_id, status, force, requested_at) VALUES (?, 'pending', ?, ?) "
+            "ON CONFLICT(getjo_job_id) DO UPDATE SET status = 'pending', force = excluded.force, "
+            "requested_at = excluded.requested_at, claimed_at = NULL, done_at = NULL "
+            "WHERE brief_requests.status = 'done' OR (brief_requests.status = 'claimed' AND brief_requests.claimed_at < ?)",
+            (job_id, int(force), stamp, _claim_cutoff()))
+    return cursor.rowcount == 1
+
+
+def queue_missing_briefs(conn: sqlite3.Connection, job_ids: list[str]) -> list[str]:
+    """Queue a brief for each job in `job_ids` that has neither a brief nor a request (ever): the
+    background queue for new offers. Returns the ids queued now."""
+    have = set(job_briefs(conn)) | {r[0] for r in conn.execute("SELECT getjo_job_id FROM brief_requests")}
+    added = [j for j in dict.fromkeys(job_ids) if j not in have]
+    stamp = now_iso()
+    with conn:
+        conn.executemany("INSERT OR IGNORE INTO brief_requests (getjo_job_id, requested_at) VALUES (?, ?)",
+                         [(j, stamp) for j in added])
+    return added
+
+
+def open_briefs(conn: sqlite3.Connection, job_id: str | None = None) -> list[dict]:
+    """Brief requests not done, oldest first (or only `job_id`'s): getjo_job_id, force, requested_at and
+    `claimed` (True for a live claim; a stale claim counts as pending)."""
+    rows = conn.execute(
+        "SELECT * FROM brief_requests WHERE status IN ('pending', 'claimed')"
+        + (" AND getjo_job_id = ?" if job_id else "") + " ORDER BY requested_at, getjo_job_id",
+        (job_id,) if job_id else ())
+    cutoff = _claim_cutoff()
+    return [{**dict(r), "claimed": r["status"] == "claimed" and (r["claimed_at"] or "") >= cutoff} for r in rows]
+
+
+def claim_brief(conn: sqlite3.Connection, job_id: str) -> bool:
+    """Take one brief request for this session; True if this caller won it."""
+    stamp = now_iso()
+    cursor = conn.execute(
+        "UPDATE brief_requests SET status = 'claimed', claimed_at = ? WHERE getjo_job_id = ? "
+        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, job_id, _claim_cutoff()))
+    conn.commit()
+    return cursor.rowcount == 1

@@ -116,6 +116,13 @@ def build_prep_db(path: Path, data: dict) -> None:
         for m in data.get("messages", []):  # an Agent thread: a question and the agent's reply
             msg_id = db.add_message(conn, m["application"], m["question"])
             db.reply_message(conn, m["application"], msg_id, m["reply"])
+        for b in data.get("briefs", []):  # job briefs the agent wrote
+            db.save_brief(conn, b["job"], b["brief"])
+        for c in data.get("comparisons", []):  # a question about several ticked jobs and its reply
+            targets = [(int(k[2:]), None, None) if k.startswith("a:") else (None, k[2:], None) if k.startswith("j:")
+                       else (None, None, k) for k in c["targets"]]
+            msg_id = db.add_compare(conn, c["question"], targets)
+            db.reply_message(conn, None, msg_id, c["reply"])
     finally:
         conn.close()
 

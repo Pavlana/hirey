@@ -1,14 +1,15 @@
 ---
 name: ask
-description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Agent box on the inter_prep dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), or a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
 
 The dashboard's Applications page has one **Agent** box under the pipeline list: a single
-conversation for the whole search. Each message is about one application (the job whose panel
-was open, shown as a tag), one job offer not yet tracked (a New offers panel was open), the master
-CV ("My CV": the My CV panel was open), or the whole search ("all jobs"). The panel has no forms for
+conversation for the whole search. The user ticks ☐ rows (and My CV) to say what a message is
+about, shown as "About:" chips: nothing ticked is the whole search ("all jobs"); one tick is one
+application, one job offer not yet tracked, or the master CV ("My CV"); 2 to 4 ticks are a
+**comparison** (a tag per target). The panel has no forms for
 editing the application: the user asks here, and this skill does the edit and answers. The
 dashboard only stores the message (status pending) and pings the standing assistant; the list,
 the panel and the conversation refresh on their own once the reply is in. Run every command from
@@ -32,6 +33,7 @@ fit files) unless the user's own words in the thread ask for it. When they do, s
   "About the master CV" below.
 - `/ask job MSG`: a message about a job offer that is not tracked yet (no application, no tasks,
   no CV fit file). The ping carries only the message id.
+- `/ask compare MSG`: a message about 2 to 4 ticked targets at once. See "A comparison" below.
 - `/ask` with nothing: `python -m prep.cli thread pending` lists the waiting messages ("about the
   whole search" for the general ones, "about job offer <id>" for a job). Answer each in turn,
   oldest first.
@@ -42,6 +44,7 @@ fit files) unless the user's own words in the thread ask for it. When they do, s
 python -m prep.cli thread show APP --claim            # a message about one application
 python -m prep.cli thread show --message MSG --claim  # a job offer (/ask job MSG), or any message
 python -m prep.cli thread show --cv --claim           # the master CV (/ask cv MSG)
+python -m prep.cli thread show --message MSG --claim  # a comparison (/ask compare MSG): this message only
 python -m prep.cli thread show --claim                # general: no application id
 ```
 
@@ -71,7 +74,26 @@ answering", leave that thread alone. The output contains:
 
 Answer every claimed message, oldest first, each with its own reply.
 
+Every job with a brief prints it (`job brief`: the key facts line and short sections). Read it
+first; the full description follows for anything it leaves out.
+
 ## 3. Decide what the message is
+
+**A comparison** (`/ask compare MSG`, "which fits me better?", "compare these", or any question
+about several ticked jobs): `thread show --message MSG --claim` prints each target in turn
+(application: stage, tier, brief, company and CV fit files with the fit score and gaps, job
+description; job offer: score, location, state, brief, description; My CV: its path), cv.md's path
+and the messages about any of them. Answer the question asked; when it is open-ended, give per
+target a short fit verdict against cv.md, then the main differences (office days, stack,
+seniority, team, process) and a one-line recommendation with the reason. Same rules as any
+answer: no invented facts, sources as plain URLs, never pay unless the user's own words ask. A
+change request in a comparison ("skip the second one") runs the matching command for that
+application. Reply with `thread reply --to MSG`; the reply is tagged with the same targets.
+
+**"Key facts" or a brief** ("write the key facts", "summarise this job", "redo the brief"): write
+the job brief as in the /research skill ("Job briefs": key facts line, short sections, no pay) and
+save it with `python -m prep.cli brief save --job JOB_ID` (or `brief save APP`), then reply in one
+line that the brief is at the top of the panel.
 
 **"What needs me?"** ("which tasks need my review", "what should I do next", "what's due"):
 

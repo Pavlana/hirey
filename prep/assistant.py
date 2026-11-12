@@ -3,7 +3,8 @@
 With `assistant_task` set, each application with new research, CV fit or tailored CV requests is sent
 `/research <app id>`, and each new message in the Agent box `/ask <app id> <message id>` (or
 `/ask job <message id>` for a job offer not yet tracked, `/ask cv <message id>` for the master CV,
-`/ask general <message id>` for the whole search), through `dev3 message`, so that agent starts at once in a pane the user can watch. The
+`/ask compare <message id>` for a question about several ticked jobs, `/ask general <message id>`
+for the whole search), and new job briefs `/research briefs`, through `dev3 message`, so that agent starts at once in a pane the user can watch. The
 command is a fixed argument list built from database ids only (no shell, never form or message
 text). Any failure is logged and ignored: the work stays queued for the next session
 (SessionStart hook, /today).
@@ -57,10 +58,40 @@ def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: s
         about, subject = "job", "Question on a job offer"
     elif topic == "cv":
         about, subject = "cv", "Request about the master CV"
+    elif topic == "compare":
+        about, subject = "compare", "Question comparing several jobs"
     else:
         about, subject = "general", "Question on the whole search"
     return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
             "--subject", subject, f"/ask {about} {int(message_id)}"]
+
+
+def brief_command(settings: Settings, count: int, dev3: str) -> list[str]:
+    """The `dev3 message` argument list for newly queued job briefs: a count and no job ids (`brief next`
+    lists them)."""
+    project = ["--project", settings.assistant_project] if settings.assistant_project else []
+    return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
+            "--subject", f"{int(count)} job brief{'s' if count != 1 else ''} queued", "/research briefs"]
+
+
+def notify_briefs(settings: Settings, count: int) -> int:
+    """Send `/research briefs`; returns 1 if delivered. Never raises."""
+    if not settings.assistant_task or count < 1:
+        return 0
+    dev3 = dev3_path(settings)
+    if dev3 is None:
+        log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); briefs stay queued")
+        return 0
+    return _send([brief_command(settings, count, dev3)])
+
+
+def notify_briefs_in_background(settings: Settings, count: int) -> threading.Thread | None:
+    """notify_briefs() in a daemon thread, so a page load never waits for dev3."""
+    if not settings.assistant_task or count < 1:
+        return None
+    thread = threading.Thread(target=notify_briefs, args=(settings, count), daemon=True)
+    thread.start()
+    return thread
 
 
 def notify(settings: Settings, requests: list[dict]) -> int:

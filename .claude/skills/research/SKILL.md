@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks and tailored CVs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), and save the results locally. Use when the user types /research [application id], when /today or the session-start note says agent work is pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks, tailored CVs and job briefs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research
@@ -28,6 +28,36 @@ Run every command from the repo root.
 
 If another session has already claimed the work, leave it alone.
 
+## Job briefs (`/research briefs`)
+
+The dashboard queues a brief for every new offer scored at least `brief_auto_min_score` (8), for
+any other offer when its panel is first opened, and when the Write brief / Redo brief button is
+pressed. The standing assistant gets `/research briefs` (a count, no ids).
+
+1. `python -m prep.cli brief next` claims the oldest waiting brief and prints the job, the format
+   and the description from getjo.
+2. Write the brief from the description only (no web search needed) and save it:
+
+   ```bash
+   python -m prep.cli brief save --job JOB_ID <<'BRIEF'
+   hybrid 2 days · Python · LLM APIs · Senior · London
+   ## Summary
+   …
+   BRIEF
+   ```
+
+3. Repeat until it prints "Nothing pending". Reply with one line: how many briefs were written.
+
+The brief is what the user reads to decide Interested or Skip, so it is short and exact:
+- The first line is the **key facts**: office days or remote, the 2–3 main skills, seniority,
+  location, separated by " · ". No heading before it.
+- Then `## Summary` (one line), `## Must-haves`, `## Nice-to-haves`, `## Where & terms`
+  (location, office days, seniority, contract), `## Team & product`, `## Interview process` (only
+  if the posting states it) and `## Red flags / notable` (only if there are any). Bullets of a few
+  words each, in the posting's terms; nothing the posting does not say.
+- At most 300 words. **No pay**: no salary, bonus, equity or currency, even when the posting
+  states them; `brief save` refuses them.
+
 ## Company research → `companies/<slug>.md` (path printed by `research next`)
 
 The packet decides whether to research:
@@ -42,6 +72,10 @@ The packet decides whether to research:
   - interview process (public candidate write-ups)
   - recent news (the last 12 months)
   - London presence and remote policy
+
+  When the packet has a "Job brief" step (a tracked job with no brief yet, or a Redo), write the
+  brief from the job description as in "Job briefs" above and save it with the printed
+  `brief save` command.
 
 Write the file like this. The `+++` block is TOML and becomes the summary in prep.db; the
 Markdown after it is free text:
