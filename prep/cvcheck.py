@@ -37,6 +37,12 @@ PLACEHOLDERS = (
     (re.compile(r"<[^<>\n]{1,40}>|\{\{[^}]*\}\}"), "a template placeholder"),
     (re.compile(r"\?\?"), "a question left in the text"),
 )
+# Pay: money and "k" figures, and wording that only ever means pay. A pay word within PAY_NEAR
+# characters of a number blocks; a figure cv.md and the facts bank do not have asks for a look.
+FIGURE = re.compile(r"[£$€¥]\s?\d[\d,.]*(?:\s?(?:k|m|bn|million|billion)\b)?|\b\d+(?:[.,]\d+)?\s?k\b", re.IGNORECASE)
+PAY_WORDS = re.compile(r"\b(?:salary|salaries|compensation|remuneration|per annum|p\.a\.|day rate|daily rate|"
+                       r"hourly rate|ote|bonus|base pay|pay rate|rate of pay|expected pay)", re.IGNORECASE)
+PAY_NEAR = 40
 YEAR = re.compile(r"\b(?:19[5-9]\d|20\d\d)\b")
 RANGE = re.compile(r"\b((?:19|20)\d\d)\s*(?:–|—|-|to)\s*((?:19|20)\d\d|present|now|current|today)\b", re.IGNORECASE)
 
@@ -125,11 +131,29 @@ def check_placeholders(lines: list[tuple[int, str]]) -> list[dict]:
     return out
 
 
-def check_pay(lines: list[tuple[int, str]], master: str | None) -> list[dict]:
-    """A line that mentions pay, unless it is the user's own line from cv.md. The line is never quoted."""
+def _figure(value: str) -> str:
+    return re.sub(r"[\s,]", "", value.lower())
+
+
+def check_pay(lines: list[tuple[int, str]], master: str | None, sources: str | None) -> list[dict]:
+    """Pay in lines the agent wrote (the user's own lines from cv.md are left alone); the line is never
+    quoted. Block: clear pay wording (salary, per annum, day rate…) next to a number. Look: a money
+    or "k" figure that neither cv.md nor the facts bank (`sources`) has, or other pay words."""
     own = {line.strip() for line in (master or "").splitlines()}
-    return [_finding("pay", "block", f"Line {n} mentions pay; take it out", n)
-            for n, line in lines if db.PAY_PATTERN.search(line) and line.strip() not in own]
+    known = {_figure(f) for f in FIGURE.findall(sources or "")}
+    out = []
+    for n, line in lines:
+        if line.strip() in own:
+            continue
+        if any(re.search(r"\d", line[max(0, m.start() - PAY_NEAR):m.end() + PAY_NEAR])
+               for m in PAY_WORDS.finditer(line)):
+            out.append(_finding("pay", "block", f"Line {n} states pay; take it out", n))
+        elif any(_figure(f) not in known for f in FIGURE.findall(line)):
+            out.append(_finding("pay", "look", f"Line {n} has a figure (a currency or \"k\" amount) that is not in "
+                                "cv.md or the facts bank; check it is true and not pay", n))
+        elif db.PAY_PATTERN.search(FIGURE.sub("", line)):
+            out.append(_finding("pay", "look", f"Line {n} uses a pay word; check it is not about pay", n))
+    return out
 
 
 def check_dates(lines: list[tuple[int, str]], sources: str | None, this_year: int) -> list[dict]:
@@ -353,7 +377,7 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
     lines = body_lines(text)
     sources = "\n".join(t for t in (master, facts) if t) or None
     findings = (check_pages(pages) + check_contacts(lines, master) + check_placeholders(lines)
-                + check_pay(lines, master) + check_dates(lines, sources if master else None, this_year)
+                + check_pay(lines, master, sources) + check_dates(lines, sources if master else None, this_year)
                 + check_companies(lines, company, others, sources) + check_keywords(lines, front_matter(text))
                 + check_title(lines, role) + check_style(lines, master))
     return sorted(findings, key=lambda f: (f["line"] is not None, f["line"] or 0))

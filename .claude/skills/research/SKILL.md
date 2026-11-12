@@ -233,7 +233,8 @@ NOTE
 Each save records the file `tailor path` printed as the next version (v1, v2, …) and makes its
 PDF (`CV_….pdf` beside it, shown as PDF in the panel). Over two pages: save a shorter version
 right away. "no PDF: …" (WeasyPrint not reachable) leaves the save valid: say so in one line;
-`python -m prep.cli tailor pdf APP` makes it later. The save also prints the automatic check
+`python -m prep.cli tailor pdf APP` makes it later. `python -m prep.cli tailor check APP` checks a
+version again without WeasyPrint. The save also prints the automatic check
 ("Check: Ready", "Look at these lines" or "Blocked", with the flagged lines; the panel shows it
 too). Blocked: fix those lines in a new version right away (`tailor path APP --copy`, edit,
 `tailor save`). Look at these lines: fix what is wrong; leave what is right (a date from the

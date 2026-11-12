@@ -333,8 +333,11 @@
    no AI: the PDF has at most `cvpdf.MAX_PAGES` pages (no PDF: page count unknown); an email and a
    link are there and every email, link and phone in cv.md's header (the lines before the first
    `##`) is kept; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
-   lorem ipsum, `??`; a `<https://…>` autolink is a look, since the PDF prints its brackets); no pay (`db.PAY_PATTERN`, unless the line is the user's own line from cv.md;
-   the line is never quoted); dates (a range that runs backwards, a future year, a year that
+   lorem ipsum, `??`; a `<https://…>` autolink is a look, since the PDF prints its brackets); pay, in lines other than the user's own from cv.md and never quoted:
+   clear pay wording (salary, compensation, per annum, day rate, OTE, bonus…: `cvcheck.PAY_WORDS`)
+   within `cvcheck.PAY_NEAR` characters of a number blocks, a money or "k" figure that neither
+   cv.md nor the facts bank has is a look (so "$2M" or "10k users" kept from cv.md on a reworded
+   line passes), and another word of `db.PAY_PATTERN` (pay, paid) is a look; dates (a range that runs backwards, a future year, a year that
    neither cv.md nor the facts bank `private_dir/cv-facts.md` mentions: tailoring never changes
    dates); no other application's company name (legal suffixes dropped, names in cv.md or the
    facts bank, such as a past employer or a tool, left out); the job's must-have terms (the file's
@@ -354,7 +357,9 @@
    verdict out again from all of them: a later checker (AI) adds its own source to the same row
    and verdict. The CLI prints the verdict, flagged lines and changes, and logs only the verdict
    and counts; a failed check prints "no check: …" and never undoes the save. `tailor pdf` checks
-   the version again with the new page count. The Tailored CV card shows the verdict badge beside
+   the version again with the new page count; `tailor check APP [--version N]` checks it again
+   without WeasyPrint, the page count read from its existing PDF (`cvpdf.page_count`: page objects
+   counted in the file and its Flate-compressed object streams; no PDF is a look as before). The Tailored CV card shows the verdict badge beside
    the latest version's PDF link, its flagged lines and the changes; a version saved before checks
    existed reads "not checked yet".
 17. Mark applied and Skip. The panel's two direct actions, both only while the application is

@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from prep import cvcheck, db, privacy, research
+from prep import cvcheck, cvpdf, db, privacy, research
 from tests.helpers import IsolatedTestCase
 from tests.test_research import write
 from tests.test_web import TODAY, WebTestCase
@@ -87,6 +87,25 @@ class RulesTest(IsolatedTestCase):
         self.assertNotIn("90", f["message"])
         own = MASTER.replace("- Ran the on-call rotation.", "- Saved $2M in cloud spend")
         self.assertEqual(run_check(FRONT + own, master=own), [], "the user's own line from cv.md")
+        for line in ("- Day rate: 650", "- Expected compensation around 90k", "- £550 per annum"):
+            with self.subTest(line=line):
+                [f] = run_check(CLEAN.replace("- Ran the on-call rotation.", line))
+                self.assertEqual((f["severity"], f["text"]), ("block", ""))
+
+    def test_figures_from_cv_md_or_the_facts_bank_pass_on_reworded_lines(self) -> None:
+        own = MASTER.replace("- Ran the on-call rotation.", "- Cut cloud spend by $2M across 10k users.")
+        reworded = FRONT + own.replace("- Cut cloud spend by $2M across 10k users.",
+                                       "- Saved $2M a year in cloud spend for 10k users.")
+        self.assertEqual(run_check(reworded, master=own), [])
+        new = reworded.replace("10k users", "12k users")
+        [f] = run_check(new, master=own)
+        self.assertEqual((f["check"], f["severity"], f["text"]), ("pay", "look", ""))
+        self.assertNotIn("12k", f["message"])
+        self.assertEqual(run_check(new, master=own, facts="The platform served 12k users."), [], "the facts bank counts")
+        paid = CLEAN.replace("- Ran the on-call rotation.", "- Paid on-call rotation.")
+        [f] = run_check(paid)
+        line = paid.splitlines().index("- Paid on-call rotation.") + 1
+        self.assertEqual((f["severity"], f["message"]), ("look", f"Line {line} uses a pay word; check it is not about pay"))
 
     def test_dates(self) -> None:
         text = CLEAN.replace("2019–2024", "2024–2019")
@@ -225,7 +244,8 @@ class CliTest(IsolatedTestCase):
         self.file = research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 1)
 
     def save(self, pages: int | None) -> str:
-        pdf = mock.patch("prep.cvpdf.write_pdf", return_value=(self.file.with_suffix(".pdf"), pages))
+        pdf = mock.patch("prep.cvpdf.write_pdf", return_value=(self.file.with_suffix(".pdf"), pages)) if pages else \
+            mock.patch("prep.cvpdf.write_pdf", side_effect=cvpdf.PdfUnavailable("no WeasyPrint"))
         with pdf, mock.patch("sys.stdin", io.StringIO("note")):
             return self.run_cli("tailor", "save", str(self.app))[1]
 
@@ -241,7 +261,7 @@ class CliTest(IsolatedTestCase):
         self.assertIn("  Check: Ready\n", out, "tailor pdf checks again with the new page count")
 
     def test_a_failed_check_never_undoes_the_save_and_nothing_is_logged(self) -> None:
-        write(self.file, CLEAN.replace("- Ran the on-call rotation.", "- Wants £90,000"))
+        write(self.file, CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £90,000"))
         with self.assertLogs("prep", level="INFO") as logs:
             out = self.save(pages=1)
         self.assertIn("Check: Blocked", out)
@@ -252,6 +272,32 @@ class CliTest(IsolatedTestCase):
             out = self.save(pages=1)
         self.assertIn("Saved tailored CV v2", out)
         self.assertIn("no check: OSError", out)
+
+
+class CheckCommandTest(CliTest):
+    def test_check_again_without_weasyprint(self) -> None:
+        write(self.file, CLEAN)
+        self.save(pages=None)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual(db.cv_check(conn, self.app, 1)["verdict"], "look", "no PDF yet")
+        with mock.patch("prep.cvpdf.write_pdf", side_effect=AssertionError("never renders")):
+            out = self.run_cli("tailor", "check", str(self.app))[1]
+            self.assertIn("v1 (" + self.file.name + f") for #{self.app}: no PDF\n  Check: Look at these lines", out)
+            with mock.patch("prep.cvpdf.page_count", return_value=2):
+                out = self.run_cli("tailor", "check", str(self.app), "--version", "1")[1]
+        self.assertIn("PDF 2 pages\n  Check: Ready\n", out)
+        code, _, err = self.run_cli("tailor", "check", str(self.app), "--version", "5")
+        self.assertEqual((code, "no tailored CV v5" in err), (2, True))
+
+    def test_page_count_reads_compressed_object_streams(self) -> None:
+        import zlib
+        pages = b"<< /Type /Page /Parent 2 0 R >> << /Type /Page >>"
+        pdf = self.tmp / "made-up.pdf"
+        pdf.write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Pages /Count 3 >> endobj\n2 0 obj << /Type /Page >> endobj\n"
+                        b"3 0 obj << /Type /ObjStm /Filter /FlateDecode >>\nstream\n" + zlib.compress(pages)
+                        + b"\nendstream\nendobj\n")
+        self.assertEqual(cvpdf.page_count(pdf), 3)
+        self.assertIsNone(cvpdf.page_count(self.tmp / "missing.pdf"))
 
 
 class PanelTest(WebTestCase):

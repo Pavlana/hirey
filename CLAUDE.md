@@ -114,6 +114,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
+  `tailor check APP [--version N]` (checks a version again without WeasyPrint);
   `cv sent APP FILE_NAME`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
