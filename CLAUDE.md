@@ -74,7 +74,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
              assistant.py (optional dev3 message to a standing agent),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, stage/, task/, research/, ask/ — each SKILL.md calls python -m prep.cli <command>
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/, debrief/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
@@ -96,6 +96,9 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Practice sessions and gaps: `python -m prep.cli session add --kind mock|real [--app ID] [--stage S]
   [--score AREA=N ...] [--file F] [--gap TEXT ...]`, `session list`, `gap add|list|close`
   (each named gap gets one drill task; closing a gap completes it)
+- Debrief (used by /debrief): `python -m prep.cli debrief --kind real|mock [--app ID] [--stage S]
+  [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript`
+  (transcript on stdin, saved under `private_dir/sessions/`)
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then
   `PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or

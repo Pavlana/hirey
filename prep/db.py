@@ -42,6 +42,8 @@ DECISION_LABELS = ("interested", "applied", "skipped")
 STATUS_LABELS = {"to_apply": "interested", "technical": "coding interview", "final": "company interview"}
 # Stages with an interview date: their tasks are due the day before it (stage_tasks).
 INTERVIEW_STAGES = ("recruiter_call", "technical", "system_design", "final")
+# The task a closed application gets; a recorded debrief completes it (record_debrief).
+DEBRIEF_TASK = "Debrief — what to improve"
 # First tasks for an application entering a stage: (title, kind, days until due, or None for undated).
 # For INTERVIEW_STAGES the days apply only when no interview date is given.
 STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
@@ -52,8 +54,8 @@ STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
     "system_design": (("System design practice", "drill", 2),),
     "final": (("Prepare stories, company values, questions to ask", "prep", 2),),
     "offer": (("Review the offer", "admin", 2),),
-    "rejected": (("Debrief — what to improve", "prep", 3),),
-    "no_response": (("Debrief — what to improve", "prep", 3),),
+    "rejected": ((DEBRIEF_TASK, "prep", 3),),
+    "no_response": ((DEBRIEF_TASK, "prep", 3),),
 }
 # Auto tasks earlier versions created: company research and the CV fit (the agent's job now) and
 # Apply (+3 on entering Interested, replaced by REVIEW_TASK). Kept only so _backfill_task_stages
@@ -1476,6 +1478,61 @@ def record_session(conn: sqlite3.Connection, kind: str, day: str | None = None, 
     conn.commit()
     found = add_gap_drills(conn, gaps or [], cursor.lastrowid, application_id, due_date, day)
     return {"session_id": cursor.lastrowid, **found}
+
+
+
+def record_debrief(conn: sqlite3.Connection, kind: str, application_id: int | None = None, day: str | None = None,
+                   stage: str | None = None, questions: str | None = None, went_well: str | None = None,
+                   to_improve: str | None = None, scores: dict[str, int] | None = None,
+                   file_path: str | None = None, gaps: list[str] | None = None,
+                   due_date: str | None = None) -> dict:
+    """Record a debrief: for a real interview, its interviews row (questions, went well, to improve),
+    then the session with its gaps and drill tasks (record_session), then the application's open
+    DEBRIEF_TASK is completed. The interviews row /stage stored for the same stage and date is filled
+    rather than duplicated; no task dates move. A mock (done elsewhere) has no interviews row: its notes
+    stay in the transcript file. The stage defaults to the application's when that is an interview
+    stage. Everything is checked before the first write. Returns record_session's result with
+    "interview_id" (None for a mock) and "debrief_tasks" (ids completed)."""
+    day = day or today_iso()
+    _check("kind", kind, SESSION_KINDS)
+    _check_date("date", day)
+    _check_date("due_date", due_date)
+    _check_scores(scores)
+    app = None
+    if application_id is not None:
+        app = get_application(conn, application_id)
+        if app is None:
+            raise LookupError(f"no application with id {application_id}")
+    if kind == "real" and app is None:
+        raise ValueError("a real interview debrief needs its application")
+    if stage is None and app is not None and app["status"] in INTERVIEW_STAGES:
+        stage = app["status"]
+    _check("stage", stage, INTERVIEW_STAGES)
+    interview_id = None
+    if kind == "real":
+        row = conn.execute(
+            """
+            SELECT id FROM interviews WHERE application_id = ? AND stage IS ? AND date = ?
+            AND questions IS NULL AND went_well IS NULL AND to_improve IS NULL ORDER BY id DESC LIMIT 1
+            """,
+            (application_id, stage, day),
+        ).fetchone()
+        if row is None:
+            interview_id = add_interview(conn, application_id, day, stage, questions, went_well, to_improve)
+        else:
+            interview_id = row["id"]
+            conn.execute("UPDATE interviews SET questions = ?, went_well = ?, to_improve = ? WHERE id = ?",
+                         (questions, went_well, to_improve, interview_id))
+            conn.commit()
+    found = record_session(conn, kind, day, application_id, stage, scores, file_path, gaps, due_date)
+    debrief_tasks = []
+    if application_id is not None:
+        debrief_tasks = [r["id"] for r in conn.execute(
+            "SELECT id FROM tasks WHERE application_id = ? AND title = ? AND status = 'todo'",
+            (application_id, DEBRIEF_TASK))]
+        for task_id in debrief_tasks:
+            complete_task(conn, task_id)
+    return {**found, "interview_id": interview_id, "debrief_tasks": debrief_tasks}
 
 
 def get_session(conn: sqlite3.Connection, session_id: int) -> dict | None:
