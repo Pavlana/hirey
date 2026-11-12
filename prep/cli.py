@@ -15,6 +15,8 @@
     python -m prep.cli session add --kind mock|real [--app ID] [--stage S] [--date DATE] [--score AREA=N ...]
                                    [--file PATH] [--gap TEXT ...] [--due DATE]   (one drill task per gap)
     python -m prep.cli session list
+    python -m prep.cli debrief --kind real|mock [--app ID] [--stage S] [--date DATE] [--questions T]
+        [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] [--transcript < FILE]
     python -m prep.cli gap add TEXT ... [--session ID] [--app ID] [--due DATE]   (one drill task per gap)
     python -m prep.cli gap list [--all | --closed]
     python -m prep.cli gap close GAP_ID                    (its open drill tasks are marked done)
@@ -502,6 +504,50 @@ def cmd_session(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         _print_drills(conn, found)
     elif args.session_cmd == "list":
         print("\n".join(_session_line(s) for s in db.list_sessions(conn)) or "no sessions")
+    return 0
+
+
+def _debrief_file(settings: Settings, conn: sqlite3.Connection, args: argparse.Namespace) -> Path:
+    """A new file under private_dir/sessions/ for the transcript: DATE-COMPANY-STAGE-debrief.md, with
+    -2, -3, ... when the name is taken, so nothing is overwritten."""
+    app = db.get_application(conn, args.app) if args.app is not None else None
+    who = db.company_slug(app["company"]) if app else args.kind
+    stage = args.stage or (app["status"] if app and app["status"] in db.INTERVIEW_STAGES else args.kind)
+    stem = f"{args.date or db.today_iso()}-{who}-{stage.replace('_', '-')}-debrief"
+    folder = Path(_session_file(settings, "x")).parent
+    path, n = folder / f"{stem}.md", 1
+    while path.exists():
+        n += 1
+        path = folder / f"{stem}-{n}.md"
+    return path
+
+
+def cmd_debrief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    path = None
+    if args.transcript:
+        text = sys.stdin.read()
+        if not text.strip():
+            raise ValueError("--transcript: nothing on stdin")
+        path = _debrief_file(settings, conn, args)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("x", encoding="utf-8") as f:
+            f.write(text)
+    try:
+        found = db.record_debrief(conn, args.kind, args.app, args.date, args.stage, args.questions, args.went_well,
+                                  args.to_improve, dict(args.score), str(path) if path else None, args.gap, args.due)
+    except Exception:
+        if path:
+            path.unlink(missing_ok=True)  # nothing recorded, so no orphan transcript
+        raise
+    log.info("debrief: session %s, %s new gaps", found["session_id"], len(found["new_gaps"]))  # never the text
+    if found["interview_id"]:
+        print(f"Interview #{found['interview_id']} notes saved")
+    print(f"Recorded session {_session_line(db.get_session(conn, found['session_id']))}")
+    if path:
+        print(f"  transcript: {path}")
+    _print_drills(conn, found)
+    if found["debrief_tasks"]:
+        print(f"  done: {db.DEBRIEF_TASK}")
     return 0
 
 
@@ -1513,6 +1559,22 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
     ssub.add_parser("list", help="every session, newest first")
     p.set_defaults(func=cmd_session)
+
+    p = sub.add_parser("debrief", help="record a real interview or a mock done elsewhere: notes, session, gaps")
+    p.add_argument("--kind", required=True, choices=db.SESSION_KINDS)
+    p.add_argument("--app", type=int, help="related application id (required for --kind real)")
+    p.add_argument("--stage", choices=db.INTERVIEW_STAGES, help="default: the application's, if an interview stage")
+    p.add_argument("--date", type=parse_day, help="the interview's date (default today)")
+    p.add_argument("--questions", help="questions asked (real: stored in interviews)")
+    p.add_argument("--went-well", help="what went well (real: stored in interviews)")
+    p.add_argument("--to-improve", help="what to improve (real: stored in interviews)")
+    p.add_argument("--score", type=_score, action="append", default=[], metavar="AREA=N",
+                   help="a 1-5 score for one area; repeat per area")
+    p.add_argument("--gap", action="append", default=[], help="a weakness named; repeat per gap")
+    p.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
+    p.add_argument("--transcript", action="store_true",
+                   help="read the transcript or notes on stdin; saved under private_dir/sessions/")
+    p.set_defaults(func=cmd_debrief)
 
     p = sub.add_parser("gap", help="gaps and their drill tasks")
     gsub = p.add_subparsers(dest="gap_cmd", required=True)

@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from prep import db
 from tests.helpers import IsolatedTestCase
@@ -180,6 +181,100 @@ class SessionCliTest(IsolatedTestCase):
         self.assertEqual(code, 2)
         code, _, err = self.run_cli("gap", "close", "42")
         self.assertEqual(code, 2)
+        with closing_db(self.prep_db) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
+
+
+class DebriefDbTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conn = db.connect(Path(self._tmp.name) / "prep.db")
+        self.addCleanup(self.conn.close)
+        self.app = db.add_application(self.conn, "Initech", "Engineer", status="applied")
+
+    def count(self, table: str) -> int:
+        return self.conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+
+    def test_real_debrief_fills_the_interview_stage_stored(self) -> None:
+        db.move_application(self.conn, self.app, "technical", interview_date="2026-11-10", today="2026-11-01")
+        due_before = {t["id"]: t["due_date"] for t in db.list_tasks(self.conn, "todo")}
+        found = db.record_debrief(self.conn, "real", self.app, "2026-11-10", None, "Two-sum; LRU cache",
+                                  "Clear tests", "Talk while coding", {"coding": 3}, None, ["LRU cache"])
+        [row] = [dict(r) for r in self.conn.execute("SELECT * FROM interviews")]
+        self.assertEqual(row["id"], found["interview_id"])
+        self.assertEqual((row["stage"], row["questions"], row["went_well"], row["to_improve"]),
+                         ("technical", "Two-sum; LRU cache", "Clear tests", "Talk while coding"))
+        session = db.get_session(self.conn, found["session_id"])
+        self.assertEqual((session["kind"], session["stage"], session["scores"]), ("real", "technical", {"coding": 3}))
+        [gap_id] = found["new_gaps"]
+        self.assertEqual(self.conn.execute("SELECT session FROM gaps WHERE id = ?", (gap_id,)).fetchone()[0], "real")
+        [drill] = found["tasks"]
+        self.assertEqual(db.get_task(self.conn, drill)["title"], "Drill: LRU cache")
+        for task_id, due in due_before.items():  # a debrief moves no task dates
+            self.assertEqual(db.get_task(self.conn, task_id)["due_date"], due)
+
+    def test_real_debrief_without_a_stored_interview_adds_one(self) -> None:
+        db.move_application(self.conn, self.app, "rejected", today="2026-11-12")
+        [debrief] = [t for t in db.list_tasks(self.conn, "todo") if t["title"] == db.DEBRIEF_TASK]
+        found = db.record_debrief(self.conn, "real", self.app, "2026-11-11", "final", None, None, "Stories too long",
+                                  gaps=["STAR stories"])
+        row = self.conn.execute("SELECT * FROM interviews WHERE id = ?", (found["interview_id"],)).fetchone()
+        self.assertEqual((row["date"], row["stage"], row["to_improve"]), ("2026-11-11", "final", "Stories too long"))
+        self.assertEqual(found["debrief_tasks"], [debrief["id"]])
+        self.assertEqual(db.get_task(self.conn, debrief["id"])["status"], "done")
+        self.assertEqual(len(found["tasks"]), 1)
+
+    def test_mock_debrief_has_no_interview_row(self) -> None:
+        found = db.record_debrief(self.conn, "mock", None, "2026-11-10", "system_design", gaps=["Sharding"])
+        self.assertIsNone(found["interview_id"])
+        self.assertEqual(self.count("interviews"), 0)
+        self.assertEqual((self.count("sessions"), len(found["new_gaps"]), len(found["tasks"])), (1, 1, 1))
+
+    def test_invalid_debrief_records_nothing(self) -> None:
+        with self.assertRaises(ValueError):
+            db.record_debrief(self.conn, "real", None, "2026-11-10", gaps=["x"])
+        with self.assertRaises(ValueError):
+            db.record_debrief(self.conn, "real", self.app, "2026-11-10", "technical", scores={"coding": 9})
+        with self.assertRaises(ValueError):
+            db.record_debrief(self.conn, "real", self.app, "2026-11-10", "offer")
+        with self.assertRaises(LookupError):
+            db.record_debrief(self.conn, "mock", 99)
+        self.assertEqual((self.count("interviews"), self.count("sessions"), self.count("gaps")), (0, 0, 0))
+
+
+class DebriefCliTest(IsolatedTestCase):
+    def debrief(self, stdin: str | None, *argv: str) -> tuple[int, str, str]:
+        with mock.patch("sys.stdin") as fake:
+            fake.read.return_value = stdin
+            return self.run_cli("debrief", *argv, *(("--transcript",) if stdin is not None else ()))
+
+    def test_debrief_saves_transcript_under_private_sessions(self) -> None:
+        with closing_db(self.prep_db) as conn:
+            app = db.add_application(conn, "Initech", "Engineer", status="technical")
+        argv = ("--kind", "real", "--app", str(app), "--date", "2026-11-10", "--questions", "LRU cache",
+                "--to-improve", "Pace", "--score", "coding=3", "--gap", "Talking while coding")
+        code, out, err = self.debrief("Q: design an LRU cache\nA: ...", *argv)
+        self.assertEqual(code, 0, err)
+        path = self.tmp / "private" / "sessions" / "2026-11-10-initech-technical-debrief.md"
+        self.assertEqual(path.read_text(encoding="utf-8"), "Q: design an LRU cache\nA: ...")
+        self.assertIn("notes saved", out)
+        self.assertIn("gaps: 1 (1 new)", out)
+        self.assertIn("[drill] Drill: Talking while coding", out)
+        code, out, err = self.debrief("second", *argv)  # same name taken: a new file, never overwritten
+        self.assertEqual(code, 0, err)
+        self.assertTrue(path.with_name(path.stem + "-2.md").exists())
+        with closing_db(self.prep_db) as conn:
+            self.assertEqual(db.list_sessions(conn)[1]["file_path"], str(path.resolve()))
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM interviews").fetchone()[0], 2)
+
+    def test_bad_debrief_writes_no_file_and_no_rows(self) -> None:
+        code, _, err = self.debrief("notes", "--kind", "real", "--gap", "x")
+        self.assertEqual(code, 2)
+        self.assertIn("needs its application", err)
+        code, _, err = self.debrief("", "--kind", "mock")
+        self.assertEqual(code, 2)
+        self.assertFalse(list((self.tmp / "private").rglob("*.md")))
         with closing_db(self.prep_db) as conn:
             self.assertEqual(conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0], 0)
 

@@ -35,7 +35,7 @@
         │                  │
  Claude Code skills    browser → http://localhost:8765
  /today /applied /task (127.0.0.1 only; kept running by launchd)
- /stage /research /ask
+ /stage /research /ask /debrief
 ```
 
 ## Data flow
@@ -389,7 +389,7 @@
    in full without it). With a brief, the facts line shows as chips, the sections through
    `render_markdown` (escaped), and the original behind Show original. `thread show` prints the
    brief for an application, a job offer and each target of a comparison.
-22. Practice sessions, gaps and drills (Phase 3 data layer; no skill or dashboard view yet).
+22. Practice sessions, gaps and drills (Phase 3 data layer; no dashboard view yet).
    `sessions` holds one row per practice session: date, kind (`db.SESSION_KINDS`: `mock`, `real`
    for a real interview debriefed), optional application and interview stage (`db.INTERVIEW_STAGES`),
    scores per area as a JSON object (`{"system design": 3}`, whole numbers 1–5) and the path of its
@@ -407,6 +407,20 @@
    same without a new session; `gap list [--all | --closed]` shows each gap with its open drill count;
    `gap close ID` (`db.close_gap`) closes the gap and marks its open tasks done. `session list`
    prints the sessions newest first. A session on an application blocks Undo Interested, as gaps do.
+23. Debriefs. `/debrief` turns a pasted or dictated transcript of a real interview, or of a mock done
+   elsewhere, into one `prep.cli debrief --kind real|mock [--app ID] [--stage S] [--date D]
+   [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] [--due D]
+   [--transcript]` call. `--transcript` reads stdin into a new file under `private_dir/sessions/`
+   (`DATE-COMPANY-STAGE-debrief.md`, `-2`, `-3`, ... when taken; removed again when nothing is
+   recorded). `db.record_debrief` checks every value first, then: for a real interview (an
+   application is required) it fills the questions, went well and to improve of the `interviews` row
+   `/stage` stored for the same stage and date, or adds one through `add_interview` (never
+   `set_interview_date`, so no task dates move); a mock has no `interviews` row (it is not an interview
+   with the company, and its date would count as one), its notes stay in the file. Then
+   `record_session` adds the session (kind `real` or `mock`; the stage defaults to the application's
+   when that is an interview stage) with its gaps and drill tasks (step 22), and the application's
+   open "Debrief — what to improve" task (`db.DEBRIEF_TASK`, added on Rejected and No response) is
+   completed. An outcome in the same text (next round, rejection) is recorded by `/stage`.
 
 ## Dashboard
 
