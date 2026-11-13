@@ -173,9 +173,11 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    prints the new file (`CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`). Every version is its own
    file and is kept; never edit an earlier version. Read `cv.md` for facts.
 2. Edit the new file only. Never edit `cv.md` here (it changes only through a My CV request, below). Never invent experience: rephrase, reorder and cut. A fact the user states in the thread
-   may go into the copy in their words; anything still unclear becomes a short question in the reply.
+   may go into the copy in their words, and is added as one bullet to the facts bank (`cv-facts.md`
+   in private_dir, or the `facts_file` setting; create it from `cv-facts.example.md` if missing) so
+   the AI check can trace it; anything still unclear becomes a short question in the reply.
    Follow the tailoring rules in `.claude/skills/research/SKILL.md` (length, structure, impact,
-   keyword coverage). Wording the user agrees for reuse, such as a career gap line, goes into
+   keyword coverage, the header from the facts bank's `## Contact` section). Wording the user agrees for reuse, such as a career gap line, goes into
    `cv-tailored/_style.md` (path in `thread show`) as well as the copy.
 3. Save it; the note on stdin is the reply to this message, saying in a few lines what changed:
 
@@ -189,7 +191,10 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    WARNING above two pages: shorten it in another version), checks it ("Check: Blocked" or "Look at
    these lines" with the flagged lines: fix a blocking line in another version; keep the front
    matter's `keywords` and `gaps` current, a term the user confirms moves from gaps into the text) and answers the
-   message, so do not also run `thread reply` for it. No pay in the copy or the note. "Make a PDF of v2" is
+   message, so do not also run `thread reply` for it. The save also queues the AI check
+   (grounding, fit, skim) of the new version: run it afterwards as a separate pass, as the
+   /research skill's "AI check of a tailored CV" says (`research next APP`, then a fresh subagent).
+   No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
 4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.
 5. "I sent v2" or a file name: `python -m prep.cli cv sent APP FILE_NAME` (see the table above).

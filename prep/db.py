@@ -69,8 +69,10 @@ REVIEW_TASK = ("Review research and apply", "apply", 2)
 AUTO_COMMENT = "auto: no reply in {days} days"
 # Agent work queued for an application (done by the /research skill, never by the dashboard).
 # tailor: a copy of cv.md tailored to this job (cv-tailored/), revised later through the thread (/ask).
-REQUEST_KINDS = ("research", "cv_fit", "tailor")
-REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": "Tailored CV"}
+# cv_eval: the AI check of the latest tailored version (grounding, fit, skim; prep/cveval.py), queued by
+# every tailor save and done in a separate pass from the one that wrote the CV.
+REQUEST_KINDS = ("research", "cv_fit", "tailor", "cv_eval")
+REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": "Tailored CV", "cv_eval": "AI CV check"}
 # The two kinds entering Interested queues and the Research / CV fit buttons handle; tailor is asked for on its own.
 RESEARCH_KINDS = ("research", "cv_fit")
 # claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
@@ -103,7 +105,7 @@ PAY_PATTERN = re.compile(r"[£$€¥]|\b\d+(?:[.,]\d+)?\s?k\b|\b(?:salary|salari
                          r"bonus|per annum)\b", re.IGNORECASE)
 # The automatic check of each tailored CV version (prep/cvcheck.py, `tailor save`): every finding is
 # "block" (must be fixed before sending) or "look" (read this line); the verdict follows from them.
-# A finding's source says which checker wrote it ("rules" now; AI checks add their own source).
+# A finding's source says which checker wrote it: "rules" (prep/cvcheck.py) or "ai" (prep/cveval.py).
 CHECK_VERDICTS = ("ready", "look", "blocked")
 CHECK_SEVERITIES = ("block", "look")
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
@@ -380,6 +382,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # carries it too. Interested moves these messages to the new application and keeps the id.
     # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
     "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT"},
+    # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
+    # NULL until the AI check of that version is saved.
+    "tailored_cv_checks": {"summary": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -1606,6 +1611,8 @@ def queue_request(conn: sqlite3.Connection, app_id: int, kind: str, force: bool 
     _check("kind", kind, REQUEST_KINDS)
     if get_application(conn, app_id) is None:
         raise LookupError(f"no application with id {app_id}")
+    if kind == "cv_eval" and tailored_cv(conn, app_id) is None:
+        raise LookupError(f"application {app_id} has no tailored CV to check")
     try:
         cursor = conn.execute(
             "INSERT INTO agent_requests (application_id, kind, force, requested_at) VALUES (?, ?, ?, ?)",
@@ -1773,7 +1780,8 @@ def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
 def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
                      reply_to: int | None = None) -> int:
     """Record a saved tailored CV for an application: version + 1 (a new tailored_cv_versions row; each
-    version is its own file and is kept), its open tailor request done, and
+    version is its own file and is kept), its open tailor request done, an AI check (cv_eval) queued
+    unless one is open already (it always checks the latest version), and
     `note` (what was done or changed, and any questions) posted in the thread as an agent message,
     all in one transaction. With `reply_to` (a revision asked for in the thread) the note answers
     that user message, as reply_message does. Returns the new version."""
@@ -1797,6 +1805,8 @@ def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note
             "AND status IN ('pending', 'claimed')",
             (stamp, app_id),
         )
+        conn.execute("INSERT OR IGNORE INTO agent_requests (application_id, kind, requested_at) VALUES (?, 'cv_eval', ?)",
+                     (app_id, stamp))
         _agent_message(conn, app_id, note, stamp, reply_to)
     return version
 
@@ -1820,11 +1830,11 @@ def check_verdict(findings: list[dict]) -> str:
 
 
 def save_cv_check(conn: sqlite3.Connection, app_id: int, version: int, source: str, findings: list[dict],
-                  changes: list[str] | None = None) -> str:
+                  changes: list[str] | None = None, summary: dict | None = None) -> str:
     """Store one checker's findings for a tailored CV version and return the verdict. Only the findings
     of `source` are replaced: those of other checkers stay (the rule checks write "rules"; an AI check
     calls this with its own source), and the verdict is worked out again from all of them. `changes`
-    (vs cv.md) replaces the stored list when given. Each finding: check, severity, line (or None),
+    (vs cv.md) and `summary` (the AI check's scores) replace the stored ones when given. Each finding: check, severity, line (or None),
     message, and optionally text (the line, never pay)."""
     if not any(v["version"] == version for v in tailored_versions(conn, app_id)):
         raise LookupError(f"no tailored CV v{version} on application {app_id}")
@@ -1839,11 +1849,35 @@ def save_cv_check(conn: sqlite3.Connection, app_id: int, version: int, source: s
         kept = [f for f in (old["findings"] if old else []) if f["source"] != source]
         merged = sorted(kept + clean, key=lambda f: (f["line"] is not None, f["line"] or 0))
         verdict = check_verdict(merged)
+        if summary is None and old:
+            summary = old["summary"]
         conn.execute("INSERT OR REPLACE INTO tailored_cv_checks (application_id, version, verdict, findings, changes, "
-                     "checked_at) VALUES (?, ?, ?, ?, ?, ?)",
+                     "checked_at, summary) VALUES (?, ?, ?, ?, ?, ?, ?)",
                      (app_id, version, verdict, json.dumps(merged),
-                      json.dumps(changes if changes is not None else (old["changes"] if old else [])), now_iso()))
+                      json.dumps(changes if changes is not None else (old["changes"] if old else [])), now_iso(),
+                      json.dumps(summary) if summary is not None else None))
     return verdict
+
+
+def save_cv_eval(conn: sqlite3.Connection, app_id: int, version: int, findings: list[dict], summary: dict) -> str:
+    """Store the AI check of a tailored CV version (source "ai", merged into its verdict) and return the
+    verdict. Its open cv_eval request is done only when `version` is still the latest: a version saved
+    while the check ran keeps the request open, so the newer one is checked too."""
+    verdict = save_cv_check(conn, app_id, version, "ai", findings, summary=summary)
+    current = tailored_cv(conn, app_id)
+    if current and current["version"] == version:
+        finish_requests(conn, [app_id], "cv_eval")
+    return verdict
+
+
+def eval_state(conn: sqlite3.Connection, app_id: int, check: dict | None) -> str:
+    """The AI check of the latest tailored version, whose stored check is `check`: "done" (its summary
+    is in), "pending" (a cv_eval request is open) or "none" (never asked, e.g. saved before AI checks)."""
+    if check and check.get("summary") is not None:
+        return "done"
+    found = conn.execute("SELECT 1 FROM agent_requests WHERE application_id = ? AND kind = 'cv_eval' "
+                         "AND status IN ('pending', 'claimed')", (app_id,)).fetchone()
+    return "pending" if found else "none"
 
 
 def cv_check(conn: sqlite3.Connection, app_id: int, version: int) -> dict | None:
@@ -1854,6 +1888,7 @@ def cv_check(conn: sqlite3.Connection, app_id: int, version: int) -> dict | None
         return None
     d = dict(row)
     d["findings"], d["changes"] = json.loads(d["findings"]), json.loads(d["changes"])
+    d["summary"] = json.loads(d["summary"]) if d.get("summary") else None
     return d
 
 

@@ -33,6 +33,11 @@ def dev3_path(settings: Settings) -> str | None:
     return shutil.which("dev3") or (str(DEFAULT_DEV3) if DEFAULT_DEV3.is_file() else None)
 
 
+def _subject(kinds: set[str]) -> str:
+    """Tailored CV or AI CV check when that is all that was queued, else Research."""
+    return {frozenset({"tailor"}): "Tailored CV", frozenset({"cv_eval"}): "AI CV check"}.get(frozenset(kinds), "Research")
+
+
 def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[str]]:
     """One `dev3 message` argument list per application in `requests` (dicts with application_id)."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
@@ -40,7 +45,7 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
     for r in requests:
         kinds.setdefault(int(r["application_id"]), set()).add(r.get("kind", "research"))
     return [[dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
-             "--subject", f"{'Tailored CV' if kinds[app_id] == {'tailor'} else 'Research'} queued for application {app_id}",
+             "--subject", f"{_subject(kinds[app_id])} queued for application {app_id}",
              f"/research {app_id}"]
             for app_id in sorted(kinds)]
 

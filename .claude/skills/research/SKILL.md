@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks, tailored CVs and job briefs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks, tailored CVs and job briefs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research
@@ -17,12 +17,13 @@ Run every command from the repo root.
    id, first run `python -m prep.cli research queue 12`. Add `--kind research` or
    `--kind cv_fit` for only one of them, and `--redo` to research again a profile that is
    still fresh.
-2. Follow the printed packet: company research, CV fit and/or tailored CV, in that order. Each
-   part names its file and the save command.
+2. Follow the printed packet: company research, CV fit, tailored CV and/or AI check of the tailored
+   CV, in that order. Each part names its file and the save command.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
    - company: one line on what it does and the tier set
    - CV fit: the score and the top gaps
    - tailored CV: the version saved and how many questions went to the thread
+   - AI check: the verdict and how many lines are flagged
    - when a save printed "both results in": the Interested application now has a "Review
      research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
@@ -178,6 +179,11 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 - **Plain wording**: write like the user, not like a model. No stock words (spearheaded,
   leveraged, passionate, results-driven, robust, seamless, innovative, …), no dashes inside
   sentences, vary the opening verbs, and keep the figures. The check flags these in rewritten lines.
+- **Header**: the name line and the contact line come from the facts bank's `## Contact` section
+  (`- Name:`, `- Email:`, `- Phone:`, `- Location:`, `- LinkedIn:`, `- GitHub:`,
+  `- Portfolio / website:`; the facts bank path is in the packet), using every field with a value;
+  a field that is empty or missing there comes from `cv.md`'s header. The check blocks a version
+  that drops one of these contacts.
 - **Agreed wording**: `cv-tailored/_style.md` (path in the packet) holds wording agreed in earlier
   threads, such as a one-line explanation of a career gap. Reuse it in every copy. On the first
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the
@@ -234,7 +240,8 @@ Each save records the file `tailor path` printed as the next version (v1, v2, �
 PDF (`CV_….pdf` beside it, shown as PDF in the panel). Over two pages: save a shorter version
 right away. "no PDF: …" (WeasyPrint not reachable) leaves the save valid: say so in one line;
 `python -m prep.cli tailor pdf APP` makes it later. `python -m prep.cli tailor check APP` checks a
-version again without WeasyPrint. The save also prints the automatic check
+version again without WeasyPrint. Every save also queues the AI check of the new version (next
+section); never run it in the pass that wrote the CV. The save also prints the automatic check
 ("Check: Ready", "Look at these lines" or "Blocked", with the flagged lines; the panel shows it
 too). Blocked: fix those lines in a new version right away (`tailor path APP --copy`, edit,
 `tailor save`). Look at these lines: fix what is wrong; leave what is right (a date from the
@@ -242,6 +249,63 @@ facts bank, a true fact) for the user. A Redo ("New
 from cv.md" in the panel) writes a new version from the current `cv.md`. Nothing is recorded as
 sent until the user says which file they sent (`python -m prep.cli cv sent APP FILE_NAME`, done
 by /ask).
+
+## AI check of a tailored CV → `cv-tailored/<version file>.eval.md`
+
+Every tailor save (here or a revision through /ask) queues it; `research next` prints its packet
+after the new version is saved, never while a new version is still being written. **Run it as a
+separate pass**: the user asked for this check to run in its own fresh subagent (Agent tool), so
+always spawn one, hand it only that packet and this section, and do not tell it what was tailored
+or why. A model that just wrote the CV does not judge its own claims
+well. The subagent reads the version file, `cv.md`, the facts bank (true facts not in cv.md;
+missing is fine), `_style.md` (wording agreed in the thread) and the job description, writes the
+file, and runs `python -m prep.cli tailor eval APP`.
+
+```
++++
+version = 2                    # the version in the packet
+checked_at = 2026-01-21
+fit_score = 4                  # the CV fit rubric (1 poor to 5 excellent) applied to this version
+skim_score = 3                 # the six-second skim, 1 to 5
+skim_why = "Title and the two most relevant roles are on top; skills come too late"
+
+[[claims]]                     # every claim changed or added against cv.md, one table each
+quote = "Built a deployment pipeline used by 12 teams"   # words copied exactly from the version
+source = "cv.md"               # cv.md, facts, style or none
+note = "Experience, second role, first bullet"           # where it comes from, or what is missing
+
+[[must_haves]]                 # each must-have requirement of the job
+term = "Kubernetes"            # in the posting's wording
+covered = true                 # stated truthfully in the summary or a recent bullet
++++
+
+Free notes (optional).
+```
+
+- **Grounding**: compare the version with `cv.md` line by line. Every reworded, moved-up or added
+  statement of fact (a skill, tool, number, date, title, scope, employer, achievement) is a claim.
+  Its source is `cv.md` when cv.md says the same or more, `facts` when only the facts bank says it,
+  `style` when it is wording agreed in `_style.md`, and `none` otherwise. A changed number, a
+  stronger title ("led" for "worked on", "Lead" for "Senior"), a wider scope or a skill that is only
+  in the job description is `none`. Each `none` blocks the verdict, so be exact but not petty:
+  pure rephrasing of the same fact is sourced. Quote the version's words exactly: they locate the
+  line, and `tailor eval` refuses an unsourced claim whose quote is not in the version. Agreed facts that are not in cv.md belong in the facts bank: tell the user so when one
+  is missing there.
+- **Fit**: the CV fit rubric (the CV fit section above) applied to this version against the job,
+  scored 1 to 5 without looking at the master CV's score; the code compares the two. List the
+  job's must-have requirements as covered or not.
+- **Skim**: look only at the top third of page one (name line, title, summary, first role). Does
+  a recruiter see in six seconds that this person fits this role? 5: the job's title and two or
+  three must-haves are there; 3: the right field but the role is not obvious; 1: it reads as a
+  different job. One line of why.
+- No pay anywhere in the file.
+
+`tailor eval` maps the file to findings with fixed rules (an unsourced claim blocks; a must-have
+not covered, unless the version's front matter already lists it under `keywords` or `gaps`, a fit
+below the master CV's, or a skim of 2 or less asks for a look), merges them into the version's
+verdict with the rule checks and prints it. A later version saved while the check ran is checked
+next. Blocked: write a fixed version (`tailor path APP --copy`) in the main pass and say which
+claims were removed or need a fact in the facts bank.
 
 ## Rules
 

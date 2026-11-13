@@ -7,8 +7,8 @@ in the version's .md file. The verdict follows from all findings (db.check_verdi
 at these lines, or Ready. The rules store their findings as source "rules" (db.save_cv_check); an AI
 check stores its own source on the same row and the verdict covers both.
 
-Dates and claims may come from cv.md or from the facts bank, private_dir/cv-facts.md (true facts
-not in the master CV). Findings may quote a CV line, but never one that mentions pay. None of this
+Dates and claims may come from cv.md or from the facts bank (setting facts_file, default
+private_dir/cv-facts.md: true facts not in the master CV). Findings may quote a CV line, but never one that mentions pay. None of this
 is logged.
 """
 
@@ -100,8 +100,31 @@ def check_pages(pages: int | None) -> list[dict]:
     return []
 
 
-def check_contacts(lines: list[tuple[int, str]], master: str | None) -> list[dict]:
-    """An email and a link in the CV, and every contact detail in cv.md's header kept."""
+def contact_section(facts: str | None) -> str:
+    """The values of the facts bank's `## Contact` section ("- Email: …" lines), empty ones skipped,
+    one per line. Tailored CV headers are built from it, falling back to cv.md's header."""
+    out, inside = [], False
+    for line in (facts or "").splitlines():
+        if line.startswith("#"):
+            inside = line.lstrip("#").strip().lower() == "contact"
+            continue
+        match = re.match(r"\s*[-*]\s*[^:]+:\s*(.*)$", line) if inside else None
+        if match and match.group(1).strip():
+            out.append(match.group(1).strip())
+    return "\n".join(out)
+
+
+def _field(contact: tuple[str, str]) -> str:
+    """Which header field a contact fills: email, phone, linkedin, github or link (any other site)."""
+    kind, value = contact
+    if kind != "link":
+        return kind
+    return next((site for site in ("linkedin", "github") if value.startswith(site + ".com")), "link")
+
+
+def check_contacts(lines: list[tuple[int, str]], master: str | None, facts: str | None = None) -> list[dict]:
+    """An email and a link in the CV, and every header contact kept: per field (email, phone, LinkedIn,
+    GitHub, other link) the facts bank's Contact section when it has that field, else cv.md's header."""
     body = "\n".join(line for _, line in lines)
     have = _contacts(body)
     out = []
@@ -109,10 +132,13 @@ def check_contacts(lines: list[tuple[int, str]], master: str | None) -> list[dic
         out.append(_finding("contacts", "block", "No email address"))
     if not any(kind == "link" for kind, _ in have):
         out.append(_finding("contacts", "look", "No link (LinkedIn, GitHub or a site)"))
-    if master:
-        header = "\n".join(line for _, line in _header(body_lines(master)))
-        for kind, value in sorted(_contacts(header) - have):
-            out.append(_finding("contacts", "block", f"The {kind} in cv.md is missing: {value}"))
+    bank = _contacts(contact_section(facts))
+    from_bank = {_field(c) for c in bank}
+    header = _contacts("\n".join(line for _, line in _header(body_lines(master)))) if master else set()
+    wanted = [(c, "the facts bank") for c in bank] + [(c, "cv.md") for c in header if _field(c) not in from_bank]
+    for (kind, value), source in sorted(wanted):
+        if (kind, value) not in have:
+            out.append(_finding("contacts", "block", f"The {kind} in {source} is missing: {value}"))
     return out
 
 
@@ -376,7 +402,7 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
     """Every rule finding for a tailored CV's text (front matter skipped), in line order."""
     lines = body_lines(text)
     sources = "\n".join(t for t in (master, facts) if t) or None
-    findings = (check_pages(pages) + check_contacts(lines, master) + check_placeholders(lines)
+    findings = (check_pages(pages) + check_contacts(lines, master, facts) + check_placeholders(lines)
                 + check_pay(lines, master, sources) + check_dates(lines, sources if master else None, this_year)
                 + check_companies(lines, company, others, sources) + check_keywords(lines, front_matter(text))
                 + check_title(lines, role) + check_style(lines, master))
@@ -384,16 +410,17 @@ def check(text: str, company: str, others: list[str], master: str | None, facts:
 
 
 def run(conn: sqlite3.Connection, private_dir: Path | None, app_id: int, version: int,
-        pages: int | None) -> dict:
+        pages: int | None, facts_path: Path | None = None) -> dict:
     """Check tailored version `version` of an application, store the rule findings and the changes,
-    and return the stored check (with the verdict). `pages`: the PDF's page count, None without a PDF."""
+    and return the stored check (with the verdict). `pages`: the PDF's page count, None without a PDF.
+    `facts_path`: the facts bank (config.facts_path), default private_dir/cv-facts.md."""
     app = db.get_application(conn, app_id)
     row = next((v for v in db.tailored_versions(conn, app_id) if v["version"] == version), None)
     if app is None or row is None:
         raise LookupError(f"no tailored CV v{version} on application {app_id}")
     text = Path(row["file_path"]).read_text(encoding="utf-8")
     master = cvfile.read_cv(private_dir) if private_dir else None
-    facts_path = facts_file(private_dir) if private_dir else None
+    facts_path = facts_path or (facts_file(private_dir) if private_dir else None)
     facts = facts_path.read_text(encoding="utf-8") if facts_path and facts_path.is_file() else None
     others = [a["company"] for a in db.list_applications(conn) if a["id"] != app_id]
     findings = check(text, app["company"], others, master, facts, pages, int(db.today_iso()[:4]), app["role"])

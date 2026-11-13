@@ -26,6 +26,8 @@ Keys:
     dev3_bin        optional absolute path to the dev3 CLI (default: found on PATH)
     pdf_python      optional absolute path to a Python that has WeasyPrint (a venv outside any
                     worktree), used for tailored CV PDFs when the running Python lacks it
+    facts_file      optional absolute path to the facts bank: true facts about the user not in cv.md,
+                    which tailored CV claims may trace to (default private_dir/cv-facts.md)
 
 An env var set to an empty string clears the assistant keys (CLEARABLE); for every other key an
 empty value is ignored. Relative paths are resolved against the repo root, never the current directory,
@@ -64,6 +66,7 @@ ENV_KEYS = {
     "assistant_project": "PREP_ASSISTANT_PROJECT",
     "dev3_bin": "PREP_DEV3_BIN",
     "pdf_python": "PREP_PDF_PYTHON",
+    "facts_file": "PREP_FACTS_FILE",
 }
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
 # on example data) never pings the standing assistant named in the settings file. Path and number
@@ -90,6 +93,7 @@ class Settings:
     assistant_project: str | None = None
     dev3_bin: Path | None = None
     pdf_python: Path | None = None
+    facts_file: Path | None = None
 
 
 def _resolve(value: str) -> Path:
@@ -140,7 +144,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "private_dir", "dev3_bin", "pdf_python"):
+    for key in ("getjo_db", "private_dir", "dev3_bin", "pdf_python", "facts_file"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -159,7 +163,15 @@ def load_settings(path: Path | None = None) -> Settings:
         assistant_project=_project(data.get("assistant_project")),
         dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,
         pdf_python=Path(data["pdf_python"]).expanduser() if data.get("pdf_python") else None,
+        facts_file=Path(data["facts_file"]).expanduser() if data.get("facts_file") else None,
     )
+
+
+def facts_path(settings: Settings) -> Path | None:
+    """The facts bank: `facts_file` when set, else private_dir/cv-facts.md (None without either)."""
+    if settings.facts_file:
+        return settings.facts_file
+    return settings.private_dir / "cv-facts.md" if settings.private_dir else None
 
 
 def _project(value: object) -> str | None:
