@@ -164,9 +164,9 @@ charts are server-rendered SVG):
   application are listed by `/task` and `/today`.
 
 The dashboard binds to `127.0.0.1` only and refuses any other address; requests with a Host
-header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never
-shown. Each request opens the database afresh, so changes made through the skills appear on
-the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
+header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. The pay
+field (`applications.pay`) is never shown. Each request opens the database afresh, so changes
+made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
 (applications per week, default 10) and `no_response_days` (default 14: an application
 still in Applied with no stage change for that long moves to No response; checked on every
 dashboard request and by `/today`).
@@ -363,7 +363,8 @@ The repository is public (on GitHub as Hirey); personal data stays local.
   as pasted. It never goes into committed files, fixtures, logs, commit messages, the dev3 ping
   or files the agents write, unless asked.
 - getjo's database is opened read-only (SQLite `mode=ro`); a write attempt fails.
-- The dashboard listens on `127.0.0.1` only, makes no external requests and never shows pay.
+- The dashboard listens on `127.0.0.1` only, makes no external requests and never shows the pay field
+  (`applications.pay`).
 - Nothing in this project applies to jobs, sends email or posts anywhere.
 - `tests/test_privacy.py` fails if `git ls-files` lists any personal file. The same check runs
   as a pre-commit hook on staged files.
