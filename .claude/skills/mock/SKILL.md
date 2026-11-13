@@ -1,6 +1,6 @@
 ---
 name: mock
-description: Run a mock interview for one application in the inter_prep Agent box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest "Mock ·" line in agent replies about that application is a question footer, not "finished"); also when the user types /mock APP [stage].
+description: Run a mock interview for one application in the Hirey Agent box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest "Mock ·" line in agent replies about that application is a question footer, not "finished"); also when the user types /mock APP [stage].
 ---
 
 # /mock

@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks, tailored CVs and job briefs in inter_prep — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks, tailored CVs and job briefs in Hirey — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research

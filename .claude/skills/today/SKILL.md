@@ -1,6 +1,6 @@
 ---
 name: today
-description: Daily job-search brief from inter_prep — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
+description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
 ---
 
 # /today

@@ -542,7 +542,7 @@ each as ten shades `s1`–`s10` set by a `theme-*` class on `<body>` and used by
 buttons and meters; installed Helvetica Neue-style fonts only; responsive down to phone
 width) and `app.js`. Charts come from `prep/charts.py`: server-rendered inline SVG (donut,
 treemap, funnel, columns, trend) coloured by shade-step CSS classes, so they need no script and no inline
-style, and every label is escaped. The site is branded "getjo" in the page title and sidebar. The
+style, and every label is escaped. The site is branded "Hirey" in the page title and sidebar. The
 Content-Security-Policy allows only these same-origin files (`script-src 'self'`, no inline
 script or style), and nothing is fetched from another host (no CDN, fonts or chart libraries).
 
