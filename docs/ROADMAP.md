@@ -1,9 +1,12 @@
 # Roadmap
 
-Four phases. Each ends when its acceptance criteria hold and `python -m unittest` passes in a
-fresh clone with no private files and no getjo present.
+Four phases as first planned, then agent-first work built outside them. Each phase ends when its
+acceptance criteria hold and `python -m unittest` passes in a fresh clone with no private files
+and no getjo present.
 
 ## Phase 1 — Foundation
+
+Status: done.
 
 Database, config, read-only getjo view and the first three skills.
 
@@ -26,6 +29,9 @@ Acceptance:
 - The privacy test passes; no personal file is tracked.
 
 ## Phase 2 — Dashboard
+
+Status: done. The Matches, Tasks and Progress pages became the Applications page (Pipeline and
+New offers views, `/`) and the Dashboard (`/dashboard`, with practice score trends).
 
 A local website over the same database: standard library `http.server` plus plain
 HTML/CSS/JS, no build step, at `http://localhost:8765`.
@@ -52,6 +58,8 @@ Acceptance:
 
 ## Phase 3 — Prep loop
 
+Status: done, except `/brief` (P3.4). It is not the job brief of a job offer (below).
+
 Practice sessions that turn weak spots into drill tasks.
 
 - `/brief <application>`: a one-page prep brief for an upcoming interview (role, stage,
@@ -73,6 +81,8 @@ Acceptance:
 
 ## Phase 4 — Cards and weekly plan
 
+Status: not started.
+
 - New `cards` table: spaced-repetition flashcards (front, back, topic, ease, interval, due
   date, source gap).
 - `/cards`: review due cards in the terminal session; grade 0–5; scheduling follows SM-2.
@@ -85,3 +95,16 @@ Acceptance:
 - SM-2 scheduling is unit-tested against known sequences.
 - `/plan-week` never creates tasks without confirmation and never exceeds the time budget.
 - Cards due today appear in `/today`.
+
+## Built outside the phases
+
+Agent-first work added after the first plan, with no acceptance criteria here. The
+[README](../README.md) describes each one; [how-it-works.md](how-it-works.md) has the details.
+
+- Company research and CV fit: queued when a job is marked Interested, done by `/research`.
+- Agent box: one conversation with the standing assistant, about one job, several (a
+  comparison), the master CV or the whole search (`/ask`).
+- Tailored CV: one copy of the CV per job, saved as versions, with a PDF, rule checks and an AI
+  check (grounding, fit, skim).
+- Job briefs: a short summary of a job description at the top of its panel.
+- Master CV history: changes through the agent only, saved versions, diff and restore.

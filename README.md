@@ -139,7 +139,7 @@ Example databases are built from made-up fixtures (fictional companies only).
 
 ```bash
 git clone <this repo> inter_prep && cd inter_prep
-python -m unittest                      # 530 tests, no network, no private files needed
+python -m unittest                      # no network, no private files needed
 python -m prep.seed_example             # data/example.db + data/example-getjo.db
 PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
   python -m prep.web --port 8766        # then open http://localhost:8766
@@ -182,7 +182,7 @@ pull request and the running dashboard.
 - **Rules for agents:** [CLAUDE.md](CLAUDE.md) sets the constraints every agent works under
   (standard library by default, privacy rules, schema-migration rules, test and documentation duties).
   The same agents then *use* the project at run time through the skills in `.claude/skills/`.
-- **Quality bar:** tests for every change (530 now, no network, fixture data only), a privacy
+- **Quality bar:** tests for every change (no network, fixture data only), a privacy
   check on every commit, and `docs/how-it-works.md` kept current with each change.
 
 ## Docs
