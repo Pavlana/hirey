@@ -45,8 +45,9 @@ The settings file is looked up in this order:
 The per-user file is the normal place: every checkout and git worktree, a launchd job and
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
-`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`,
-`PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` and `PREP_PDF_PYTHON`. Use absolute paths, with `prep_db`
+`PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
+`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
+`PREP_PDF_PYTHON` and `PREP_FACTS_FILE`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
 `PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
 on example data never messages the standing assistant; empty path and number overrides are
@@ -72,17 +73,29 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | Skill      | CLI                                                                 | What it does |
 |------------|---------------------------------------------------------------------|--------------|
 | `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, tasks due or overdue, new getjo matches |
+|            | `python -m prep.cli queue`                                           | Read-only: counts and ids of queued agent work and waiting thread messages (used by the SessionStart hook) |
 | `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
 | `/stage`   | `python -m prep.cli update ID [--status S [--comment T] [--interview-date D]] [--next-action T [--next-date D]]` | Move an application to a stage (closes the old stage's tasks, adds the new ones); `--next-action` adds a task. Already at that stage: the comment and an interview date are still saved. `/stage` takes a pasted recruiter email, call notes or a one-line message and runs this (plus `comment` / `task add`) itself |
-| `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
 |            | `python -m prep.cli comment ID "text"`                               | Comment on an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
-|            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 | `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
-|            | `python -m prep.cli queue`                                           | Read-only: counts and application ids of queued research (used by the SessionStart hook) |
-|            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file; `tailor save` makes it too |
-| `/ask`     | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
+|            | `python -m prep.cli brief next` / `brief save (--job ID \| APP)` / `brief show (--job ID \| APP)` / `brief queue (--job ID \| APP) [--redo]` | Job briefs: claim the oldest waiting one, store it (text on stdin), print it, or ask for one |
+| `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks and queues the AI check |
+|            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file |
+|            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim) from its `.eval.md` file |
+| `/ask`     | `python -m prep.cli thread show [APP \| --job ID \| --message MSG \| --cv] [--claim]` / `thread reply [APP] --to MSG` / `thread pending` | The Agent box: a thread with its context (no id: the whole search; `--job`: an offer not yet tracked; `--message`: a comparison), the reply (text on stdin or `--file`), the messages waiting |
+|            | `python -m prep.cli review [--all]`                                  | Read-only: the top 3 open tasks in review order (`--all`: every open task) |
+|            | `python -m prep.cli task edit ID [--title T] [--due D \| --no-due]` / `task delete ID` | Change or delete a task |
+|            | `python -m prep.cli comments list APP` / `comments amend REF "text"` / `comments remove REF` | An application's comments with their refs (`c12`, `h34`); a removed stage comment keeps its move |
+|            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
+|            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
+|            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
+| `/mock`    | `python -m prep.cli mock path APP --stage S [--date D]`              | The transcript file for a new mock, under `private_dir/sessions/` |
+|            | `python -m prep.cli session add --kind mock\|real [--app ID] [--stage S] [--score AREA=N ...] [--file F] [--gap TEXT ...]` / `session list` | Record a practice session with 1–5 scores per area; each gap named gets a drill task |
+|            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
+| `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
+|            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
 
@@ -101,8 +114,9 @@ charts are server-rendered SVG):
 - **Dashboard** (`/dashboard`): applied in the last 7 days against `weekly_target`, total applications,
   reply rate (with a warning below 10% after 25 applications), and charts:
   applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
-  applications per week (columns with the target). It counts applications only; tasks are a
-  to-do list on the Applications page.
+  applications per week (columns with the target). Below them, **Practice**: practice sessions
+  (mock · real), open gaps and a 1–5 score trend per area. Apart from Practice it counts
+  applications only; tasks are a to-do list on the Applications page.
   `/progress` redirects here.
 - **New offers** (`/?view=offers`; the old Job Offers page, `/offers` and `/matches` redirect
   here with their filters): open getjo jobs not yet tracked or skipped, newest day first, then
@@ -148,6 +162,14 @@ charts are server-rendered SVG):
   interview dates, tier, which CV was sent) is asked of the agent in the Agent box. Esc or ✕
   closes the panel. Every task is added, changed or removed through the agent; tasks with no
   application are listed by `/task` and `/today`.
+
+The dashboard binds to `127.0.0.1` only and refuses any other address; requests with a Host
+header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. The pay
+field (`applications.pay`) is never shown. Each request opens the database afresh, so changes
+made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
+(applications per week, default 10) and `no_response_days` (default 14: an application
+still in Applied with no stage change for that long moves to No response; checked on every
+dashboard request and by `/today`).
 
 ### Company research and CV fit
 
@@ -274,14 +296,6 @@ they arrive:
    stop and start `python -m prep.web`). A message sent from a panel now shows up in that
    task's terminal as `/ask <app> <msg>`.
 
-It binds to `127.0.0.1` only and refuses any other address; requests with a Host header
-other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. Pay is never
-shown. Each request opens the database afresh, so changes made through the skills appear on
-the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
-(applications per week, default 10) and `no_response_days` (default 14: an application
-still in Applied with no stage change for that long moves to No response; checked on every
-dashboard request and by `/today`).
-
 ### Keep it running with launchd (macOS)
 
 The template `launchd/uk.inter-prep.dashboard.plist.example` starts the dashboard at login
@@ -341,13 +355,16 @@ rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 
 The repository is public (on GitHub as Hirey); personal data stays local.
 
-- Personal files (`cv.md`, `cv-history/`, `notes/`, `sessions/`, `*.docx`, `*.xlsx`, `*.pdf`, databases,
-  `config/settings.toml`, `.env`, prep documents) are gitignored. Committed templates use the
+- Personal files (`cv.md`, `cv-facts.md`, `cv-history/`, `cv-tailored/`, `companies/`, `fit/`,
+  `notes/`, `sessions/`, `*.docx`, `*.xlsx`, `*.pdf`, databases, `config/settings.toml`, `.env`,
+  prep documents) are gitignored. Committed templates use the
   `.example` suffix.
-- Pay is stored only in the local database, never in committed files, fixtures, logs or
-  commit messages.
+- Pay is stored only in the local database: in `applications.pay`, and in agent-thread messages
+  as pasted. It never goes into committed files, fixtures, logs, commit messages, the dev3 ping
+  or files the agents write, unless asked.
 - getjo's database is opened read-only (SQLite `mode=ro`); a write attempt fails.
-- The dashboard listens on `127.0.0.1` only, makes no external requests and never shows pay.
+- The dashboard listens on `127.0.0.1` only, makes no external requests and never shows the pay field
+  (`applications.pay`).
 - Nothing in this project applies to jobs, sends email or posts anywhere.
 - `tests/test_privacy.py` fails if `git ls-files` lists any personal file. The same check runs
   as a pre-commit hook on staged files.
