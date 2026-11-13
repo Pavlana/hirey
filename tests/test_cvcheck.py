@@ -98,13 +98,13 @@ class RulesTest(IsolatedTestCase):
         self.assertEqual((f["check"], f["severity"]), ("placeholder", "look"), "an autolink prints its brackets")
 
     def test_pay_blocks_and_is_never_quoted(self) -> None:
-        text = CLEAN.replace("- Ran the on-call rotation.", "- Looking for £90,000 base salary")
+        text = CLEAN.replace("- Ran the on-call rotation.", "- Looking for £123,456 base salary")
         [f] = run_check(text)
         self.assertEqual((f["check"], f["severity"], f["text"]), ("pay", "block", ""))
         self.assertNotIn("90", f["message"])
         own = MASTER.replace("- Ran the on-call rotation.", "- Saved $2M in cloud spend")
         self.assertEqual(run_check(FRONT + own, master=own), [], "the user's own line from cv.md")
-        for line in ("- Day rate: 650", "- Expected compensation around 90k", "- £550 per annum"):
+        for line in ("- Day rate: 650", "- Expected compensation around 123k", "- £550 per annum"):
             with self.subTest(line=line):
                 [f] = run_check(CLEAN.replace("- Ran the on-call rotation.", line))
                 self.assertEqual((f["severity"], f["text"]), ("block", ""))
@@ -278,11 +278,11 @@ class CliTest(IsolatedTestCase):
         self.assertIn(f"  Check: Ready{PENDING.format(app=self.app)}\n", out, "tailor pdf checks again with the new page count")
 
     def test_a_failed_check_never_undoes_the_save_and_nothing_is_logged(self) -> None:
-        write(self.file, CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £90,000"))
+        write(self.file, CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £123,456"))
         with self.assertLogs("prep", level="INFO") as logs:
             out = self.save(pages=1)
         self.assertIn("Check: Blocked", out)
-        self.assertNotIn("90,000", out + "\n".join(logs.output))
+        self.assertNotIn("123,456", out + "\n".join(logs.output))
         self.assertNotIn("Alex Example", "\n".join(logs.output))
         with mock.patch("prep.cvcheck.run", side_effect=OSError("disk")):
             write(research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 2), CLEAN)

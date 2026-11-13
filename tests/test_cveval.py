@@ -97,12 +97,12 @@ class FindingsTest(IsolatedTestCase):
         self.assertEqual(self.findings(master_fit=None, fit=1), [], "no master fit: nothing to compare")
 
     def test_never_shows_pay(self) -> None:
-        text = CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £90,000")
+        text = CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £123,456")
         review = cveval.read_eval(write(self.tmp / "x.eval.md", eval_text(
-            skim=1, skim_why="Leads with a £90,000 figure",
-            claims='[[claims]]\nquote = "Expected salary"\nsource = "none"\nnote = "salary £90,000 not in cv.md"\n')))
+            skim=1, skim_why="Leads with a £123,456 figure",
+            claims='[[claims]]\nquote = "Expected salary"\nsource = "none"\nnote = "salary £123,456 not in cv.md"\n')))
         found = cveval.findings(review, text, None)
-        self.assertNotIn("90,000", repr(found) + repr(cveval.summary(review, None)))
+        self.assertNotIn("123,456", repr(found) + repr(cveval.summary(review, None)))
         self.assertEqual([f["check"] for f in found], ["skim", "grounding"])
 
 

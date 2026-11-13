@@ -62,7 +62,7 @@ class CliTest(WebTestCase):
         self.assertIn("job description (from getjo, read-only)", out)
         self.assertIn("Nothing pending", self.run_cli("brief", "next")[1])
         with mock.patch("sys.stdin") as stdin:
-            stdin.read.return_value = "facts\n- £90k"
+            stdin.read.return_value = "facts\n- £123k"
             code, _, err = self.run_cli("brief", "save", "--job", GLOBEX)
         self.assertEqual(code, 2)
         self.assertIn("must not mention pay", err)
