@@ -1,6 +1,6 @@
 ---
 name: debrief
-description: Turn a pasted or dictated transcript or notes from a real interview, or from a mock interview done elsewhere, into inter_prep records — the interview's questions, what went well and what to improve, a practice session with 1–5 scores per area, and a gap with a drill task for each weakness named. The transcript is saved under private_dir/sessions/. It also completes the "Debrief — what to improve" task. Use when the user types /debrief, pastes or dictates how an interview or a mock went, or says "let's debrief the Initech interview".
+description: Turn a pasted or dictated transcript or notes from a real interview, or from a mock interview done elsewhere, into Hirey records — the interview's questions, what went well and what to improve, a practice session with 1–5 scores per area, and a gap with a drill task for each weakness named. The transcript is saved under private_dir/sessions/. It also completes the "Debrief — what to improve" task. Use when the user types /debrief, pastes or dictates how an interview or a mock went, or says "let's debrief the Initech interview".
 ---
 
 # /debrief

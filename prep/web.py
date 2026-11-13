@@ -2099,12 +2099,12 @@ def _page(status: int, title: str, subtitle: str, content: str, active: str, off
         '<!doctype html><html lang="en"><head><meta charset="utf-8">'
         '<meta name="viewport" content="width=device-width, initial-scale=1">'
         '<meta name="color-scheme" content="dark">'
-        f"<title>{h(title)} · getjo</title>"
+        f"<title>{h(title)} · Hirey</title>"
         '<link rel="stylesheet" href="/static/style.css">'
         '<script src="/static/app.js" defer></script></head>'
         f'<body class="theme-{PAGE_THEMES.get(active, "sage")}"><div class="app">'
-        '<aside class="sidebar"><a class="brand" href="/"><span class="brand-mark">gj</span>'
-        '<span class="brand-name">getjo</span></a>'
+        '<aside class="sidebar"><a class="brand" href="/"><span class="brand-mark">hy</span>'
+        '<span class="brand-name">Hirey</span></a>'
         f'<nav aria-label="Pages">{nav}</nav>'
         '<p class="sidebar-foot"><span class="dot"></span>local only · 127.0.0.1</p></aside>'
         f'<main><header class="page-head"><div class="page-head-row"><h1>{h(title)}</h1>{actions}</div>{sub}</header>'
@@ -2272,7 +2272,7 @@ def _link(url: str | None, text: str) -> str:
 # --- server -----------------------------------------------------------------------------
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "inter_prep"
+    server_version = "Hirey"
     sys_version = ""
 
     def do_GET(self) -> None:
@@ -2337,7 +2337,7 @@ def serve(settings: Settings, host: str = "127.0.0.1", port: int | None = None) 
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m prep.web", description="inter_prep local dashboard")
+    parser = argparse.ArgumentParser(prog="python -m prep.web", description="Hirey local dashboard")
     parser.add_argument("--port", type=int, help="default: dashboard_port from settings (8765)")
     args = parser.parse_args(argv)
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")

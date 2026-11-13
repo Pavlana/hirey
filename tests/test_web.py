@@ -766,7 +766,7 @@ class LandingPageTest(WebTestCase):
         self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Dashboard"])
         self.assertIn('<a href="/" aria-current="page">', nav)
         self.assertIn('<span class="nav-count" title="New offers">3</span>', nav)
-        self.assertIn("<title>Applications · getjo</title>", body)
+        self.assertIn("<title>Applications · Hirey</title>", body)
         switch = body[body.index('class="view-switch"'):body.index("</nav>", body.index('class="view-switch"'))]
         self.assertIn('href="/" data-view="pipeline" aria-current="true">Pipeline <span class="count">6</span>', switch)
         self.assertIn('href="/?view=offers" data-view="offers">New offers <span class="count">3</span>', switch)

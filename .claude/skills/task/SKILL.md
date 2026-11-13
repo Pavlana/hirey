@@ -1,6 +1,6 @@
 ---
 name: task
-description: Add, list and complete job-search tasks in inter_prep (kinds apply, prep, drill, admin, with optional due date and linked application). Use when the user types /task or asks to add a to-do, see open tasks, or mark one done.
+description: Add, list and complete job-search tasks in Hirey (kinds apply, prep, drill, admin, with optional due date and linked application). Use when the user types /task or asks to add a to-do, see open tasks, or mark one done.
 ---
 
 # /task

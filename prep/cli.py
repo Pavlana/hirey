@@ -740,7 +740,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     text = " ".join(line for line in lines if line)
     if text:
-        print("inter_prep: " + text + " Offer it to the user, or run it at once if this is the "
+        print("Hirey: " + text + " Offer it to the user, or run it at once if this is the "
               "standing assistant session.")
     return 0
 
@@ -1600,7 +1600,7 @@ def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
 # --- argument parsing -----------------------------------------------------------
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="python -m prep.cli", description="inter_prep commands")
+    parser = argparse.ArgumentParser(prog="python -m prep.cli", description="Hirey commands")
     parser.add_argument("-v", "--verbose", action="store_true", help="log progress to stdout")
     sub = parser.add_subparsers(dest="command", required=True)
 

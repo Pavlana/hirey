@@ -184,6 +184,8 @@ pull request and the running dashboard.
   The same agents then *use* the project at run time through the skills in `.claude/skills/`.
 - **Quality bar:** tests for every change (530 now, no network, fixture data only), a privacy
   check on every commit, and `docs/how-it-works.md` kept current with each change.
+- **History note:** PR numbers #11–#14 in older commit messages refer to an earlier copy of
+  this repository, not to PRs here.
 
 ## Docs
 

@@ -1,6 +1,6 @@
 ---
 name: applied
-description: Record a job application in inter_prep from a getjo job id, a job URL, or a company and role, linking it to the getjo job when one matches; it gets its first tasks automatically. Use when the user types /applied or says they applied (or are interested in applying) somewhere.
+description: Record a job application in Hirey from a getjo job id, a job URL, or a company and role, linking it to the getjo job when one matches; it gets its first tasks automatically. Use when the user types /applied or says they applied (or are interested in applying) somewhere.
 ---
 
 # /applied

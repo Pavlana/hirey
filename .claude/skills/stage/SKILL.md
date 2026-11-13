@@ -1,6 +1,6 @@
 ---
 name: stage
-description: Update an application's stage in inter_prep from free text — a pasted recruiter email, notes or a transcript from a call, or a one-line message such as "Globex invited me to a coding interview on Tuesday" or "Initech rejected me". It finds the application, moves it to the right stage with the interview date, saves a short comment and adds any extra to-dos, then replies in one or two lines. Use when the user types /stage, pastes an email or call notes about an application, or says an interview was booked, moved, passed or failed, an offer arrived, they were rejected, or they withdrew.
+description: Update an application's stage in Hirey from free text — a pasted recruiter email, notes or a transcript from a call, or a one-line message such as "Globex invited me to a coding interview on Tuesday" or "Initech rejected me". It finds the application, moves it to the right stage with the interview date, saves a short comment and adds any extra to-dos, then replies in one or two lines. Use when the user types /stage, pastes an email or call notes about an application, or says an interview was booked, moved, passed or failed, an offer arrived, they were rejected, or they withdrew.
 ---
 
 # /stage
