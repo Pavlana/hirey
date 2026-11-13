@@ -255,8 +255,8 @@ version before the next change.
 A long-running dev3 task that answers thread messages and does queued research as soon as
 they arrive:
 
-1. On the inter_prep project's dev3 board, create a task, for example titled "Standing
-   assistant", with this description: "Standing research assistant for inter_prep. When
+1. On the project's dev3 board, create a task, for example titled "Standing
+   assistant", with this description: "Standing research assistant for Hirey. When
    messaged `/ask <app> <msg>` run /ask; when messaged `/research <id>` run /research. Between
    messages, wait. Never commit, push, apply to jobs or contact anyone." Start it with Claude
    Code and leave it running.
@@ -339,7 +339,7 @@ rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 
 ## Privacy model
 
-The repository is public; personal data stays local.
+The repository is public (on GitHub as Hirey); personal data stays local.
 
 - Personal files (`cv.md`, `cv-history/`, `notes/`, `sessions/`, `*.docx`, `*.xlsx`, `*.pdf`, databases,
   `config/settings.toml`, `.env`, prep documents) are gitignored. Committed templates use the

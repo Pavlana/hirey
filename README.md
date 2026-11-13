@@ -1,8 +1,8 @@
-# inter_prep
+# Hirey
 
 **An agent-first workspace for running a job search with an AI assistant in the loop.**
 
-inter_prep tracks job applications, tasks and interview preparation in one local SQLite
+Hirey tracks job applications, tasks and interview preparation in one local SQLite
 database. The work is shared between a local web dashboard and Claude Code agents. The
 dashboard is where a person triages job offers, asks questions and approves the next step. The
 agents research companies, check how a CV fits a job, write a tailored CV for each role, keep the
@@ -12,6 +12,9 @@ agent with record ids only, never with text. Agents can rephrase, reorder or cut
 never invent experience. Pasted emails are treated as data, not instructions. Job data comes
 from a separate scoring service that this project only reads. Nothing here applies to jobs,
 sends email or posts anywhere: the person decides and acts.
+
+Internal names keep the project's original name: the Python package is `prep`, settings live in
+`~/.config/inter_prep/` and the launchd label is `uk.inter-prep.dashboard`.
 
 Python 3.11+, standard library by default (no frameworks, no build step; one pinned library,
 WeasyPrint, renders the tailored CV PDF), 552 unit tests.
@@ -82,7 +85,7 @@ flowchart LR
     end
     jobs -. read-only, SQLite mode=ro .-> core
 
-    subgraph inter_prep
+    subgraph hirey [Hirey]
         web[Dashboard<br/>prep.web, 127.0.0.1 only] <--> db[(prep.db<br/>applications, tasks,<br/>agent_requests, agent_messages,<br/>cv_fits, tailored_cvs, ...)]
         core[prep.cli + prep.db] <--> db
     end
@@ -125,7 +128,7 @@ The dashboard-side boundaries are enforced in code and covered by tests. The age
 | Ids-only pings | The dashboard sends the agent a fixed command with record ids. Message text, CV text and pay never leave the database through the ping. |
 | Prompt injection from pasted text | The skills treat emails and job descriptions as data, never as instructions. A pasted email maps to a narrow set of commands: stage, comment, task. Its text stays out of comments. |
 | No invented experience | Tailoring and CV edits may rephrase, reorder and cut, never add. Missing facts become questions in the thread. A rule check blocks changed dates and flags another company's name in each tailored CV, and a separate AI pass blocks any claim it cannot trace to the master CV or the facts bank. |
-| Read-only upstream | getjo's database is opened with SQLite `mode=ro`. A write attempt fails, and a test checks that. inter_prep never imports getjo code. |
+| Read-only upstream | getjo's database is opened with SQLite `mode=ro`. A write attempt fails, and a test checks that. Hirey never imports getjo code. |
 | Local only | The dashboard binds to loopback and refuses other addresses. It checks the Host header (DNS rebinding) and rejects cross-origin POSTs. CSP is `'self'`, there are no external requests, and every database value is escaped. |
 | Personal data stays out of git | CV, notes, research, tailored CVs and databases are gitignored. `prep/privacy.py` fails a test and a pre-commit hook if any of them is tracked. Pay is never rendered or logged, and the skills keep it out of agent files. |
 | Safe CV writes | The current CV is backed up first, then replaced atomically (temp file + `os.replace`). Empty or unchanged text is refused. Restore can be undone. |

@@ -12,7 +12,7 @@
                    │ read-only (sqlite URI mode=ro)
                    ▼
 ┌─────────────────────────────────────┐        ┌───────────────────────────┐
-│ inter_prep                          │        │ private_dir (gitignored)  │
+│ Hirey                               │        │ private_dir (gitignored)  │
 │ prep/getjo.py   matches, open/closed│        │ cv.md, cv-facts.md,       │
 │ prep/db.py      prep.db             │        │ notes/, sessions/,        │
 │   applications, status_history,     │        │ companies/, fit/,         │
@@ -156,7 +156,7 @@
    source`. Rows with no location or score take them from getjo (read-only) when it still has
    the job. The file is rewritten in full through a temp file and a rename, so a reader never
    sees half of it. getjo reads it with its own code (recent decisions as few-shot examples in
-   its scoring prompt); inter_prep never calls getjo. Comments are included, so they reach
+   its scoring prompt); Hirey never calls getjo. Comments are included, so they reach
    whatever prompt getjo builds from the file.
 
 13. Agent research and CV fit. The agent, not the dashboard, researches the company and

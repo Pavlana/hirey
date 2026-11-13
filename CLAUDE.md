@@ -1,4 +1,4 @@
-# inter_prep
+# Hirey
 
 A personal job-search and interview-prep workspace. It tracks applications, tasks and
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
@@ -8,13 +8,17 @@ Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,
 scores each job against a CV with Claude, stores jobs in its own SQLite database
-(`data/jobs.db`) and sends strong matches to Telegram. inter_prep reads getjo's database
+(`data/jobs.db`) and sends strong matches to Telegram. Hirey reads getjo's database
 **read-only** to surface matches that are not yet tracked as applications (and, when getjo has
 them, its `expires_at` / `last_seen` / `closed_at` columns to hide closed jobs). It never writes
 to it and never imports getjo code.
 
-The repository is public. Personal data (CV, notes, sessions, databases, pay) never goes into
-a committed file.
+The repository is public on GitHub as Hirey. Personal data (CV, notes, sessions, databases, pay)
+never goes into a committed file, including in history and in PR bodies and comments.
+
+Internal names keep the original name: the Python package `prep`, the settings folder
+`~/.config/inter_prep/`, the launchd label `uk.inter-prep.dashboard`, the local checkout folder
+`inter_prep` and the dev3 project.
 
 ## How to work
 
