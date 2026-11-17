@@ -23,16 +23,19 @@ def _inline(text: str, links: bool = False) -> str:
     return _LINK.sub(r'<a href="\2">\1</a>', out) if links else out
 
 
-def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', links: bool = False) -> str:
+def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', links: bool = False,
+                    breaks: bool = False) -> str:
     """Headings, bullet lists, paragraphs, **bold** and *italic*; with `links`, also [text](url) links
-    (the dashboard leaves them as text). `empty` is the HTML for a text with nothing in it."""
+    (the dashboard leaves them as text). With `breaks`, a line break inside a paragraph stays one
+    (<br>; typed notes) instead of joining the lines. `empty` is the HTML for a text with nothing in it."""
     out: list[str] = []
     para: list[str] = []
     items: list[str] = []
 
     def flush() -> None:
         if para:
-            out.append(f"<p>{_inline(' '.join(para), links)}</p>")
+            body = "<br>".join(_inline(p, links) for p in para) if breaks else _inline(" ".join(para), links)
+            out.append(f"<p>{body}</p>")
             para.clear()
         if items:
             out.append("<ul>" + "".join(f"<li>{_inline(i, links)}</li>" for i in items) + "</ul>")

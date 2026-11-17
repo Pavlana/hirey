@@ -108,9 +108,13 @@ Reply with `thread reply --to MSG`, short: the question only, then the footer.
      --gap "Stating complexity before coding"
    ```
 
-6. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
+6. Add what is worth keeping for the real interview to the application's Notes, as short `-`
+   bullets (questions it raised to ask the company, a point to open with; not the scores, which
+   the session keeps): `python -m prep.cli notes APP --append <<'NOTES' … NOTES`. Skip it when
+   nothing new came up. Never pay.
+7. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
    two lines on what went well, each gap with its drill task id from the output (`(task #41)`), and
-   one line that the transcript is saved privately. No file path, no pay.
+   one line that the transcript is saved privately; say what went into Notes, if anything. No file path, no pay.
 
 ## 4. Finish in this session
 

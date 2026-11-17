@@ -124,6 +124,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `cv sent APP FILE_NAME`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
+- Notes (used by /ask and /research; the panel's Notes card): `python -m prep.cli notes APP [--show | --append [TEXT]]`
+  (append text on stdin when TEXT is left out; adds a dated "Agent" block, never rewrites, refuses pay)
 - Master CV (used by /ask, My CV panel): `python -m prep.cli cv show|skills|history|draft`,
   `cv save --note "..." [--to MSG]` (backup first, atomic), `cv restore V`, `cv diff V`;
   `thread show --cv [--claim]`

@@ -18,7 +18,9 @@ Run every command from the repo root.
    `--kind cv_fit` for only one of them, and `--redo` to research again a profile that is
    still fresh.
 2. Follow the printed packet: company research, CV fit, tailored CV and/or AI check of the tailored
-   CV, in that order. Each part names its file and the save command.
+   CV, in that order. Each part names its file and the save command. The packet starts with the
+   application's notes (the panel's Notes card: the user's notes and earlier agent additions);
+   read them as context, for example what a recruiter already said about the process.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
    - company: one line on what it does and the tier set
    - CV fit: the score and the top gaps
@@ -112,6 +114,22 @@ Then run `python -m prep.cli research save <app id>`. It saves the summary, clos
 research request of every application at that company and **sets the tier** of that application
 to `suggested_tier`. The panel shows it with `tier_reason`, so write the reason for this role.
 No confirm step: the user changes it through the agent if needed.
+
+**Questions to ask.** When the packet says the notes have no "Questions to ask" yet, append 3-5
+questions specific to this company and role (from the research: the stack, the team, the
+interview process, recent news), never generic ones and never about pay:
+
+```bash
+python -m prep.cli notes <app id> --append <<'NOTES'
+**Questions to ask**
+
+- How does the platform team split work with the product teams after the 2026 reorganisation?
+- …
+NOTES
+```
+
+When the notes already have such a section, add nothing. The command adds a dated "Agent" block at
+the end and never rewrites the user's text.
 
 ### Tier rubric (the research sets it; one tier per application)
 

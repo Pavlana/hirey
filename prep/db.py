@@ -377,7 +377,10 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # cv_sent: the file name of the tailored CV version the user says was sent (`cli cv sent`), with its
     # version and when that was recorded; NULL until then. Older rows may hold a frozen copy's path.
     # role_short: the short role name in tailored CV file names (FDE, AIEng), chosen once by the agent.
-    "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT"},
+    # notes_updated_at: when notes last changed (any writer), with microseconds; the panel's Notes form
+    # carries it so a save over an addition made meanwhile is refused. NULL until the first change.
+    "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT",
+                     "notes_updated_at": "TEXT"},
     # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
     # carries it too. Interested moves these messages to the new application and keeps the id.
     # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
@@ -550,11 +553,85 @@ def update_application(conn: sqlite3.Connection, app_id: int, **fields: str | No
         raise LookupError(f"no application with id {app_id}")
     stamp = now_iso()
     fields["updated_at"] = stamp
+    if "notes" in fields:
+        fields["notes_updated_at"] = notes_stamp()
     assignments = ", ".join(f"{k} = :{k}" for k in fields)
     conn.execute(f"UPDATE applications SET {assignments} WHERE id = :id", {**fields, "id": app_id})
     if "status" in fields and fields["status"] != row["status"]:
         _add_history(conn, app_id, fields["status"], stamp)
     conn.commit()
+
+
+# --- notes ------------------------------------------------------------------------
+# applications.notes: one Markdown text per application that the user edits on the panel's Notes card
+# and the agent appends to (`cli notes --append`). Appends never rewrite what is there. Never logged.
+
+MAX_NOTES = 20_000  # characters
+
+
+class NotesChanged(ValueError):
+    """A save named a notes stamp that is no longer current: someone added to the notes meanwhile."""
+
+
+def notes_stamp() -> str:
+    """A notes change stamp; microseconds so two changes within a second still differ."""
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
+
+
+def get_notes(conn: sqlite3.Connection, app_id: int) -> dict:
+    """{"notes": text ("" if none), "stamp": notes_updated_at ("" if never changed)}."""
+    row = conn.execute("SELECT notes, notes_updated_at FROM applications WHERE id = ?", (app_id,)).fetchone()
+    if row is None:
+        raise LookupError(f"no application with id {app_id}")
+    return {"notes": row[0] or "", "stamp": row[1] or ""}
+
+
+def _check_notes_length(text: str) -> None:
+    if len(text) > MAX_NOTES:
+        raise ValueError(f"notes are limited to {MAX_NOTES:,} characters; got {len(text):,}")
+
+
+def save_notes(conn: sqlite3.Connection, app_id: int, text: str, stamp: str) -> str:
+    """Replace the notes (empty text clears them) when `stamp` is still their current stamp; return the
+    new stamp. NotesChanged if they changed since `stamp` was read; the text is not saved then."""
+    text = text.strip()
+    _check_notes_length(text)
+    new = notes_stamp()
+    cur = conn.execute(
+        "UPDATE applications SET notes = ?, notes_updated_at = ?, updated_at = ? "
+        "WHERE id = ? AND COALESCE(notes_updated_at, '') = ?",
+        (text or None, new, now_iso(), app_id, stamp))
+    conn.commit()
+    if cur.rowcount == 0:
+        get_notes(conn, app_id)  # LookupError for an unknown id
+        raise NotesChanged("These notes changed while you were editing (the agent may have added to them). "
+                           "Your text is kept: compare it with the current notes, then save again.")
+    return new
+
+
+def notes_block(text: str, day: str, author: str = "Agent") -> str:
+    """An appended block: "**Agent · 17 Nov**", a blank line, then the text."""
+    d = date.fromisoformat(day)
+    return f"**{author} · {d.day} {d.strftime('%b')}**\n\n{text.strip()}"
+
+
+def append_notes(conn: sqlite3.Connection, app_id: int, text: str, day: str | None = None,
+                 author: str = "Agent") -> str:
+    """Add a dated block at the end of the notes (what is there stays as it is); return the new stamp.
+    The agent's text never mentions pay."""
+    if not text.strip():
+        raise ValueError("nothing to append")
+    check_no_pay(text, "notes from the agent")
+    block = notes_block(text, day or today_iso(), author)
+    current = get_notes(conn, app_id)["notes"]
+    _check_notes_length(current + block)
+    new = notes_stamp()
+    conn.execute(
+        "UPDATE applications SET notes = CASE WHEN COALESCE(TRIM(notes), '') = '' THEN ? "
+        "ELSE RTRIM(notes, char(32, 9, 10, 13)) || ? END, notes_updated_at = ?, updated_at = ? WHERE id = ?",
+        (block, "\n\n" + block, new, now_iso(), app_id))
+    conn.commit()
+    return new
 
 
 def _add_history(conn: sqlite3.Connection, app_id: int, status: str, stamp: str,

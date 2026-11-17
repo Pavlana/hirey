@@ -72,7 +72,22 @@ If the text also says what happens next, record that as /stage does (`python -m 
   application is no longer at an interview stage). The rejection adds the "Debrief — what to
   improve" task, and the debrief then completes it.
 
-## 5. Reply
+## 5. Notes
+
+For a debrief with `--app`, add to the application's Notes what helps the next round, as short
+`-` bullets: the interview format, whether AI tools were allowed, names and roles, next steps,
+questions to ask next time. Skip what the notes already say (`python -m prep.cli notes ID`).
+
+```bash
+python -m prep.cli notes ID --append <<'NOTES'
+- Format: 45 min, one coding task in a shared editor
+- Next: system design round with the team lead
+NOTES
+```
+
+The command adds a dated "Agent" block and never rewrites the user's text. Never pay.
+
+## 6. Reply
 
 A few lines from the command output. For example:
 

@@ -88,6 +88,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli review [--all]`                                  | Read-only: the top 3 open tasks in review order (`--all`: every open task) |
 |            | `python -m prep.cli task edit ID [--title T] [--due D \| --no-due]` / `task delete ID` | Change or delete a task |
 |            | `python -m prep.cli comments list APP` / `comments amend REF "text"` / `comments remove REF` | An application's comments with their refs (`c12`, `h34`); a removed stage comment keeps its move |
+| `/ask`, `/research` | `python -m prep.cli notes APP [--show \| --append [TEXT]]` | The panel's Notes: print them, or add a dated "Agent · 17 Nov" block at the end (TEXT, or stdin when left out); never rewrites the user's text, refuses pay |
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
@@ -152,8 +153,9 @@ charts are server-rendered SVG):
   latest comment (and how many came before it); the shortcut buttons **Research company · CV fit · Tailor CV · Mark
   applied · Skip** (each shows its state: "Researching…", "CV fit 4/5", "CV v2 · sent"; Mark
   applied and Skip only while Interested); then the tasks (tick ☐ to mark
-  one done, with Undo), the agent's results (company research with the tier and why, CV fit,
-  every tailored CV version with Open and Redo) and the stage history. Mark applied records
+  one done, with Undo), Results: the **Notes** card (below), then the agent's results (company
+  research with the tier and why, CV fit, every tailored CV version with Open and Redo), and the
+  stage history. Mark applied records
   Applied today at once and offers Undo, which moves it back to Interested. Skip asks for a
   reason (the same reasons as an offer's Skip) and an optional comment, closes the application as
   Skipped and lists the job under New offers → Show skipped. An Interested or Applied application
@@ -162,6 +164,15 @@ charts are server-rendered SVG):
   interview dates, tier, which CV was sent) is asked of the agent in the Agent box. Esc or ✕
   closes the panel. Every task is added, changed or removed through the agent; tasks with no
   application are listed by `/task` and `/today`.
+- **Notes** (in every application's panel, first under Results): one place per job for what is
+  worth keeping: questions to ask, notes from a recruiter call or an interview, what the agent
+  finds. Shown as Markdown (`**bold**`, `-` lists, `#` headings; line breaks kept; everything
+  escaped). **Edit** opens a text box with **Save** and **Cancel**; saving an empty text clears the
+  notes. The agent only adds dated blocks at the end ("**Agent · 17 Nov**"): `/ask` after a request to
+  note something, a pasted recruiter email or call notes, a mock or a debrief; `/research` adds
+  "Questions to ask" after company research when there is none yet. When the agent added something
+  while the editor was open, Save is refused with a message: the current notes show above and the
+  typed text stays in the box; Save again replaces them. Agents never write pay into notes.
 
 The dashboard binds to `127.0.0.1` only and refuses any other address; requests with a Host
 header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. The pay
