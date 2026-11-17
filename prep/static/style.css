@@ -379,13 +379,31 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
 /* --- applications ----------------------------------------------------------------
-   The pipeline list on the left, the side panel for one application on the right: halves on
-   laptops, a third and two thirds from 1600px, a full-screen sheet on phones. List rows are links,
-   so they open the panel without the script. */
+   The pipeline list on the left, the side panel for one application on the right: halves from
+   laptops up, a full-screen sheet on phones. With the script a divider between them (.apps-split)
+   moves the split: app.js sets --split-l / --split-r (fr, so the divider comes out of the rest).
+   Each child has its own column, so the panel never drops into the divider's track when the
+   divider is hidden. List rows are links, so they open the panel without the script. */
 main:has(.apps) { max-width: 1880px; }
 .apps { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
-.apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-@media (min-width: 1600px) { .apps:has(> .panel) { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); } }
+.apps-split { display: none; }
+@media (min-width: 801px) {
+  .apps:has(> .panel) { column-gap: 0; grid-template-columns: minmax(0, var(--split-l, 1fr)) var(--space-4) minmax(0, var(--split-r, 1fr)); }
+  .apps:has(> .panel) > .apps-main { grid-column: 1; }
+  .apps:has(> .panel) > .panel { grid-column: 3; }
+  .has-js .apps:has(> .panel) > .apps-split { display: block; grid-column: 2; position: relative; cursor: col-resize;
+    touch-action: none; border-radius: var(--radius-sm); }
+  .apps-split::before { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; margin-left: -1px;
+    border-radius: 1px; background: transparent; transition: background-color .12s; }
+  .apps-split:hover::before, .apps-split.is-dragging::before { background: var(--border-strong); }
+  .apps-split:focus-visible { outline: none; }
+  .apps-split:focus-visible::before { background: var(--accent); }
+  .apps-split::after { content: ""; position: absolute; top: 50%; left: 50%; width: 4px; height: 32px; margin: -16px 0 0 -2px;
+    border-radius: 2px; background: var(--border-strong); }
+  body.is-resizing { cursor: col-resize; user-select: none; }
+  .apps-split.is-fixed { cursor: default; }
+  .apps-split.is-fixed::after { display: none; }
+}
 .apps-main { min-width: 0; display: grid; gap: var(--space-4); }
 .card-pipeline > .card-body { padding: var(--space-4) 0 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
 .card-pipeline .stage-strip { padding: 0 var(--space-4); gap: var(--space-2); }
@@ -693,6 +711,8 @@ form.ask textarea::placeholder { color: var(--text-faint); }
 /* --- responsive ---------------------------------------------------------------- */
 @media (min-width: 801px) and (max-width: 1599px) {
   main { padding-left: var(--space-6); padding-right: var(--space-6); }
+}
+@media (min-width: 801px) {
   .apps:has(> .panel) .panel-body, .apps:has(> .panel) .panel-head { padding-left: var(--space-4); padding-right: var(--space-4); }
 }
 @media (max-width: 800px) {

@@ -791,6 +791,33 @@ class LandingPageTest(WebTestCase):
         self.assertIn('localStorage.getItem(SEL_KEY)', js)  # the ticked jobs come back too
         self.assertIn("try { localStorage.setItem(VIEW_KEY, tab.dataset.view); } catch", js)
 
+    def test_split_divider_between_the_list_and_the_panel(self) -> None:
+        # Rendered on every Applications page (the script may open a panel later), between the
+        # left column and the panel; never on the Dashboard. No inline style (CSP).
+        for path in ("/", "/?app=3", "/?view=offers&job=" + quote(GLOBEX, safe="")):
+            body = self.get(path)[2]
+            self.assertEqual(body.count('class="apps-split"'), 1, path)
+            main_at = body.index('<div class="apps-main" id="apps-main">')
+            self.assertLess(main_at, body.index('class="apps-split"'))
+            if "app=" in path or "job=" in path:
+                self.assertLess(body.index('class="apps-split"'), body.index('id="panel"'))
+        split = web.SPLIT_HANDLE
+        for attr in ('role="separator"', 'aria-orientation="vertical"', 'aria-controls="apps-main"',
+                     'tabindex="0"', 'aria-valuenow="50"', "aria-label="):
+            self.assertIn(attr, split)
+        self.assertNotIn("style=", split)
+        self.assertNotIn("apps-split", self.get("/dashboard")[2])
+
+    def test_split_is_remembered_by_the_script(self) -> None:
+        js = self.get("/static/app.js")[2]
+        self.assertIn('const SPLIT_KEY = "apps-split";', js)
+        self.assertIn("localStorage.getItem(SPLIT_KEY)", js)
+        self.assertIn("localStorage.removeItem(SPLIT_KEY)", js)  # back to 50/50: the default, not stored
+        self.assertIn('container.style.setProperty("--split-l"', js)  # CSSOM, allowed by the CSP
+        css = self.get("/static/style.css")[2]
+        self.assertIn("minmax(0, var(--split-l, 1fr))", css)  # half and half by default
+        self.assertNotIn("minmax(0, 2fr)", css)
+
     def test_new_offers_without_javascript(self) -> None:
         body = self.get("/?view=offers")[2]
         form = body[body.index('class="offer-filters"'):]
