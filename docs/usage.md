@@ -141,8 +141,13 @@ charts are server-rendered SVG):
   the agent tagged with that job, and follows the job into its application if it is marked
   Interested. Decided jobs also drop out of `/today`.
 - **Pipeline** (the default view of `/`): the pipeline list on the left with
-  the Agent box under it (below), and the selected application on the right (halves on a
-  laptop, a third and two thirds from 1600px wide, a full-screen sheet on phones). On a laptop the page fits the screen: the list (at most
+  the Agent box under it (below), and the selected application on the right (half and half
+  from 801px wide, a full-screen sheet on phones). A divider between the two columns moves the
+  split: drag it, or focus it (Tab) and use ←/→ (Shift for bigger steps), Home/End for the
+  limits, Enter or a double-click for half and half again. Each side keeps a minimum width (360px
+  for the list, 420px for the panel); where both do not fit, the split stays at half and half. The
+  width is remembered per browser (`localStorage`); without the script, or with storage blocked,
+  it is half and half. On a laptop the page fits the screen: the list (at most
   45% of the left column) scrolls inside with its stage filters and headings kept, and the Agent
   box's input is always in view. The list is grouped by stage (Interested → Applied →
   Recruiter call → Coding interview → System design → Company interview → Offer) with the

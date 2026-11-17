@@ -1142,6 +1142,14 @@ def _description(text: str) -> str:
     return "".join(out)
 
 
+# The divider between the left column and the panel (a window splitter). Rendered on every
+# Applications page, since the script may open a panel later; CSS shows it only with the script,
+# from 801px wide and while a panel is open. app.js drags it and keeps the width per browser.
+SPLIT_HANDLE = ('<div class="apps-split" role="separator" aria-orientation="vertical" aria-controls="apps-main" '
+                'aria-label="Resize the list and the panel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" '
+                'tabindex="0" title="Drag to resize · double-click for half and half"></div>')
+
+
 def _skip_dialog() -> str:
     """The Skip pop-up: one button per reason and an optional comment. The clicked Skip link names
     where it posts and which field it fills (`data-skip-action` and `data-skip-field`: /offers/skip
@@ -1296,7 +1304,8 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     else:
         panel = ""
     agent = _agent_box(conn, settings, f, targets)
-    content = (f'<div class="apps"><div class="apps-main">{list_card}{agent}</div>{panel}</div>' + _skip_dialog())
+    content = (f'<div class="apps"><div class="apps-main" id="apps-main">{list_card}{agent}</div>{SPLIT_HANDLE}{panel}</div>'
+               + _skip_dialog())
     new = f" · {offers} new offer{'s' if offers != 1 else ''}" if offers is not None else ""
     my_cv = (f'<div class="page-head-actions">{_sel_tick(f, "cv", "my CV")}'
              f'<a class="btn btn-secondary btn-sm my-cv" href="{h(home_url(f, cv=True))}" '

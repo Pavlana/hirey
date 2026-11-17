@@ -353,6 +353,100 @@
     form.requestSubmit ? form.requestSubmit() : form.submit();
   });
 
+  // --- split between the left column and the panel -------------------------------------------
+  // The divider (.apps-split, a window splitter) moves the boundary: drag it, arrow keys (Shift for
+  // bigger steps), Home / End to the limits, double-click or Enter for half and half. The left
+  // column's share is kept per browser; storage may be blocked, then it is 50/50 on every load.
+  // The share goes into --split-l / --split-r as fr, so the divider's own width comes out of the
+  // rest. Both sides keep a minimum width; where both cannot fit the split stays at half and half.
+  // CSS shows the divider only from 801px wide while a panel is open.
+  const split = document.querySelector(".apps > .apps-split");
+  if (split) {
+    const SPLIT_KEY = "apps-split";
+    const MIN_LEFT = 360;
+    const MIN_PANEL = 420;
+    const container = split.parentElement;
+    let share = 0.5; // the left column's share, as picked (the shown one may be clamped)
+    try {
+      const saved = Number(localStorage.getItem(SPLIT_KEY));
+      if (saved > 0.05 && saved < 0.95) share = saved;
+    } catch { /* not remembered: half and half */ }
+
+    const room = () => container.clientWidth - (split.offsetWidth || 16);
+    function limits() {
+      const width = room();
+      if (width < MIN_LEFT + MIN_PANEL) return [0.5, 0.5];
+      return [MIN_LEFT / width, 1 - MIN_PANEL / width];
+    }
+    function paint() {
+      const [lo, hi] = limits();
+      const shown = Math.min(hi, Math.max(lo, share));
+      container.style.setProperty("--split-l", `${(shown * 100).toFixed(2)}fr`);
+      container.style.setProperty("--split-r", `${((1 - shown) * 100).toFixed(2)}fr`);
+      const pct = Math.round(shown * 100);
+      split.setAttribute("aria-valuenow", String(pct));
+      split.setAttribute("aria-valuemin", String(Math.ceil(lo * 100)));
+      split.setAttribute("aria-valuemax", String(Math.floor(hi * 100)));
+      split.setAttribute("aria-valuetext", `List ${pct}%, panel ${100 - pct}%`);
+      split.classList.toggle("is-fixed", lo === hi);
+      return shown;
+    }
+    function save() {
+      try {
+        if (Math.abs(share - 0.5) < 0.005) localStorage.removeItem(SPLIT_KEY);
+        else localStorage.setItem(SPLIT_KEY, share.toFixed(4));
+      } catch { /* not remembered */ }
+    }
+    function setShare(next, { keep = true } = {}) {
+      share = next;
+      share = paint(); // what is shown is what is kept (within the limits)
+      if (keep) save();
+    }
+
+    split.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 || split.classList.contains("is-fixed")) return;
+      e.preventDefault(); // no text selection while dragging
+      split.focus({ preventScroll: true }); // then the arrow keys go on from here
+      split.setPointerCapture(e.pointerId);
+      split.classList.add("is-dragging");
+      document.body.classList.add("is-resizing");
+    });
+    split.addEventListener("pointermove", (e) => {
+      if (!split.hasPointerCapture(e.pointerId)) return;
+      const box = container.getBoundingClientRect();
+      setShare((e.clientX - box.left - split.offsetWidth / 2) / room(), { keep: false });
+    });
+    const endDrag = (e) => {
+      if (!split.hasPointerCapture(e.pointerId)) return;
+      split.releasePointerCapture(e.pointerId);
+      split.classList.remove("is-dragging");
+      document.body.classList.remove("is-resizing");
+      save();
+    };
+    split.addEventListener("pointerup", endDrag);
+    split.addEventListener("pointercancel", endDrag);
+    // Where both sides cannot fit their minimum the split is fixed; the share picked on a wider
+    // window is left alone.
+    split.addEventListener("dblclick", () => { if (!split.classList.contains("is-fixed")) setShare(0.5); });
+    split.addEventListener("keydown", (e) => {
+      if (e.metaKey || e.ctrlKey || e.altKey || split.classList.contains("is-fixed")) return;
+      const step = e.shiftKey ? 0.1 : 0.02;
+      const [lo, hi] = limits();
+      const next = { ArrowLeft: share - step, ArrowRight: share + step, Home: lo, End: hi, Enter: 0.5 }[e.key];
+      if (next === undefined) return;
+      e.preventDefault();
+      e.stopPropagation();
+      setShare(next);
+    });
+    // A narrower window may push the shown split into a limit; the picked share is kept.
+    let resizeFrame = 0;
+    window.addEventListener("resize", () => {
+      cancelAnimationFrame(resizeFrame);
+      resizeFrame = requestAnimationFrame(paint);
+    });
+    paint();
+  }
+
   // --- Applications ---------------------------------------------------------------------
   // The server renders every state from the query string (?view=, ?app=ID or ?job=ID side panel,
   // the filters), so this only adds: a panel opens without a reload, Esc closes it, and after any
