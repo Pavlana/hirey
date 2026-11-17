@@ -97,6 +97,7 @@ MESSAGES = {
     "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the agent. Its reply shows in the thread.",
     "mock_started": "Mock interview asked for. The agent's first question shows in the Agent box.",
+    "notes_saved": "Notes saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "brief_queued": "Brief queued. The agent writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
@@ -133,6 +134,15 @@ KIND_SHADES = {"apply": "s9", "prep": "s7", "drill": "s5", "admin": "s3"}
 
 class BadRequest(Exception):
     """A form value is missing or invalid; the message is shown on a 400 page."""
+
+
+class NotesStale(BadRequest):
+    """A Notes save over notes that changed meanwhile. `html` is the Notes card again, editing the
+    user's text against the current notes (the JSON reply's "html" and "stamp"; the 400 page's form)."""
+
+    def __init__(self, message: str, html: str, stamp: str) -> None:
+        super().__init__(message)
+        self.html, self.stamp = html, stamp
 
 
 class NotFound(Exception):
@@ -188,9 +198,11 @@ def handle(settings: Settings, method: str, target: str, headers: Mapping[str, s
             return _post(settings, url.path, _form(body), today, wants_json(headers))
         return _text(405, "Method not allowed.")
     except BadRequest as e:
+        stale = e if isinstance(e, NotesStale) else None
         if method == "POST" and wants_json(headers):
-            return _json(400, {"ok": False, "message": str(e)})
-        content = _banner(str(e), "warning") + '<p><a class="btn btn-secondary" href="/">Back to Applications</a></p>'
+            return _json(400, {"ok": False, "message": str(e), **({"html": stale.html, "stamp": stale.stamp} if stale else {})})
+        content = (_banner(str(e), "warning") + (stale.html if stale else "")
+                   + '<p><a class="btn btn-secondary" href="/">Back to Applications</a></p>')
         return _page(400, "Not saved", "The form was not saved.", content, "")
 
 
@@ -592,6 +604,22 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     return {"redirect": _here(app_id)}
 
 
+def save_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The Notes card's Save: replace the notes (empty clears them) unless they changed since the form
+    was opened (its `stamp`); then the user's text comes back in the editor beside the current notes."""
+    app_id = _app_id(conn, form)
+    text = form.get("notes", "")
+    try:
+        db.save_notes(conn, app_id, text, form.get("stamp", ""))
+    except db.NotesChanged as e:
+        current = db.get_notes(conn, app_id)
+        log.info("notes save for application %s refused: they changed meanwhile", app_id)  # never the text
+        raise NotesStale(str(e), _notes_card(app_id, current, _here(app_id), draft=text, alert=str(e)),
+                         current["stamp"]) from e
+    log.info("notes %s for application %s from the dashboard", "saved" if text else "cleared", app_id)
+    return {"redirect": _here(app_id), "html": _notes_card(app_id, db.get_notes(conn, app_id), _here(app_id))}
+
+
 def restore_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """The My CV panel's Restore: make a saved version cv.md again (cvfile.restore: the text it
     replaces is kept as a version, which the toast's Undo restores)."""
@@ -641,6 +669,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/mock": (start_mock, "/", "mock_started"),
+    "/applications/notes": (save_notes, "/", "notes_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
     "/tasks/done": (complete_task, "/", "task_done"),
@@ -1473,7 +1502,8 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         + _shortcuts(conn, app, found, versions, here)
         + _panel_tasks(r["tasks"], today, here)
         + _research_cards(app, found, versions, here, private_dir,
-                          db.cv_check(conn, app["id"], versions[-1]["version"]) if versions else None)
+                          db.cv_check(conn, app["id"], versions[-1]["version"]) if versions else None,
+                          db.get_notes(conn, app["id"]))
         + _history(conn, app["id"])
         + "</div></aside>"
     )
@@ -1618,13 +1648,14 @@ def _fit_tone(score: int) -> str:
 
 
 def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None,
-                    check: dict | None = None) -> str:
-    """The agent's results, each with Open and Redo: company research (with the tier the research
-    set and why), the CV fit with its top gaps, and every tailored CV version (the sent one marked;
-    the latest with its PDF, its check's verdict, flagged lines and changes vs cv.md: `check`).
-    A card shows once there is a result; queued work shows on its shortcut button."""
+                    check: dict | None = None, notes: dict | None = None) -> str:
+    """The Notes card (always, when `notes` is given: db.get_notes), then the agent's results, each with
+    Open and Redo: company research (with the tier the research set and why), the CV fit with its top
+    gaps, and every tailored CV version (the sent one marked; the latest with its PDF, its check's
+    verdict, flagged lines and changes vs cv.md: `check`). A result card shows once there is a result;
+    queued work shows on its shortcut button."""
     profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
-    cards = []
+    cards = [_notes_card(app["id"], notes, here)] if notes is not None else []
     if profile:
         size = " · ".join(x for x in (
             profile["size_band"] and f'{profile["size_band"]} people',
@@ -1661,6 +1692,31 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
                 '<p class="muted">Ask the agent for changes; each one is a new version. Tell it which file you sent.</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
+
+
+def _notes_card(app_id: int, notes: dict, here: str, draft: str | None = None, alert: str = "") -> str:
+    """The Notes card: the notes as safe Markdown (escaped; line breaks kept; agent additions at the
+    end), and Edit, which opens a form with the text and the notes' stamp (db.save_notes refuses a
+    stale one). With `draft` (a refused save), the editor is open with that text under the current
+    notes, after `alert`."""
+    text, stamp = notes["notes"], notes["stamp"]
+    body = render_markdown(text, '<p class="muted">No notes yet. Questions to ask, call notes, what the agent '
+                                 'finds: edit here or ask the agent to note it.</p>', breaks=True)
+    when = f' <span class="mono muted">{h(_short_day(stamp))}</span>' if stamp and text else ""
+    opened = " open" if draft is not None else ""
+    form = (f'<details class="notes-edit"{opened}><summary class="btn btn-ghost btn-sm">Edit</summary>'
+            '<form method="post" action="/applications/notes" class="notes-form" data-notes>'
+            f'<input type="hidden" name="app_id" value="{h(app_id)}">'
+            f'<input type="hidden" name="stamp" value="{h(stamp)}">'
+            f'<input type="hidden" name="return" value="{h(here)}">'
+            f'<textarea name="notes" rows="10" maxlength="{db.MAX_NOTES}" aria-label="Notes">'
+            f'{h(text if draft is None else draft)}</textarea>'
+            '<p class="notes-buttons">' + _button("Save", "primary", "sm")
+            + f'<a class="btn btn-ghost btn-sm" href="{h(here)}" data-notes-cancel>Cancel</a>'
+            '<span class="muted">Markdown: **bold**, - lists. Empty clears the notes.</span></p></form></details>')
+    return (f'<section class="artifact notes-card" id="card-notes"><div class="artifact-head"><strong>Notes</strong>'
+            f'{when}</div>{_banner(alert, "warning") if alert else ""}<div class="notes-body doc">{body}</div>'
+            f'{form}</section>')
 
 
 CHECK_TONES = {"ready": "success", "look": "warning", "blocked": "danger"}

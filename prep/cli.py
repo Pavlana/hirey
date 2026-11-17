@@ -7,6 +7,8 @@
                                      [--next-action TEXT [--next-date DATE]] ...
     python -m prep.cli comment APP_ID TEXT
     python -m prep.cli comments list APP_ID | amend REF TEXT | remove REF   (REF: c12 or h34)
+    python -m prep.cli notes APP_ID [--show | --append [TEXT]]   (the panel's Notes; append text on stdin
+                                                       when TEXT is left out; a dated "Agent" block, never pay)
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
@@ -57,6 +59,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -325,6 +328,37 @@ def cmd_comment(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     log.info("comment added to application %s", args.app_id)  # never the text
     print(f"Comment added to {_app_line(db.get_application(conn, args.app_id))}")
     return 0
+
+
+def cmd_notes(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """An application's notes (the panel's Notes card): --show prints them; --append adds a dated
+    "Agent" block at the end (TEXT, or stdin when TEXT is left out) and never rewrites what is there."""
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    if args.append is not None:
+        text = sys.stdin.read() if args.append == "-" else args.append
+        db.append_notes(conn, args.app_id, text)
+        log.info("notes appended for application %s", args.app_id)  # never the text
+        print(f"Added to the notes of {_app_line(app)}:")
+        print(db.notes_block(text, db.today_iso()))
+        return 0
+    notes = db.get_notes(conn, args.app_id)
+    print(f"Notes of {_app_line(app)}" + (f" (changed {notes['stamp'][:10]})" if notes["stamp"] else "") + ":")
+    print(notes["notes"] or "(none)")
+    return 0
+
+
+def _print_notes(conn: sqlite3.Connection, app_id: int) -> None:
+    """The notes as context for the agent, with the command that adds to them."""
+    notes = db.get_notes(conn, app_id)["notes"]
+    print(f"\nNotes (the panel's Notes card; add with: python -m prep.cli notes {app_id} --append, text on stdin):")
+    print("\n".join(f"  {line}" for line in notes.splitlines()) if notes else "  none")
+
+
+def has_questions_section(notes: str) -> bool:
+    """True when the notes already hold a "Questions to ask" section (a heading or a bold line)."""
+    return bool(re.search(r"^\s*(?:#+\s*|\*\*)?questions to ask\b", notes, re.IGNORECASE | re.MULTILINE))
 
 
 def cmd_comments(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -791,9 +825,14 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     if app.get("link"):
         print(f"  link: {app['link']}")
     print(f"  company slug: {slug}")
+    _print_notes(conn, app_id)
     for r in sorted(claimed, key=lambda r: db.REQUEST_KINDS.index(r["kind"])):  # the fit before tailoring
         if r["kind"] == "research":
             _print_research_step(conn, settings, private_dir, app_id, slug, bool(r["force"]))
+            if not has_questions_section(db.get_notes(conn, app_id)["notes"]):
+                print(f"  no \"Questions to ask\" yet: after the research, add 3-5 specific to this company and role: "
+                      f"python -m prep.cli notes {app_id} --append <<'NOTES' … NOTES (a \"**Questions to ask**\" line, then "
+                      "a list; never pay)")
             if app.get("getjo_job_id") and (r["force"] or not db.job_briefs(conn, {app["getjo_job_id"]})):
                 _print_brief_step(settings, app["getjo_job_id"], f"#{app_id} (from the job description)")
                 if not any(c["kind"] in ("cv_fit", "tailor") for c in claimed):  # those steps print it
@@ -1315,6 +1354,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
     found = db.comments(conn, app["id"])
     print(f"Comments ({len(found)}, newest first; refs for comments amend/remove):")
     print("\n".join(_comment_line(c) for c in found) or "  none")
+    _print_notes(conn, app["id"])
 
     _print_messages(db.thread(conn, app["id"]), f"Messages about #{app['id']}", conn)
     _print_claim(args, claimed, db.pending_messages(conn, app["id"]))
@@ -1664,6 +1704,14 @@ def build_parser() -> argparse.ArgumentParser:
     c = csub.add_parser("remove", help="delete a comment (a stage change keeps its move)")
     c.add_argument("ref")
     p.set_defaults(func=cmd_comments)
+
+    p = sub.add_parser("notes", help="an application's notes (the panel's Notes card): show, or append a dated block")
+    p.add_argument("app_id", type=int)
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--show", action="store_true", help="print the notes (the default)")
+    g.add_argument("--append", nargs="?", const="-", metavar="TEXT",
+                   help="add a dated 'Agent' block at the end; without TEXT, read it from stdin")
+    p.set_defaults(func=cmd_notes)
 
     p = sub.add_parser("skip", help="skip an Interested application (closes it; New offers lists it under Show skipped)")
     p.add_argument("app_id", type=int)

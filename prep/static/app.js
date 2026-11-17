@@ -409,6 +409,10 @@
           panel = document.importNode(next, true);
           const same = current && current.dataset.app === panel.dataset.app && current.dataset.job === panel.dataset.job;
           const scroll = same ? current.scrollTop : 0;
+          // Notes being edited survive a refresh (the agent replied meanwhile): the open editor keeps
+          // its text and its stamp, so a save over the agent's addition is still refused, not lost.
+          const editing = same && current.querySelector("#card-notes .notes-edit[open]")?.closest("#card-notes");
+          if (editing) panel.querySelector("#card-notes")?.replaceWith(editing);
           if (current) current.replaceWith(panel); else apps.append(panel);
           if (list) {
             panel.scrollTop = scroll; // a refresh keeps the reader's place
@@ -621,6 +625,55 @@
       }
     });
   }
+
+  // --- Notes card ------------------------------------------------------------------------
+  // Edit opens the form (a <details>); Cancel closes it with the text as saved. Save posts it and
+  // swaps in the card the server returns. A save over notes that changed meanwhile comes back
+  // refused with the card again: the current notes above, the user's text still in the editor.
+  document.addEventListener("click", (e) => {
+    const cancel = e.target.closest("[data-notes-cancel]");
+    if (!cancel || !window.fetch) return;
+    e.preventDefault();
+    const edit = cancel.closest(".notes-edit");
+    const area = edit?.querySelector("textarea");
+    if (area) area.value = area.defaultValue;
+    if (edit) edit.open = false;
+  });
+  document.addEventListener("toggle", (e) => {
+    if (e.target.matches?.(".notes-edit") && e.target.open) e.target.querySelector("textarea")?.focus();
+  }, true);
+  document.addEventListener("submit", async (e) => {
+    const form = e.target.closest("form[data-notes]");
+    if (!form || !window.fetch) return;
+    e.preventDefault();
+    const button = form.querySelector("button");
+    if (button) button.disabled = true;
+    try {
+      const res = await fetch(form.action, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      let reply = null;
+      if ((res.headers.get("content-type") || "").includes("application/json")) reply = await res.json();
+      if (!reply) throw new Error(`Not saved (HTTP ${res.status}).`);
+      const card = form.closest("#card-notes");
+      if (reply.html && card) {
+        const tpl = document.createElement("template");
+        tpl.innerHTML = reply.html; // built and escaped by the server
+        const fresh = tpl.content.firstElementChild;
+        card.replaceWith(fresh);
+        if (!reply.ok) fresh.querySelector("textarea")?.focus();
+      }
+      if (!reply.ok) throw new Error(reply.message || "Not saved.");
+      toast(reply.message);
+    } catch (err) {
+      toast(err.message || "Not saved.", { error: true });
+    } finally {
+      if (button?.isConnected) button.disabled = false;
+    }
+  });
 
   document.addEventListener("submit", async (e) => {
     const form = e.target.closest("form[data-ajax]");

@@ -69,6 +69,8 @@ answering", leave that thread alone. The output contains:
 - stage and tier, the open tasks with their ids (`#12`) and the comments with their refs
   (`c3` a free comment, `h7` a comment given with a stage change), newest first
 - the job description from getjo, when there is one
+- the notes (the panel's Notes card): the user's own notes and the agent's dated additions, such
+  as questions to ask, call notes, interview format. Read them as context for the answer
 - the messages about that application, oldest first: earlier messages give the context of a
   follow-up question
 
@@ -154,6 +156,29 @@ match), ask one short question instead.
 
 Never put pay in a task or comment unless the user's own words ask for it.
 
+**Notes.** Each application has one Notes card on its panel; the user edits it and the agent
+appends to it. Append when the user asks to note something ("note the interview is in two
+rounds"), when a recruiter email or call notes are pasted (below), and after a mock or a debrief
+of that application:
+
+```bash
+python -m prep.cli notes APP --append <<'NOTES'
+- Format: two rounds, a pairing exercise then a system design chat
+- AI tools: not allowed in the pairing round
+- Sam Lee, recruiter; Dana Cole, engineering manager
+- Next: availability for next week to Sam
+- Ask: how on-call is shared
+NOTES
+```
+
+- Only the useful points, as short `-` bullets: interview format, whether AI tools are allowed,
+  names and roles, next steps, questions to ask. Skip what the notes already say.
+- `--append` adds a dated "**Agent · 17 Nov**" block at the end; it never rewrites the user's
+  text. To change what is already there, ask the user to edit the card.
+- Never pay, salary or rates in notes (the command refuses them); pay goes in
+  `python -m prep.cli update APP --pay "…"` only when the user asks.
+- Say in the reply what was added ("Added to Notes: format, AI tools not allowed, two names.").
+
 **A pasted recruiter email, call notes or a status line** (an interview invitation, a
 reschedule, a rejection, an offer): do what `/stage` does, for this application only. Its
 skill file `.claude/skills/stage/SKILL.md` has the stage table and the rules.
@@ -162,6 +187,7 @@ skill file `.claude/skills/stage/SKILL.md` has the stage table and the rules.
   or `python -m prep.cli comment APP "…"` when nothing moves.
 - Extra to-dos go in with `python -m prep.cli task add "…" --kind admin|prep --due D --app APP`.
 - The comment is a summary of at most about 200 characters, never the whole email.
+- The useful details (format, AI tools, names and roles, next steps) go into Notes as above.
 
 Reply in one or two lines, for example "Moved to Coding interview, Tue 10 Nov 14:00; prep tasks
 due Mon 9 Nov. Added: send availability to Sam."

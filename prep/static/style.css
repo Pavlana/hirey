@@ -565,6 +565,21 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .artifact-actions { margin-left: auto; display: inline-flex; gap: 4px; }
 .artifact-actions form.inline { margin: 0; }
 .artifact .gaps { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+/* Notes: the user's and the agent's notes on one application; Edit opens the form under them */
+.notes-body p, .notes-body ul { margin: 0 0 4px; }
+.notes-body ul { padding-left: 1.2em; }
+.notes-body h2, .notes-body h3, .notes-body h4 { margin: var(--space-2) 0 4px; font-size: 13.5px; }
+.notes-card .warning { margin: 4px 0; }
+.notes-edit > summary { list-style: none; width: fit-content; }
+.notes-edit > summary::-webkit-details-marker { display: none; }
+.notes-edit[open] > summary { display: none; }
+.notes-form { display: grid; gap: var(--space-2); margin: 4px 0 0; }
+.notes-form textarea {
+  width: 100%; min-height: 160px; padding: var(--space-2) var(--space-3); resize: vertical; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); line-height: 1.5;
+}
+.notes-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.notes-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
 .versions { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .version-name { font-size: 12.5px; overflow-wrap: anywhere; }
