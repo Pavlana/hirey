@@ -63,11 +63,11 @@ Internal names keep the original name: the Python package `prep`, the settings f
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `cv-facts.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `cv-facts.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `learn/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
-(`cv.example.md`, `cv-facts.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
+(`cv.example.md`, `cv-facts.example.md`, `learn.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
 
 ## Layout
 
@@ -87,7 +87,8 @@ tests/       unit tests; fixtures/example.json holds made-up data (fictional com
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
-docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow), usage.md (setup and reference), screenshots/
+docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow), usage.md (setup and reference),
+             learn-format.md (Markdown format of `cards import`; example: learn.example.md), screenshots/
 data/        local databases (gitignored)
 requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 ```
@@ -114,7 +115,9 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
   `PREP_ASSISTANT_TASK=` keeps it from messaging the real standing assistant)
 - Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
-  `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`
+  `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
+  `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
+  after the user confirms), `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`, `cards delete ID`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`

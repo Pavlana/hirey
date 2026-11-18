@@ -61,6 +61,27 @@ TRANSCRIPT_END
   otherwise leave it out.
 - The application's open "Debrief — what to improve" task is completed by the command.
 
+## 3b. Gap cards — drafted, saved only after a yes
+
+`python -m prep.cli cards gaps --session S` (S: the session the command printed) gives a draft per
+gap of this session with no Learn card yet: JSON with track, chapter, front, an empty back and
+`source_gap_id`. For each, write the front as the question to drill and the back as 3 to 6 short
+key points on the topic, plus one line on how to answer from cv.md when cv.md backs it. Never
+invent the user's experience or numbers.
+
+Show the drafts in the reply (`**<front>** (gap #ID)`, then its key points) and ask: "Save these as Learn cards?"
+Save only after a yes, with the user's changes, in one call:
+
+```bash
+python -m prep.cli cards add <<'CARDS'
+[{"track": "gaps-to-drill", "chapter": "Initech", "front": "…", "back": "- …", "tags": ["gap"],
+  "source_gap_id": 12}]
+CARDS
+```
+
+All or none; a gap that already has a card is refused, so there are no duplicates. The "Gaps to
+drill" track is created with its first card.
+
 ## 4. The outcome is /stage's job — order matters
 
 If the text also says what happens next, record that as /stage does (`python -m prep.cli update ID
@@ -93,5 +114,6 @@ A few lines from the command output. For example:
 
 > Initech coding interview (10 Nov) recorded: 6 questions, scores coding 3/5, communication 4/5.
 > New drills: Consistent hashing, STAR stories: shorter. Transcript saved in sessions/.
+> Cards to drill (not saved yet): **How does consistent hashing spread keys?** (gap #12) … — save them?
 
 If something failed, say so plainly with the error line.

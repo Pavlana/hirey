@@ -15,6 +15,7 @@ companies/*
 fit/*
 cv-tailored/*
 cv-history/*
+learn/*
 data/*
 !data/.gitkeep
 *.db

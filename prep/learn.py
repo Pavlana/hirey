@@ -14,6 +14,8 @@ SOURCE_KINDS = ("watch", "read", "notes")
 CARD_FIELDS = ("track", "chapter", "front", "back", "tags", "follow_ups", "sources", "source_gap_id")
 SOURCE_FIELDS = ("kind", "title", "url", "minutes", "why")
 CARD_STATUSES = ("todo", "done")
+# (slug, title, subtitle) of the track that cards drafted from gaps go to; added with its first card.
+GAPS_TRACK = ("gaps-to-drill", "Gaps to drill", "Weak spots from mocks, interviews and CV fits")
 
 
 def slugify(title: str) -> str:
@@ -23,7 +25,7 @@ def slugify(title: str) -> str:
 # --- tracks and chapters ----------------------------------------------------------
 
 def add_track(conn: sqlite3.Connection, title: str, subtitle: str | None = None, cover: str | None = None,
-              slug: str | None = None) -> int:
+              slug: str | None = None, commit: bool = True) -> int:
     """A new track at the end of the list; `cover` defaults to the next colour in TRACK_COVERS."""
     title = title.strip()
     if not title:
@@ -39,7 +41,8 @@ def add_track(conn: sqlite3.Connection, title: str, subtitle: str | None = None,
     cursor = conn.execute(
         "INSERT INTO tracks (slug, title, subtitle, cover, position, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         (slug, title, subtitle, cover, count + 1, db.now_iso()))
-    conn.commit()
+    if commit:
+        conn.commit()
     return cursor.lastrowid
 
 
@@ -124,10 +127,10 @@ def add_card(conn: sqlite3.Connection, card: dict, commit: bool = True) -> int:
         raise ValueError("a card needs a front (the question) and a back (key points)")
     if card.get("track") is None:
         raise ValueError("a card needs a track (id or slug)")
+    gap_id = _check_gap(conn, card.get("source_gap_id"))
+    if gap_id is not None and str(card["track"]) == GAPS_TRACK[0] and not _track_exists(conn, GAPS_TRACK[0]):
+        add_track(conn, GAPS_TRACK[1], GAPS_TRACK[2], slug=GAPS_TRACK[0], commit=False)
     track = get_track(conn, card["track"])
-    gap_id = card.get("source_gap_id")
-    if gap_id is not None and not conn.execute("SELECT 1 FROM gaps WHERE id = ?", (gap_id,)).fetchone():
-        raise LookupError(f"no gap with id {gap_id}")
     tags, follow_ups, sources = _strings("tags", card.get("tags")), _strings("follow_ups", card.get("follow_ups")), \
         _sources(card.get("sources"))
     chapter = card.get("chapter")
@@ -155,6 +158,24 @@ def add_cards(conn: sqlite3.Connection, cards: list[dict]) -> list[int]:
         raise
     conn.commit()
     return ids
+
+
+def _track_exists(conn: sqlite3.Connection, slug: str) -> bool:
+    return conn.execute("SELECT 1 FROM tracks WHERE slug = ?", (slug,)).fetchone() is not None
+
+
+def _check_gap(conn: sqlite3.Connection, gap_id: object, card_id: int | None = None) -> int | None:
+    """The gap id when it names a gap that no other card is drafted from yet (one card per gap)."""
+    if gap_id is None:
+        return None
+    if not isinstance(gap_id, int) or isinstance(gap_id, bool):
+        raise ValueError("source_gap_id must be a whole number")
+    if not conn.execute("SELECT 1 FROM gaps WHERE id = ?", (gap_id,)).fetchone():
+        raise LookupError(f"no gap with id {gap_id}")
+    other = conn.execute("SELECT id FROM cards WHERE source_gap_id = ? AND id IS NOT ?", (gap_id, card_id)).fetchone()
+    if other:
+        raise ValueError(f"gap #{gap_id} already has card #{other[0]}")
+    return gap_id
 
 
 def _card(row: sqlite3.Row) -> dict:
@@ -202,6 +223,14 @@ def set_status(conn: sqlite3.Connection, card_id: int, status: str) -> dict:
     return get_card(conn, card_id)
 
 
+def delete_card(conn: sqlite3.Connection, card_id: int) -> dict:
+    """Remove a card for good (its chapter and track stay); returns the card as it was."""
+    card = get_card(conn, card_id)
+    conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+    conn.commit()
+    return card
+
+
 def card_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
 
@@ -227,3 +256,196 @@ def first_card(conn: sqlite3.Connection, track: str | int) -> int | None:
     cards = list_cards(conn, track)
     todo = [c for c in cards if c["status"] == "todo"]
     return (todo or cards or [{"id": None}])[0]["id"]
+
+
+# --- Markdown import (docs/learn-format.md) ---------------------------------------
+
+_HEADING = re.compile(r"^(#{1,3}) +(.+?)\s*$")
+_KEY = re.compile(r"^(slug|subtitle|cover|tags|gap|follow-ups|sources):\s*(.*?)\s*$")
+_TRACK_KEYS, _CARD_KEYS = ("slug", "subtitle", "cover"), ("tags", "gap", "follow-ups", "sources")
+
+
+def _source_line(text: str, where: str) -> dict:
+    """`kind | title | url | minutes | why`; trailing fields may be left out, empty ones are skipped."""
+    parts = [p.strip() for p in text.split("|")]
+    if len(parts) > 5:
+        raise ValueError(f"{where}: a source has at most 5 fields (kind | title | url | minutes | why)")
+    parts += [""] * (5 - len(parts))
+    kind, title, url, minutes, why = parts
+    source: dict = {"kind": kind, "title": title}
+    if url:
+        source["url"] = url
+    if minutes:
+        m = re.fullmatch(r"(\d+)(?:\s*min)?", minutes)
+        if not m:
+            raise ValueError(f"{where}: source minutes must be a whole number, got {minutes!r}")
+        source["minutes"] = int(m.group(1))
+    if why:
+        source["why"] = why
+    return source
+
+
+def parse_markdown(text: str) -> list[dict]:
+    """Tracks from the import format: `# Track` (then `slug:`, `subtitle:`, `cover:` lines), `## Chapter`,
+    `### Card front`, its back as Markdown, and `tags:`, `gap:`, `follow-ups:` and `sources:` lines.
+    Anything before the first `# ` heading is ignored; lines inside ``` fences are back text.
+    Returns [{"title", "slug", "subtitle", "cover", "cards": [card dicts with CARD_FIELDS but track]}]."""
+    tracks: list[dict] = []
+    track = card = None
+    chapter: str | None = None
+    mode, fence = "back", False
+
+    def finish() -> None:
+        if card is not None:
+            card["back"] = "\n".join(card.pop("_back")).strip()
+            if not card["back"]:
+                raise ValueError(f"card {card['front']!r} has no back (key points)")
+
+    for n, raw in enumerate(text.splitlines(), 1):
+        where, line = f"line {n}", raw.rstrip()
+        if fence or line.lstrip().startswith("```"):
+            if line.lstrip().startswith("```"):
+                fence = not fence
+            if card is not None:
+                if mode != "back":
+                    raise ValueError(f"{where}: a code block belongs in the back, before follow-ups and sources")
+                card["_back"].append(line)
+            continue
+        heading = _HEADING.match(line)
+        if heading:
+            level, title = len(heading.group(1)), heading.group(2)
+            finish()
+            card, mode = None, "back"
+            if level == 1:
+                track = {"title": title, "slug": None, "subtitle": None, "cover": None, "cards": []}
+                tracks.append(track)
+                chapter = None
+            elif track is None:
+                raise ValueError(f"{where}: a chapter or card before the first `# Track` heading")
+            elif level == 2:
+                chapter = title
+            else:
+                card = {"front": title, "chapter": chapter, "tags": [], "follow_ups": [], "sources": [],
+                        "source_gap_id": None, "_back": []}
+                track["cards"].append(card)
+            continue
+        if track is None:
+            continue  # preamble
+        key = _KEY.match(line)
+        if card is None:
+            if not line.strip():
+                continue
+            if not key or key.group(1) not in _TRACK_KEYS:
+                raise ValueError(f"{where}: under a track or chapter heading only slug:, subtitle: and cover: "
+                                 "lines may come before the first `### card`")
+            track[key.group(1)] = key.group(2) or None
+            continue
+        if key and key.group(1) in _CARD_KEYS:
+            name, value = key.groups()
+            if name == "tags":
+                card["tags"] = [t.strip() for t in value.split(",") if t.strip()]
+            elif name == "gap":
+                if not value.lstrip("#").isdigit():
+                    raise ValueError(f"{where}: gap: takes a gap id")
+                card["source_gap_id"] = int(value.lstrip("#"))
+            else:
+                if value:
+                    raise ValueError(f"{where}: put {name} on their own `- ` lines under `{name}:`")
+                mode = name
+            continue
+        if mode == "back":
+            card["_back"].append(line)
+        elif line.strip():
+            if not line.startswith("- "):
+                raise ValueError(f"{where}: under {mode}: every line is a `- ` item")
+            item = line[2:].strip()
+            if mode == "follow-ups":
+                card["follow_ups"].append(item)
+            else:
+                card["sources"].append(_source_line(item, where))
+    if fence:
+        raise ValueError("a ``` code block is not closed")
+    finish()
+    if not tracks:
+        raise ValueError("no `# Track` heading found")
+    return tracks
+
+
+def _import_track(conn: sqlite3.Connection, t: dict) -> dict:
+    slug = slugify(t["slug"] or t["title"])
+    db._check("cover", t["cover"], TRACK_COVERS)
+    if _track_exists(conn, slug):
+        track = get_track(conn, slug)
+        conn.execute("UPDATE tracks SET title = ?, subtitle = COALESCE(?, subtitle), cover = COALESCE(?, cover) "
+                     "WHERE id = ?", (t["title"], t["subtitle"], t["cover"], track["id"]))
+        created = False
+    else:
+        track = get_track(conn, add_track(conn, t["title"], t["subtitle"], t["cover"], slug, commit=False))
+        created = True
+    counts = {"slug": slug, "title": t["title"], "created": created, "added": 0, "updated": 0, "unchanged": 0}
+    seen: set[str] = set()
+    for c in t["cards"]:
+        if c["front"] in seen:
+            raise ValueError(f"track {slug!r} has the card {c['front']!r} twice")
+        seen.add(c["front"])
+        row = conn.execute("SELECT * FROM cards WHERE track_id = ? AND front = ?", (track["id"], c["front"])).fetchone()
+        if row is None:
+            add_card(conn, {**c, "track": track["id"]}, commit=False)
+            counts["added"] += 1
+            continue
+        _check_gap(conn, c["source_gap_id"], row["id"])
+        tags, follow_ups, sources = _strings("tags", c["tags"]), _strings("follow_ups", c["follow_ups"]), \
+            _sources(c["sources"])
+        chapter_id = _chapter_id(conn, track["id"], c["chapter"]) if c["chapter"] else None
+        new = (chapter_id, c["back"], json.dumps(tags), json.dumps(follow_ups), json.dumps(sources), c["source_gap_id"])
+        old = (row["chapter_id"], row["back"], row["tags"], row["follow_ups"], row["sources"], row["source_gap_id"])
+        if new == old:
+            counts["unchanged"] += 1
+        else:
+            conn.execute("UPDATE cards SET chapter_id = ?, back = ?, tags = ?, follow_ups = ?, sources = ?, "
+                         "source_gap_id = ? WHERE id = ?", (*new, row["id"]))
+            counts["updated"] += 1
+    counts["not_in_file"] = conn.execute("SELECT COUNT(*) FROM cards WHERE track_id = ?",
+                                         (track["id"],)).fetchone()[0] - len(seen)
+    return counts
+
+
+def import_markdown(conn: sqlite3.Connection, text: str, dry_run: bool = False) -> list[dict]:
+    """Add or update the tracks and cards in an import file, all or none. A card is matched by its track
+    and front: a match gets the file's back, chapter, tags, follow-ups, sources and gap, and keeps its id,
+    position and done status. Cards missing from the file are left alone (counted as not_in_file).
+    With dry_run nothing is saved. Returns per-track counts: added, updated, unchanged, not_in_file."""
+    tracks = parse_markdown(text)
+    try:
+        counts = [_import_track(conn, t) for t in tracks]
+    except Exception:
+        conn.rollback()
+        raise
+    if dry_run:
+        conn.rollback()
+    else:
+        conn.commit()
+    return counts
+
+
+# --- gaps to drill ----------------------------------------------------------------
+
+def gap_drafts(conn: sqlite3.Connection, gap_ids: list[int] | None = None, application_id: int | None = None,
+               session_id: int | None = None, limit: int | None = None) -> list[dict]:
+    """Card skeletons for open gaps that have no card yet, newest gap first: track GAPS_TRACK, chapter the
+    application's company (else "General"), front the gap, an empty back for the agent to write, tag "gap"
+    and source_gap_id. Nothing is saved: the agent fills the back, shows the user, then `cards add`."""
+    where, params = ["g.status = 'open'", "NOT EXISTS (SELECT 1 FROM cards c WHERE c.source_gap_id = g.id)"], []
+    if gap_ids:
+        where.append(f"g.id IN ({', '.join('?' * len(gap_ids))})")
+        params += gap_ids
+    if application_id is not None:
+        where.append("g.application_id = ?")
+        params.append(application_id)
+    if session_id is not None:
+        where.append("g.session_id = ?")
+        params.append(session_id)
+    sql = ("SELECT g.id, g.gap, a.company FROM gaps g LEFT JOIN applications a ON a.id = g.application_id WHERE "
+           + " AND ".join(where) + " ORDER BY g.id DESC" + (f" LIMIT {int(limit)}" if limit else ""))
+    return [{"track": GAPS_TRACK[0], "chapter": r["company"] or "General", "front": r["gap"], "back": "",
+             "tags": ["gap"], "source_gap_id": r["id"]} for r in conn.execute(sql, params)]

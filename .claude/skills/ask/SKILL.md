@@ -87,6 +87,16 @@ progress: the most recent agent reply about this application with a `— Mock ·
 `question N of M` footer, not `finished`): follow `.claude/skills/mock/SKILL.md`. It asks one question per reply, then scores the
 answers, records the session with its gaps and drill tasks, and replies with the scores.
 
+**Gap cards to save** (the most recent agent reply in this conversation ends its card drafts with
+`— Gap cards · session #S · reply "save cards" …`, and the message says save, yes, or asks for
+changes): each card in that reply is labelled `(gap #ID)`; that ID is its `source_gap_id`, and
+`python -m prep.cli cards gaps --gap ID …` gives its chapter. Take each front and back exactly as
+the reply showed them with the user's changes,
+and save the ones the user kept in one call, `python -m prep.cli cards add <<'CARDS' [ … ] CARDS`
+(all or none; a gap that already has a card is refused, so a repeat does nothing). When the user
+asked for changes and did not say save, reply with the changed drafts and the same `— Gap cards`
+line instead. Reply with the cards saved and their ids. "No" or "skip" saves nothing.
+
 **A comparison** (`/ask compare MSG`, "which fits me better?", "compare these", or any question
 about several ticked jobs): `thread show --message MSG --claim` prints each target in turn
 (application: stage, tier, brief, company and CV fit files with the fit score and gaps, job

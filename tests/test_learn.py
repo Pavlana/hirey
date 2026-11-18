@@ -93,6 +93,163 @@ class LearnDbTest(unittest.TestCase):
             learn.list_cards(self.conn, status="due")
 
 
+IMPORT = """Preamble before the first track: ignored.
+
+# Toy track
+slug: toy
+subtitle: fictional cards
+
+## Basics
+
+### What is a widget?
+tags: confirmed, unknown
+
+- A made-up thing
+- Sold by Initech
+
+```python
+# not a heading: inside a code block
+### nor this
+```
+
+follow-ups:
+- Who sells it?
+sources:
+- watch | Widget video | https://example.com/v | 7 min | warm-up
+- notes | Two-minute script
+
+### Why widgets?
+- Because
+
+# Second track
+cover: rose
+
+### No chapter here
+- Just a card
+"""
+
+
+class LearnImportTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conn = db.connect(Path(self._tmp.name) / "prep.db")
+        self.addCleanup(self.conn.close)
+
+    def counts(self, text: str = IMPORT, dry_run: bool = False) -> dict:
+        return {c["slug"]: c for c in learn.import_markdown(self.conn, text, dry_run)}
+
+    def test_parse(self) -> None:
+        toy, second = learn.parse_markdown(IMPORT)
+        self.assertEqual((toy["slug"], toy["subtitle"], second["cover"]), ("toy", "fictional cards", "rose"))
+        widget = toy["cards"][0]
+        self.assertEqual((widget["front"], widget["chapter"]), ("What is a widget?", "Basics"))
+        self.assertIn("# not a heading", widget["back"])
+        self.assertIn("### nor this", widget["back"])
+        self.assertEqual(widget["tags"], ["confirmed", "unknown"])
+        self.assertEqual(widget["follow_ups"], ["Who sells it?"])
+        self.assertEqual(widget["sources"], [
+            {"kind": "watch", "title": "Widget video", "url": "https://example.com/v", "minutes": 7, "why": "warm-up"},
+            {"kind": "notes", "title": "Two-minute script"}])
+        self.assertEqual(len(toy["cards"]), 2)
+        self.assertIsNone(second["cards"][0]["chapter"])
+
+    def test_parse_errors(self) -> None:
+        bad = {
+            "no track": "### card\n- x",
+            "no back": "# T\n### card\ntags: a",
+            "loose line in a list": "# T\n### card\n- x\nfollow-ups:\nnot an item",
+            "open fence": "# T\n### card\n```\nx",
+            "minutes": "# T\n### card\n- x\nsources:\n- read | t | u | ten",
+            "stray text under a track": "# T\nhello\n### card\n- x",
+        }
+        for name, text in bad.items():
+            with self.subTest(name), self.assertRaises(ValueError):
+                learn.parse_markdown(text)
+
+    def test_import_is_idempotent_and_keeps_done(self) -> None:
+        dry = self.counts(dry_run=True)
+        self.assertEqual(dry["toy"]["added"], 2)
+        self.assertEqual(learn.card_count(self.conn), 0)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0], 0)
+
+        first = self.counts()
+        self.assertEqual((first["toy"]["added"], first["second-track"]["added"]), (2, 1))
+        self.assertTrue(first["toy"]["created"])
+        widget = learn.list_cards(self.conn, "toy")[0]
+        learn.set_status(self.conn, widget["id"], "done")
+
+        again = self.counts()
+        self.assertEqual((again["toy"]["added"], again["toy"]["updated"], again["toy"]["unchanged"]), (0, 0, 2))
+        self.assertEqual(learn.card_count(self.conn), 3)
+
+        edited = IMPORT.replace("- Sold by Initech", "- Sold by Globex").replace("## Basics", "## Core")
+        changed = self.counts(edited)
+        self.assertEqual((changed["toy"]["updated"], changed["toy"]["unchanged"]), (2, 0))  # back, chapter
+        after = learn.get_card(self.conn, widget["id"])
+        self.assertEqual((after["status"], after["position"], after["chapter_title"]), ("done", 1, "Core"))
+        self.assertIn("Globex", after["back"])
+
+        fewer = self.counts(edited.split("### Why widgets?")[0])
+        self.assertEqual((fewer["toy"]["unchanged"], fewer["toy"]["not_in_file"]), (1, 1))
+        self.assertEqual(learn.card_count(self.conn), 3)  # never deleted
+
+    def test_import_all_or_none(self) -> None:
+        bad = IMPORT + "\n# Third\ncover: neon\n### x\n- y\n"
+        with self.assertRaises(ValueError):
+            self.counts(bad)
+        self.assertEqual(learn.card_count(self.conn), 0)
+        with self.assertRaises(ValueError):  # the same front twice in one track
+            self.counts(IMPORT + "\n# Toy again\nslug: toy\n### Why widgets?\n- a\n### Why widgets?\n- b\n")
+        self.assertEqual(learn.card_count(self.conn), 0)
+
+    def test_example_file_imports(self) -> None:
+        text = (Path(__file__).resolve().parent.parent / "learn.example.md").read_text(encoding="utf-8")
+        counts = self.counts(text)
+        self.assertTrue(all(c["added"] > 0 for c in counts.values()))
+
+
+class GapCardsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.conn = db.connect(Path(self._tmp.name) / "prep.db")
+        self.addCleanup(self.conn.close)
+        self.app = db.add_application(self.conn, "Initech", "Engineer")
+        found = db.add_gap_drills(self.conn, ["Consistent hashing", "Big-O of heaps"], application_id=self.app)
+        self.gaps = found["gaps"]
+        db.add_gap_drills(self.conn, ["Unrelated gap"])
+
+    def test_drafts_and_one_card_per_gap(self) -> None:
+        drafts = learn.gap_drafts(self.conn, application_id=self.app)
+        self.assertEqual([d["source_gap_id"] for d in drafts], self.gaps[::-1])  # newest first
+        self.assertEqual((drafts[0]["track"], drafts[0]["chapter"], drafts[0]["back"]),
+                         ("gaps-to-drill", "Initech", ""))
+        self.assertEqual(len(learn.gap_drafts(self.conn)), 3)
+        self.assertEqual(len(learn.gap_drafts(self.conn, limit=1)), 1)
+        self.assertEqual(learn.gap_drafts(self.conn, gap_ids=[self.gaps[0]])[0]["front"], "Consistent hashing")
+
+        with self.assertRaises(ValueError):  # the back must be written first
+            learn.add_cards(self.conn, drafts)
+        self.assertFalse(learn._track_exists(self.conn, "gaps-to-drill"))
+        learn.add_cards(self.conn, [{**d, "back": "- key points"} for d in drafts])
+        self.assertEqual(learn.get_track(self.conn, "gaps-to-drill")["title"], "Gaps to drill")  # made on save
+        self.assertEqual(learn.gap_drafts(self.conn, application_id=self.app), [])
+        with self.assertRaises(ValueError):  # no second card for the same gap
+            learn.add_card(self.conn, {**drafts[0], "front": "Another", "back": "- x"})
+
+        db.close_gap(self.conn, learn.gap_drafts(self.conn)[0]["source_gap_id"])
+        self.assertEqual(learn.gap_drafts(self.conn), [])  # closed gaps are not drafted
+
+    def test_gap_line_in_import(self) -> None:
+        text = f"# Gaps to drill\nslug: gaps-to-drill\n### Hashing\ngap: {self.gaps[0]}\n- ring\n"
+        learn.import_markdown(self.conn, text)
+        self.assertEqual(learn.list_cards(self.conn)[0]["source_gap_id"], self.gaps[0])
+        learn.import_markdown(self.conn, text)  # the same card again is fine
+        with self.assertRaises(ValueError):
+            learn.import_markdown(self.conn, text.replace("### Hashing", "### Other"))
+
+
 class LearnCliTest(IsolatedTestCase):
     def add(self, cards: object) -> tuple[int, str, str]:
         with mock.patch("sys.stdin", io.StringIO(json.dumps(cards))):
@@ -123,6 +280,14 @@ class LearnCliTest(IsolatedTestCase):
         self.assertIn("toy-track · Toy track · 2 chapters · done 1 / 2 · 50%", out)
         _, out, _ = self.run_cli("cards", "undo", "1")
         self.assertIn("Back to do: #1", out)
+        code, out, _ = self.run_cli("cards", "delete", "1")
+        self.assertEqual(code, 0)
+        self.assertIn("Deleted card #1 ", out)
+        code, _, err = self.run_cli("cards", "delete", "1")
+        self.assertNotEqual(code, 0)
+        self.assertIn("no card with id 1", err)
+        _, out, _ = self.run_cli("tracks", "list")
+        self.assertIn("done 0 / 1", out)
         code, _, _ = self.run_cli("cards", "list", "--todo", "--done")
         self.assertEqual(code, 2)
 
@@ -135,6 +300,25 @@ class LearnCliTest(IsolatedTestCase):
         self.run_cli("cards", "done", "1")
         _, out, _ = self.run_cli("today")
         self.assertIn("Learn: 1 done, 2 to do (Toy track 1/2, Other track 0/1)", out)
+
+    def test_import_and_gaps(self) -> None:
+        path = self.tmp / "toy.md"
+        path.write_text(IMPORT, encoding="utf-8")
+        code, out, _ = self.run_cli("cards", "import", str(path), "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertIn("toy · Toy track (new track): 2 added, 0 updated, 0 unchanged", out)
+        self.assertIn("Dry run: nothing saved.", out)
+        self.run_cli("cards", "import", str(path))
+        _, out, _ = self.run_cli("cards", "import", str(path))
+        self.assertIn("toy · Toy track: 0 added, 0 updated, 2 unchanged", out)
+
+        _, out, err = self.run_cli("cards", "gaps")
+        self.assertEqual(json.loads(out), [])
+        self.assertIn("No open gaps", err)
+        self.run_cli("gap", "add", "Consistent hashing")
+        code, out, _ = self.run_cli("cards", "gaps", "--gap", "1")
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)[0]["source_gap_id"], 1)
 
 
 if __name__ == "__main__":
