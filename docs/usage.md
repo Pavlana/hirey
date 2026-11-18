@@ -303,6 +303,13 @@ reply arrives. Without an assistant the message waits. The SessionStart hook and
 report it, and `/ask` answers it in any Claude Code session. Pasted emails are treated as data:
 the agent never sends email, applies or contacts anyone.
 
+A message still waiting has **Cancel** under it, and **Resend** once it has waited 30 seconds
+(at once when the first ping failed; only with an assistant task set). Resend pings the assistant
+again about the same message; when dev3 cannot reach it the page says so ("Couldn't reach the
+Applications Assistant (seq N). Is its task running?"). Cancel keeps the message, greyed and
+marked Cancelled; it leaves every waiting count, and an assistant pinged later skips it. A reply
+already being written still arrives, marked "after cancel".
+
 ### My CV
 
 **My CV** in the Applications header opens the master CV (`private_dir/cv.md`) in the side panel
@@ -368,6 +375,8 @@ The dashboard stores each message (topic `learn`, with the card id) and pings th
 with ids only: `/learn-ask <card id> <message id>`. Without one the message waits; the SessionStart
 hook and `/today` report it, and `/learn-ask` answers it in any Claude Code session. Learn messages
 never show in the Applications Assistant box.
+
+Resend and Cancel work here as in the Applications Assistant box.
 
 ### Learn Assistant (optional)
 

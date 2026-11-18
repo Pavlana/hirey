@@ -11,18 +11,37 @@ text). Any failure is logged and ignored: the work stays queued for the next ses
 
 With `prep_assistant_task` set, each new message to the Learn page's Learn Assistant is sent to that second
 assistant as `/learn-ask <card id> <message id>` (or `/learn-ask general <message id>` with no card).
+
+Each message ping's time and outcome is kept in memory (last_ping), so the dashboard can offer
+Resend at once after a failed ping, or after RESEND_AFTER seconds without a reply.
 """
 
 import logging
 import shutil
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 from prep.config import REPO_ROOT, Settings
 
 log = logging.getLogger("prep.assistant")
 TIMEOUT = 15
+RESEND_AFTER = 30  # seconds a message waits before Resend shows (at once when its ping failed)
+_PINGS: dict[int, tuple[float, bool]] = {}  # message id -> (when, delivered), this process's pings only
+_PINGS_LOCK = threading.Lock()
+
+
+def _record(message_id: int, sent: int) -> int:
+    with _PINGS_LOCK:
+        _PINGS[int(message_id)] = (time.time(), sent > 0)
+    return sent
+
+
+def last_ping(message_id: int) -> tuple[float, bool] | None:
+    """(when, delivered) of the latest ping about a message since the dashboard started, or None."""
+    with _PINGS_LOCK:
+        return _PINGS.get(int(message_id))
 
 
 DEFAULT_DEV3 = Path.home() / ".dev3.0" / "bin" / "dev3"  # where dev3 installs its CLI
@@ -121,8 +140,8 @@ def notify_message(settings: Settings, app_id: int | None, message_id: int, job:
     dev3 = dev3_path(settings)
     if dev3 is None:
         log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
-        return 0
-    return _send([ask_command(settings, app_id, message_id, dev3, job, topic)])
+        return _record(message_id, 0)
+    return _record(message_id, _send([ask_command(settings, app_id, message_id, dev3, job, topic)]))
 
 
 def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3: str) -> list[str]:
@@ -142,8 +161,8 @@ def notify_learn(settings: Settings, card_id: int | None, message_id: int) -> in
     dev3 = dev3_path(settings)
     if dev3 is None:
         log.warning("prep_assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
-        return 0
-    return _send([learn_command(settings, card_id, message_id, dev3)])
+        return _record(message_id, 0)
+    return _record(message_id, _send([learn_command(settings, card_id, message_id, dev3)]))
 
 
 def notify_learn_in_background(settings: Settings, card_id: int | None, message_id: int) -> threading.Thread | None:

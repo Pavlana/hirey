@@ -85,9 +85,12 @@ FIT_GAP_SESSION = "cv fit"
 # The Agent conversation: the user writes, the Applications Assistant (/ask) replies. A user message is
 # about one application or the whole search (application_id NULL). It is pending until an /ask
 # session claims it (claims older than CLAIM_HOURS count as pending again) and answered once a
-# reply names it. Agent replies have no status and inherit the message's application.
+# reply names it. Agent replies have no status and inherit the message's application. The user may
+# cancel a message still waiting (pending or claimed): it is kept, greyed, out of every pending count,
+# and no claim takes it; a reply that arrives later is still stored (shown "after cancel").
 MESSAGE_AUTHORS = ("user", "agent")
-MESSAGE_STATUSES = ("pending", "claimed", "answered")
+MESSAGE_STATUSES = ("pending", "claimed", "answered", "cancelled")
+WAITING = ("pending", "claimed")  # a user message still waiting for its reply
 MAX_MESSAGE = 20_000  # characters: room for a pasted recruiter email
 # A message about neither an application nor a job may have a topic: "cv" is the master CV (the
 # My CV panel's "About my CV" tick). A message with no application, job or topic is general.
@@ -2307,6 +2310,43 @@ def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
     return cursor.rowcount == 1
 
 
+def _status(conn: sqlite3.Connection, msg_id: int) -> str | None:
+    row = conn.execute("SELECT status FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+    return row[0] if row else None
+
+
+def waiting_message(conn: sqlite3.Connection, msg_id: int, learn: bool) -> dict:
+    """A user message still waiting for its reply, in the Learn conversation (`learn`) or the
+    Applications one. ValueError when it is answered or cancelled, LookupError when there is none."""
+    msg = get_message(conn, msg_id)
+    if msg is None or msg["author"] != "user" or (msg["topic"] == LEARN) != learn:
+        raise LookupError(f"no message {msg_id} in this conversation")
+    if msg["status"] not in WAITING:
+        raise ValueError(f"message {msg_id} is {msg['status']}; only a message still waiting can change")
+    return msg
+
+
+def cancel_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -> None:
+    """The user cancels a message still waiting (pending, or claimed by a session that may still
+    reply): it stays in the thread, marked cancelled. Errors as waiting_message."""
+    waiting_message(conn, msg_id, learn)
+    with conn:
+        cursor = conn.execute("UPDATE agent_messages SET status = 'cancelled' WHERE id = ? AND status IN "
+                              "('pending', 'claimed')", (msg_id,))
+    if cursor.rowcount != 1:
+        raise ValueError(f"message {msg_id} was answered meanwhile")
+
+
+def reopen_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -> dict:
+    """Resend: a message still waiting goes back to pending (a claim is dropped, so the assistant
+    pinged again can take it). Returns the message. Errors as waiting_message."""
+    msg = waiting_message(conn, msg_id, learn)
+    with conn:
+        conn.execute("UPDATE agent_messages SET status = 'pending', claimed_at = NULL WHERE id = ? "
+                     "AND status IN ('pending', 'claimed')", (msg_id,))
+    return msg
+
+
 def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) -> int:
     """A user message to the Learn Assistant (topic LEARN) while card `card_id` is open (None: prep in
     general), pending until /learn-ask answers it. LookupError for an unknown card."""
@@ -2382,7 +2422,7 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
             "WHERE id = ? AND status IN ('pending', 'claimed')",
             (stamp, to_id),
         )
-        if cursor.rowcount != 1:
+        if cursor.rowcount != 1 and _status(conn, to_id) != "cancelled":  # a late reply after a cancel is kept
             raise ValueError(f"message {to_id} is already answered")
     card = (conn.execute("SELECT card_id FROM agent_messages WHERE id = ?", (to_id,)).fetchone()[0]
             if to_id is not None else None)  # a Learn Assistant reply is about the question's card

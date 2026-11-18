@@ -1359,6 +1359,8 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     if args.message is not None:  # /ask job MSG: whatever the message is about
         if args.app_id is not None or args.job or args.cv:
             raise ValueError("give an application, --job, --cv or --message, not more than one")
+        if _cancelled(conn, args.message):
+            return 0
         if db.message_topic(conn, args.message) == db.COMPARE:
             return _compare_show(args, settings, conn)
         if db.message_topic(conn, args.message) == db.LEARN:
@@ -1680,7 +1682,9 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
              else "about the master CV" if topic == "cv" else "comparing several jobs" if topic == db.COMPARE
              else "to the Learn Assistant (Learn page)" if topic == db.LEARN else "about the whole search")
     box = "the Learn page's Learn Assistant box" if topic == db.LEARN else "the dashboard's Applications Assistant box"
-    print(f"Reply {reply_id} saved {about}; message {args.to} answered. {box[0].upper() + box[1:]} shows it.")
+    late = db.get_message(conn, args.to)["status"] == "cancelled"
+    done = "was cancelled; the reply shows as after cancel" if late else "answered"
+    print(f"Reply {reply_id} saved {about}; message {args.to} {done}. {box[0].upper() + box[1:]} shows it.")
     return 0
 
 
@@ -1706,7 +1710,18 @@ def cmd_learn_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3
     if args.learn_cmd == "reply":
         args.to, args.app_id = args.message, None
         return _thread_reply(args, conn)
+    if _cancelled(conn, args.message):
+        return 0
     return _learn_show(args, settings, conn)
+
+
+def _cancelled(conn: sqlite3.Connection, msg_id: int) -> bool:
+    """Print the refusal for a message the user cancelled on the dashboard; True if it was."""
+    msg = db.get_message(conn, msg_id)
+    if msg is None or msg["status"] != "cancelled":
+        return False
+    print(f"Message {msg_id} was cancelled by the user on the dashboard. Do nothing: no claim, no reply.")
+    return True
 
 
 def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:

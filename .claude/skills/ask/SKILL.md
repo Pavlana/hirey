@@ -60,7 +60,13 @@ tasks in review order (as `review` below) and the latest 30 messages of the conv
 question about one job, run `thread show APP` (without `--claim`) for its context.
 
 This claims the waiting messages for this session. If it prints "another session is already
-answering", leave that thread alone. The output contains:
+answering", leave that thread alone.
+
+**Cancelled messages.** The user can cancel a message that is still waiting (Cancel in the
+Applications Assistant box). If the message is cancelled, do nothing: no claim, no reply, no
+change. `thread show --message MSG` prints "was cancelled by the user … Do nothing" and stops; in
+the thread a cancelled message shows as `user, cancelled` and is never claimed. A reply to it that
+was already being written may still be saved; the box marks it "after cancel". The output contains:
 
 - the application (company, role, stage, link, contact)
 - context files: company research (`companies/<slug>.md`), CV fit (`fit/<id>-<slug>.md`),

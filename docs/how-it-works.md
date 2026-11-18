@@ -613,6 +613,23 @@
    Want a card for this? and Add to notes under each agent reply; while one waits, `app.js` polls GET
    `/learn/thread?card=ID` (pending, count, HTML) every 4 s for up to 5 minutes, then swaps the
    conversation in and tells the Notes editor to pick up an agent's addition (`learn:refresh`).
+30. Resend and Cancel, in both boxes. A user message still waiting (status in `db.WAITING`: pending
+   or claimed) gets Cancel and, with the box's assistant task set, Resend (`web._wait_actions`).
+   `assistant` keeps each message ping's time and outcome in memory (`last_ping`, this dashboard
+   process only); Resend renders hidden with `data-resend-due` (epoch ms, `assistant.RESEND_AFTER`,
+   30 s after the last ping or the message's creation) and `app.js` reveals it when due, or at once
+   when the last ping failed. POST `/applications/resend` and `/learn/resend` (`msg_id`; the Learn one
+   with `card_id`) go through `ACTIONS` (loopback, same-origin): `db.reopen_message` puts the same
+   row back to pending (a claim dropped), then `assistant.notify_message` / `notify_learn` pings
+   synchronously with the same id (no new row); a failed ping is a 400 "Couldn't reach the
+   Applications/Learn Assistant (seq N). Is its task running?". POST `/applications/cancel` and
+   `/learn/cancel` call `db.cancel_message`: status `cancelled` (allowed in `db.MESSAGE_STATUSES`; no
+   schema change), so it leaves `pending_messages`, the claims, `thread pending`, `queue` and
+   `today`. `thread show --message MSG` and `learn-thread show MSG` print "was cancelled by the user …
+   Do nothing" and stop, and the /ask and /learn-ask skills do nothing. Both refuse a message that is
+   answered, cancelled, or in the other box's conversation. A reply to a cancelled message is still
+   stored (the status stays cancelled); the box flags the message "Cancelled" (greyed) and the reply
+   "after cancel" (`web._msg_flags`).
 
 ## Dashboard
 

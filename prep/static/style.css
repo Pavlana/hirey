@@ -792,6 +792,12 @@ main:has(.learn-view) { max-width: 1880px; }
 .msg-about.is-here { color: var(--accent-text); border-color: var(--accent); }
 .msg-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .msg-actions form { margin: 0; }
+/* A user message still waiting: Resend (after a while, or at once when the ping failed) and Cancel,
+   in both boxes. A cancelled message is greyed and flagged; a late reply to it says "after cancel". */
+.msg-wait { justify-content: flex-end; }
+.msg.is-cancelled .msg-body { opacity: .55; text-decoration: line-through; text-decoration-thickness: 1px; }
+.msg-flag { padding: 0 6px; border-radius: var(--radius-full); border: 1px dashed var(--border-strong);
+  color: var(--text-muted); font-size: 11px; }
 .answer-check { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2);
   margin: calc(-1 * var(--space-4)) 0 0; font-size: 12.5px; }  /* close under Your answer */
 /* Your answer on the card: a plain textarea from six rows, growing as it is typed (app.js). */

@@ -31,6 +31,7 @@ import logging
 import re
 import sqlite3
 import sys
+import time
 from collections.abc import Callable, Mapping
 from contextlib import closing
 from datetime import date, datetime
@@ -112,6 +113,10 @@ MESSAGES = {
     "learn_check_sent": "Your answer went to the Learn Assistant. Its feedback shows in the Learn Assistant box.",
     "learn_card_asked": "Asked for a card. The Learn Assistant drafts it; say yes to save it.",
     "learn_note_added": "Added to the notes.",
+    "resent": "Sent to the Applications Assistant again.",
+    "cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
+    "learn_resent": "Sent to the Learn Assistant again.",
+    "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
 }
 
 SECURITY_HEADERS = [
@@ -595,6 +600,40 @@ def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: 
     return {"redirect": _here(app_id), "html": _thread(conn, settings)}
 
 
+def _msg_id(form: dict[str, str]) -> int:
+    msg_id = _int_field(form, "msg_id")
+    if msg_id is None:
+        raise BadRequest("Which message? (msg_id)")
+    return msg_id
+
+
+def _unreachable(name: str, seq: int | None) -> BadRequest:
+    return BadRequest(f"Couldn't reach the {name} (seq {seq}). Is its task running?")
+
+
+def resend_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Resend, on a message still waiting in the Applications Assistant box: the same message goes
+    back to pending (a stale or stuck claim dropped) and the assistant is pinged again with its id, at
+    once (not in the background) so a failed ping is reported. No new message row."""
+    if not settings.assistant_task:
+        raise BadRequest("No Applications Assistant task is set (assistant_task): run /ask in a Claude Code session.")
+    msg = db.reopen_message(conn, _msg_id(form))
+    about, job = db.message_subject(conn, msg["id"])
+    log.info("message %s sent to the assistant again", msg["id"])
+    if not assistant.notify_message(settings, about, msg["id"], job=about is None and job is not None,
+                                    topic=msg["topic"]):
+        raise _unreachable("Applications Assistant", settings.assistant_task)
+    return {"html": _thread(conn, settings)}
+
+
+def cancel_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Cancel, on a message still waiting in the Applications Assistant box: marked cancelled, kept."""
+    msg_id = _msg_id(form)
+    db.cancel_message(conn, msg_id)
+    log.info("message %s cancelled", msg_id)
+    return {"html": _thread(conn, settings)}
+
+
 def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
     """Write brief / Redo brief: queue a job brief for the agent (Redo when one exists) and ping the
     Applications Assistant. A second click while it is open changes nothing."""
@@ -815,6 +854,27 @@ def add_reply_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[
             "note_card": reply["card_id"]}
 
 
+def resend_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Resend in the Learn Assistant box: as resend_message, pinging `/learn-ask` with the same id."""
+    if not settings.prep_assistant_task:
+        raise BadRequest("No Learn Assistant task is set (prep_assistant_task): run /learn-ask in a Claude Code session.")
+    card_id, back = _learn_back(conn, form)
+    msg = db.reopen_message(conn, _msg_id(form), learn=True)
+    log.info("Learn Assistant message %s sent again", msg["id"])
+    if not assistant.notify_learn(settings, msg["card_id"], msg["id"]):
+        raise _unreachable("Learn Assistant", settings.prep_assistant_task)
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
+def cancel_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Cancel in the Learn Assistant box: as cancel_message."""
+    card_id, back = _learn_back(conn, form)
+    msg_id = _msg_id(form)
+    db.cancel_message(conn, msg_id, learn=True)
+    log.info("Learn Assistant message %s cancelled", msg_id)
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
 def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
     """GET /learn/thread?card=ID for polling: whether a Learn Assistant message is still waiting, the
     message count (a reply arrived) and the conversation's HTML (the open card marked)."""
@@ -843,6 +903,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/mock": (start_mock, "/", "mock_started"),
+    "/applications/resend": (resend_message, "/", "resent"),
+    "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/notes": (save_notes, "/", "notes_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
@@ -855,6 +917,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/learn/check": (check_answer, "/learn", "learn_check_sent"),
     "/learn/card": (draft_card, "/learn", "learn_card_asked"),
     "/learn/add-note": (add_reply_to_notes, "/learn", "learn_note_added"),
+    "/learn/resend": (resend_learn_message, "/learn", "learn_resent"),
+    "/learn/cancel": (cancel_learn_message, "/learn", "learn_cancelled"),
 }
 
 
@@ -1136,17 +1200,20 @@ def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | N
 
     def actions(m: dict) -> str:
         if m["author"] != "agent":
-            return ""
+            return _wait_actions(m, "/learn", "learn", back, bool(settings.prep_assistant_task))
         forms = "".join(
             f'<form method="post" action="{path}" data-ajax="learn"><input type="hidden" name="reply_id" '
             f'value="{h(m["id"])}">{back}<button class="btn btn-ghost btn-sm">{label}</button></form>'
             for path, label in (("/learn/card", "Want a card for this?"), ("/learn/add-note", "Add to notes")))
         return f'<div class="msg-actions">{forms}</div>'
 
+    flags = _msg_flags(conn, messages)
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-card="{h(m["card_id"] or "")}">'
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}{_cancelled_cls(m)}" '
+        f'data-card="{h(m["card_id"] or "")}">'
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
-        + tag(m) + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
+        + tag(m) + flags.get(m["id"], "")
+        + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
         f'<div class="msg-body">{_linkify(m["body"])}</div>{actions(m)}</li>'
         for m in messages)
     pending = bool(db.pending_messages(conn, topic=db.LEARN))
@@ -2474,14 +2541,19 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
                     f'{h(names.get(m["getjo_job_id"], "job offer"))}</a>')
         return '<span class="msg-about">all jobs</span>'
 
+    flags = _msg_flags(conn, messages)
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}" '
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}{_cancelled_cls(m)}" '
+        f'data-app="{h(m["application_id"] or "")}" '
         f'data-job="{h(m["getjo_job_id"] or "")}" data-topic="{h(m["topic"] or "")}" '
         f'data-targets="{h(" ".join(t["key"] for t in targets.get(m["id"], [])))}">'
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
-        + about(m)
+        + about(m) + flags.get(m["id"], "")
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
+        f'<div class="msg-body">{_linkify(m["body"])}</div>'
+        + (_wait_actions(m, "/applications", "thread", "", bool(settings.assistant_task))
+           if m["author"] == "user" else "")
+        + "</li>"
         for m in messages
     )
     pending = bool(db.pending_messages(conn))
@@ -2496,6 +2568,52 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
         state = ""
     return (f'<div class="thread" data-thread{" data-pending" if pending else ""}>'
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
+
+
+def _cancelled_cls(m: dict) -> str:
+    return " is-cancelled" if m["status"] == "cancelled" else ""
+
+
+def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]:
+    """A "Cancelled" flag on each cancelled user message and an "after cancel" one on a reply to it."""
+    status = {m["id"]: m["status"] for m in messages}
+    flags = {}
+    for m in messages:
+        if m["status"] == "cancelled":
+            flags[m["id"]] = '<span class="msg-flag">Cancelled</span>'
+        elif m["author"] == "agent" and m["reply_to"] is not None:
+            to = status.get(m["reply_to"]) or (db.get_message(conn, m["reply_to"]) or {}).get("status")
+            if to == "cancelled":
+                flags[m["id"]] = '<span class="msg-flag">after cancel</span>'
+    return flags
+
+
+def _wait_actions(m: dict, base: str, mode: str, extra: str, can_resend: bool) -> str:
+    """Resend and Cancel under a user message still waiting for its reply. Resend shows once the
+    message has waited assistant.RESEND_AFTER seconds since its last ping (data-resend-due, epoch ms,
+    revealed by the page script), or at once when that ping failed; only with an assistant task set."""
+    if m["status"] not in db.WAITING:
+        return ""
+    hidden = f'<input type="hidden" name="msg_id" value="{h(m["id"])}">{extra}'
+    resend = ""
+    if can_resend:
+        ping = assistant.last_ping(m["id"])
+        since = ping[0] if ping else _epoch(m["created_at"])
+        due = int((since + assistant.RESEND_AFTER) * 1000)
+        show = (ping is not None and not ping[1]) or time.time() * 1000 >= due
+        resend = (f'<form method="post" action="{base}/resend" data-ajax="{mode}">{hidden}'
+                  f'<button class="btn btn-ghost btn-sm" data-resend-due="{due}"{"" if show else " hidden"}'
+                  ' title="Ping the assistant again about this message">Resend</button></form>')
+    return (f'<div class="msg-actions msg-wait">{resend}<form method="post" action="{base}/cancel" data-ajax="{mode}">'
+            f'{hidden}<button class="btn btn-ghost btn-sm" title="Stop waiting: the assistant skips it">Cancel</button>'
+            '</form></div>')
+
+
+def _epoch(stamp: str) -> float:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 _URL = re.compile(r"(https?://[^\s<>\"']+)")

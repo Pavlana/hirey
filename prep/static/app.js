@@ -756,6 +756,14 @@
   scrollLearn();
   watchLearn();
 
+  // Resend under a message still waiting shows once it is due (data-resend-due, epoch ms from the
+  // server; at once when the ping failed): both boxes, after every swap too.
+  setInterval(() => {
+    document.querySelectorAll("[data-resend-due][hidden]").forEach((btn) => {
+      if (Date.now() >= Number(btn.dataset.resendDue)) btn.hidden = false;
+    });
+  }, 2000);
+
   // --- Applications ---------------------------------------------------------------------
   // The server renders every state from the query string (?view=, ?app=ID or ?job=ID side panel,
   // the filters), so this only adds: a panel opens without a reload, Esc closes it, and after any
@@ -1141,7 +1149,7 @@
         // The Applications Assistant box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
-        form.elements.body.value = "";
+        if (form.elements.body) form.elements.body.value = ""; // Resend and Cancel have no text
         applyChatFilter();
         watchThread();
         toast(reply.message);

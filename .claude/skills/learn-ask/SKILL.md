@@ -31,6 +31,8 @@ It prints the card in full (front, back as key points, follow-ups, tags, the **L
 with their links), the chapters of its track with their card ids, the paths of the private context
 files, the latest 30 messages of the Learn Assistant conversation, and the commands that answer it.
 "Nothing claimed" means another session has it: leave it alone.
+If the message is cancelled (the user pressed Cancel in the Learn Assistant box), the command
+prints "was cancelled by the user … Do nothing" and stops: do nothing, no claim, no reply.
 
 Read what the message needs, never more:
 
