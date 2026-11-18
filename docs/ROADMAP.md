@@ -81,7 +81,8 @@ Acceptance:
 
 ## Phase 4 — Learn and weekly plan
 
-Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI).
+Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI; Learn 2/5: the Learn page with
+tracks and the card view, notes and prep agent still placeholders).
 
 - Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
   (question, key points, tags, follow-ups, sources to watch or read, source gap, and a status:

@@ -1478,6 +1478,22 @@ def add_interview(conn: sqlite3.Connection, application_id: int, day: str, stage
     return cursor.lastrowid
 
 
+def next_interview(conn: sqlite3.Connection, today: str) -> dict | None:
+    """The nearest interview on or after `today` with its company and stage (the Learn page header).
+    A reschedule adds a row (set_interview_date), so only the latest row per application and stage
+    counts, and only while the application is still in that stage."""
+    stages = ", ".join("?" * len(INTERVIEW_STAGES))
+    row = conn.execute(
+        f"""
+        SELECT i.date, i.stage, a.company FROM interviews i JOIN applications a ON a.id = i.application_id
+        WHERE i.date >= ?
+          AND i.id = (SELECT MAX(j.id) FROM interviews j WHERE j.application_id = i.application_id AND j.stage IS i.stage)
+          AND (a.status = i.stage OR (i.stage IS NULL AND a.status IN ({stages})))
+        ORDER BY i.date, i.id LIMIT 1
+        """, (today, *INTERVIEW_STAGES)).fetchone()
+    return dict(row) if row else None
+
+
 def add_gap(conn: sqlite3.Connection, gap: str, day: str | None = None, session: str | None = None,
             application_id: int | None = None, session_id: int | None = None) -> int:
     day = day or today_iso()

@@ -121,6 +121,18 @@ charts are server-rendered SVG):
   (mock · real), open gaps and a 1–5 score trend per area. Apart from Practice it counts
   applications only; tasks are a to-do list on the Applications page.
   `/progress` redirects here.
+- **Learn** (`/learn`; the nav shows the number of cards to do): "X done · Y to do" and the next
+  interview (company, stage, day) under the title, then one tile per track: a cover colour with a
+  progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
+  do (`?track=SLUG`; any card is `?card=ID`). The card view: **Notes** and **Prep agent** on the
+  left (placeholders for now), the card on the right, with the same divider as Applications (its
+  width kept per browser on its own). **⤢ Expand** on the Prep agent folds Notes away, remembered
+  per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
+  question, a 2-minute **Say it out loud** timer (Start / Pause, Reset), **Show answer** (the key
+  points, likely follow-ups and sources; source links open in a new tab), and **Done** /
+  **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
+  last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
+  date or rating. Phones stack the card above Notes and the Prep agent.
 - **New offers** (`/?view=offers`; the old Job Offers page, `/offers` and `/matches` redirect
   here with their filters): open getjo jobs not yet tracked or skipped, newest day first, then
   highest score. Rows: score, company, role, location, with chips "may be closed" (getjo has not

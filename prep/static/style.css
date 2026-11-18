@@ -708,6 +708,85 @@ form.ask textarea:focus { outline: none; border-color: var(--accent); box-shadow
 form.ask textarea::placeholder { color: var(--text-faint); }
 .ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 12px; }
 
+/* --- learn ----------------------------------------------------------------------
+   /learn: a grid of tracks (a cover gradient with a progress ring, then title, counts and done / all).
+   A card opens the card view: Notes and the Prep agent on the left, the card on the right, with the
+   same divider as Applications (app.js, its own key). ⤢ Expand (.is-agent-wide) folds Notes away.
+   Phones stack them, the card first. Cover colours are fixed (learn.TRACK_COVERS), not the theme. */
+.tracks { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
+.track { display: flex; flex-direction: column; overflow: hidden; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
+  transition: border-color .12s, transform .12s; }
+.track:hover { text-decoration: none; border-color: var(--border-strong); transform: translateY(-1px); }
+.track:focus-visible { outline: none; box-shadow: var(--ring); }
+.track-cover { display: flex; align-items: flex-end; justify-content: flex-end; height: 104px; padding: var(--space-3); }
+.cover-matcha { background: linear-gradient(135deg, #3d4a2c, #8fa66a); }
+.cover-teal { background: linear-gradient(135deg, #1f3d3d, #5f9e98); }
+.cover-amber { background: linear-gradient(135deg, #4a3a1f, #c49a4f); }
+.cover-rose { background: linear-gradient(135deg, #4a2a30, #c27a86); }
+.cover-violet { background: linear-gradient(135deg, #352a4a, #8e78a8); }
+.cover-slate { background: linear-gradient(135deg, #2a2f36, #7a8592); }
+.ring { display: block; }
+.ring circle { fill: none; stroke-width: 4; }
+.ring .ring-track { stroke: rgba(0, 0, 0, .3); }
+.ring .ring-done { stroke: #f4f4f0; stroke-linecap: round; }
+.ring text { fill: #f4f4f0; font-size: 10px; font-weight: 600; font-family: var(--font); }
+.track-body { display: grid; gap: 4px; padding: var(--space-3) var(--space-4) var(--space-4); }
+.track-title { font-family: var(--font-display); font-size: 17px; font-weight: 500; overflow-wrap: anywhere; }
+.track-sub { color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.track-meta { color: var(--text-faint); font-size: 12.5px; }
+.track-done { color: var(--accent-text); font-size: 13px; font-weight: 500; font-variant-numeric: tabular-nums; }
+
+main:has(.learn-view) { max-width: 1880px; }
+.learn-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.learn-view > .learn-card { order: -1; }  /* phones: the card first */
+.learn-side { min-width: 0; display: grid; gap: var(--space-4); align-content: start; }
+.learn-view.is-agent-wide .learn-notes { display: none; }
+.learn-expand[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); }
+@media (min-width: 801px) {
+  .learn-view { column-gap: 0; align-items: stretch;
+    grid-template-columns: minmax(0, var(--split-l, 1fr)) var(--space-4) minmax(0, var(--split-r, 1fr)); }
+  .learn-view > .learn-side { grid-column: 1; grid-template-rows: auto minmax(0, 1fr); }
+  .learn-view.is-agent-wide > .learn-side { grid-template-rows: minmax(0, 1fr); }
+  .learn-view > .learn-card { grid-column: 3; order: 0; align-self: start; }
+  .has-js .learn-view > .apps-split { display: block; grid-column: 2; position: relative; cursor: col-resize;
+    touch-action: none; border-radius: var(--radius-sm); }
+}
+.learn-card { min-width: 0; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md); }
+.learn-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3);
+  padding: var(--space-4) var(--space-5) var(--space-3); border-bottom: 1px solid var(--border); }
+.learn-where { margin: 0; color: var(--text-muted); font-size: 13px; overflow-wrap: anywhere; }
+.learn-sub { margin: 4px 0 0; display: flex; align-items: center; gap: 8px; color: var(--text-faint); font-size: 12.5px; }
+.learn-nav { flex: none; display: inline-flex; gap: 2px; }
+.learn-nav .is-off { opacity: .35; cursor: default; }
+.learn-card-body { display: grid; gap: var(--space-4); padding: var(--space-5); }
+.learn-q { margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 500; line-height: 1.3;
+  white-space: pre-line; overflow-wrap: anywhere; }
+.timer { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface-2); }
+.timer[hidden] { display: none; }
+.timer-label { color: var(--text-muted); font-size: 13px; margin-right: auto; }
+.timer-time { font-family: var(--mono); font-size: 18px; font-variant-numeric: tabular-nums; min-width: 4ch; text-align: right; }
+.timer.is-running .timer-time { color: var(--accent-text); }
+.timer.is-over .timer-time { color: var(--warning); }
+.learn-answer { display: grid; gap: var(--space-3); }
+.learn-answer > summary { list-style: none; width: fit-content; }
+.learn-answer > summary::-webkit-details-marker { display: none; }
+.learn-answer[open] > summary { margin-bottom: var(--space-3); }
+.learn-answer section { display: grid; gap: var(--space-2); margin-bottom: var(--space-3); }
+.learn-answer h3 { margin: 0; font-size: 11.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.learn-answer ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+.learn-answer .doc { font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
+.learn-answer .doc p, .learn-answer .doc ul { margin: 0 0 6px; }
+.learn-sources li { overflow-wrap: anywhere; }
+.learn-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); padding-top: var(--space-3); border-top: 1px solid var(--border); }
+.learn-actions form { margin: 0; }
+@media (max-width: 800px) {
+  .learn-card-head, .learn-card-body { padding-left: var(--space-4); padding-right: var(--space-4); }
+  .learn-q { font-size: 20px; }
+}
+
 /* --- responsive ---------------------------------------------------------------- */
 @media (min-width: 801px) and (max-width: 1599px) {
   main { padding-left: var(--space-6); padding-right: var(--space-6); }

@@ -359,10 +359,12 @@
   // column's share is kept per browser; storage may be blocked, then it is 50/50 on every load.
   // The share goes into --split-l / --split-r as fr, so the divider's own width comes out of the
   // rest. Both sides keep a minimum width; where both cannot fit the split stays at half and half.
-  // CSS shows the divider only from 801px wide while a panel is open.
-  const split = document.querySelector(".apps > .apps-split");
-  if (split) {
-    const SPLIT_KEY = "apps-split";
+  // CSS shows the divider only from 801px wide while a panel is open. The Learn page's card view has
+  // the same divider; each one names its own storage key (data-split-key) and its two sides
+  // (data-split-names, for the screen reader text).
+  document.querySelectorAll(".apps-split[data-split-key]").forEach((split) => {
+    const SPLIT_KEY = split.dataset.splitKey;
+    const [LEFT_NAME, RIGHT_NAME] = (split.dataset.splitNames || "List,panel").split(",");
     const MIN_LEFT = 360;
     const MIN_PANEL = 420;
     const container = split.parentElement;
@@ -387,7 +389,7 @@
       split.setAttribute("aria-valuenow", String(pct));
       split.setAttribute("aria-valuemin", String(Math.ceil(lo * 100)));
       split.setAttribute("aria-valuemax", String(Math.floor(hi * 100)));
-      split.setAttribute("aria-valuetext", `List ${pct}%, panel ${100 - pct}%`);
+      split.setAttribute("aria-valuetext", `${LEFT_NAME} ${pct}%, ${RIGHT_NAME} ${100 - pct}%`);
       split.classList.toggle("is-fixed", lo === hi);
       return shown;
     }
@@ -445,6 +447,68 @@
       resizeFrame = requestAnimationFrame(paint);
     });
     paint();
+  });
+
+  // --- Learn: the card view ------------------------------------------------------------------
+  // The "say it out loud" timer counts down from data-timer seconds (Start / Pause, Reset); at zero
+  // it stops and says "Time". ⤢ Expand on the Prep agent folds Notes away; the choice is kept per
+  // browser. Both stay hidden without the script.
+  const timer = document.querySelector(".timer[data-timer]");
+  if (timer) {
+    const total = Number(timer.dataset.timer) || 120;
+    const shown = timer.querySelector(".timer-time");
+    const toggle = timer.querySelector("[data-timer-toggle]");
+    let left = total;
+    let tick = 0;
+    const paintTimer = () => {
+      shown.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Time";
+      timer.classList.toggle("is-over", left <= 0);
+    };
+    const pause = () => {
+      clearInterval(tick);
+      tick = 0;
+      timer.classList.remove("is-running");
+      toggle.textContent = left > 0 && left < total ? "Resume" : "Start";
+    };
+    toggle.addEventListener("click", () => {
+      if (tick) { pause(); return; }
+      if (left <= 0) left = total;
+      timer.classList.add("is-running");
+      toggle.textContent = "Pause";
+      tick = setInterval(() => {
+        left -= 1;
+        paintTimer();
+        if (left <= 0) pause();
+      }, 1000);
+      paintTimer();
+    });
+    timer.querySelector("[data-timer-reset]").addEventListener("click", () => {
+      left = total;
+      pause();
+      paintTimer();
+    });
+    timer.hidden = false;
+  }
+
+  const expand = document.querySelector("[data-learn-expand]");
+  if (expand) {
+    const EXPAND_KEY = "learn-agent-expanded";
+    const view = document.querySelector(".learn-view");
+    const setExpanded = (on) => {
+      view.classList.toggle("is-agent-wide", on);
+      expand.setAttribute("aria-pressed", String(on));
+      expand.title = on ? "Show Notes again" : "Fold Notes away";
+    };
+    try { setExpanded(localStorage.getItem(EXPAND_KEY) === "1"); } catch { /* not remembered */ }
+    expand.addEventListener("click", () => {
+      const on = !view.classList.contains("is-agent-wide");
+      setExpanded(on);
+      try {
+        if (on) localStorage.setItem(EXPAND_KEY, "1");
+        else localStorage.removeItem(EXPAND_KEY);
+      } catch { /* not remembered */ }
+    });
+    expand.hidden = false;
   }
 
   // --- Applications ---------------------------------------------------------------------

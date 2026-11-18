@@ -38,7 +38,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, research, stats
+from prep import assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, research, stats
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -77,6 +77,8 @@ PAGES = (
                           '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
     ("/dashboard", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
                                 '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+    ("/learn", "Learn", '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5z"/>'
+                        '<path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
               'l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>')
@@ -101,6 +103,9 @@ MESSAGES = {
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "brief_queued": "Brief queued. The agent writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
+    "card_done": "Card done. Here is the next one to do.",
+    "card_todo": "Kept as to do.",
+    "track_done": "Every card in that track is done.",
 }
 
 SECURITY_HEADERS = [
@@ -121,7 +126,7 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: dusty-blue, eucalyptus,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "ochre", "/dashboard": "sage"}
+PAGE_THEMES = {"/": "ochre", "/dashboard": "sage", "/learn": "dusty-violet"}
 # Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -223,6 +228,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
+        "/learn": lambda s, c, t: learn_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
@@ -233,9 +239,10 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         except NotFound:
             return _text(404, "Not found.")
         offers = new_offer_count(settings, conn, _now(today), offer_score(query))
+        cards_todo = learn.counts(conn)["todo"]
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, "/dashboard" if path == "/dashboard" else "/", offers,
-                 head[0] if head else "")
+    return _page(200, title, subtitle, notice + content, path if path in ("/dashboard", "/learn") else "/", offers,
+                 head[0] if head else "", cards_todo)
 
 
 OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers view of Applications
@@ -284,6 +291,7 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
         mark = db.last_request_id(conn)
         try:
             extra = action(settings, conn, form, today) or {}
+            msg = extra.pop("msg", msg)  # an action may pick another of MESSAGES (Learn: track done)
         except (ValueError, LookupError) as e:
             raise BadRequest(str(e)) from e
         # Interested, Move to Interested or a Research / CV fit click may have queued agent work.
@@ -295,7 +303,7 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
     if "redirect" in extra:  # built by the action from database ids, never from the form
         target = urlsplit(extra["redirect"])
         back = urlsplit(_return_to(form.get("return"), target.path))  # an old /applications form counts too
-        if parse_qs(back.query).get("app") == parse_qs(target.query).get("app"):
+        if form.get("return") and parse_qs(back.query).get("app") == parse_qs(target.query).get("app"):
             # the side panel's own URL with its view and stage filter, re-encoded by _return_to
             return 303, [("Location", _return_to(form["return"], target.path, msg))], b""
         sep = "&" if "?" in extra["redirect"] else "?"
@@ -654,6 +662,30 @@ def reopen_task(settings: Settings, conn: sqlite3.Connection, form: dict[str, st
     log.info("task %s reopened from the dashboard", task_id)
 
 
+def _card_id(form: dict[str, str]) -> int:
+    card_id = _int_field(form, "card_id")
+    if card_id is None:
+        raise BadRequest("card_id is missing.")
+    return card_id
+
+
+def card_done(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The card's Done: mark it done, then open the track's next card to do (the grid when none is left)."""
+    card_id = _card_id(form)
+    learn.set_status(conn, card_id, "done")
+    log.info("learn card %s done from the dashboard", card_id)
+    nxt = learn.next_todo(conn, card_id)
+    return {"redirect": "/learn", "msg": "track_done"} if nxt is None else {"redirect": f"/learn?card={nxt}"}
+
+
+def card_undo(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The card's Not done yet: back to do (or kept so); the card stays open."""
+    card_id = _card_id(form)
+    learn.set_status(conn, card_id, "todo")
+    log.info("learn card %s to do from the dashboard", card_id)
+    return {"redirect": f"/learn?card={card_id}"}
+
+
 # path -> (action, page to return to, MESSAGES key)
 # The offer actions keep their old paths (forms from before the merge still post to them).
 ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
@@ -674,6 +706,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/offers/brief": (queue_brief, "/", "brief_queued"),
     "/tasks/done": (complete_task, "/", "task_done"),
     "/tasks/reopen": (reopen_task, "/", "task_reopened"),
+    "/learn/done": (card_done, "/learn", "card_done"),
+    "/learn/undo": (card_undo, "/learn", "card_todo"),
 }
 
 
@@ -750,6 +784,135 @@ def practice_section(conn: sqlite3.Connection) -> str:
     note = _note("Score 1-5 per session, oldest on the left.") if rows else ""
     return (f'<div class="tiles tiles-practice">{tiles}</div>'
             + _card("Practice scores by area", table + note, count=len(rows), cls="card-practice"))
+
+
+# --- Learn ------------------------------------------------------------------------------------
+# /learn: the tracks grid. /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
+# Notes and the Prep agent on the left (placeholders for now), a divider, and the card on the right.
+
+TIMER_SECONDS = 120  # "say it out loud": two minutes per answer
+EXPAND_ICON = "⤢"
+
+
+def learn_page(settings: Settings, conn: sqlite3.Connection, today: str,
+               query: dict[str, list[str]]) -> tuple[str, str, str]:
+    raw_card = (query.get("card") or [""])[0].strip()
+    raw_track = (query.get("track") or [""])[0].strip()
+    card_id = None
+    if raw_card:
+        if not raw_card.isdigit():
+            raise NotFound()
+        card_id = int(raw_card)
+    elif raw_track:
+        try:
+            card_id = learn.first_card(conn, raw_track)
+        except LookupError as e:
+            raise NotFound() from e
+    count = learn.counts(conn)
+    subtitle = f"{count['done']} done · {count['todo']} to do · {_next_interview(conn, today)}"
+    if card_id is None:
+        return "Learn", subtitle, _tracks_grid(learn.list_tracks(conn), bool(raw_track))
+    try:
+        card = learn.get_card(conn, card_id)
+    except LookupError as e:
+        raise NotFound() from e
+    return "Learn", subtitle, _learn_view(conn, card)
+
+
+def _next_interview(conn: sqlite3.Connection, today: str) -> str:
+    nxt = db.next_interview(conn, today)
+    if nxt is None:
+        return "no interview booked"
+    day = date.fromisoformat(nxt["date"][:10])
+    when = "today" if nxt["date"][:10] == today else f"{day:%a} {day.day} {day:%b}"
+    stage = f" · {db.status_label(nxt['stage'])}" if nxt["stage"] else ""
+    return f"next interview: {nxt['company']}{stage} · {when}"
+
+
+def _ring(percent: int) -> str:
+    """A progress ring as SVG attributes (no inline style: the CSP forbids it); pathLength makes the
+    dash a plain percentage."""
+    p = max(0, min(100, int(percent)))
+    return (f'<svg class="ring" viewBox="0 0 40 40" width="56" height="56" role="img" aria-label="{p}% done">'
+            '<circle class="ring-track" cx="20" cy="20" r="16" pathLength="100"/>'
+            f'<circle class="ring-done" cx="20" cy="20" r="16" pathLength="100" stroke-dasharray="{p} 100" '
+            'transform="rotate(-90 20 20)"/>'
+            f'<text x="20" y="20" text-anchor="middle" dominant-baseline="central">{p}%</text></svg>')
+
+
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _tracks_grid(tracks: list[dict], empty_track: bool = False) -> str:
+    if not tracks:
+        return _card("Tracks", _empty("No tracks yet.", "python -m prep.cli tracks add TITLE, then cards add"))
+    tiles = []
+    for t in tracks:
+        cover = t["cover"] if t["cover"] in learn.TRACK_COVERS else "slate"
+        sub = f'<span class="track-sub">{h(t["subtitle"])}</span>' if t["subtitle"] else ""
+        tiles.append(
+            f'<a class="track" href="/learn?{h(urlencode([("track", t["slug"])]))}">'
+            f'<span class="track-cover cover-{cover}">{_ring(t["progress"])}</span>'
+            f'<span class="track-body"><strong class="track-title">{h(t["title"])}</strong>{sub}'
+            f'<span class="track-meta">{h(_plural(t["chapters"], "chapter"))} · {h(_plural(t["cards"], "card"))}</span>'
+            f'<span class="track-done">{h(t["done"])} done / {h(t["cards"])}</span></span></a>')
+    notice = _banner("That track has no cards yet.", "notice") if empty_track else ""
+    return f'{notice}<div class="tracks">{"".join(tiles)}</div>'
+
+
+def _learn_view(conn: sqlite3.Connection, card: dict) -> str:
+    expand = (f'<button type="button" class="btn btn-ghost btn-sm learn-expand" data-learn-expand aria-pressed="false" '
+              f'aria-controls="learn-side" title="Fold Notes away" hidden>{EXPAND_ICON} Expand</button>')
+    side = ('<div class="learn-side" id="learn-side">'
+            + _card("Notes", _empty("No notes on this card yet.", "Notes for each card come in a later update."),
+                    cls="learn-notes")
+            + _card("Prep agent", _empty("The prep agent is not here yet.",
+                                         "It will quiz, explain and check answers on this card."),
+                    action=expand, cls="learn-agent")
+            + "</div>")
+    handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and agent,card")
+    return f'<div class="learn-view" id="learn-view">{side}{handle}{_learn_card(conn, card)}</div>'
+
+
+def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
+    cards = learn.list_cards(conn, card["track_id"])
+    ids = [c["id"] for c in cards]
+    i = ids.index(card["id"])
+    nav = "".join(
+        f'<a class="btn btn-ghost btn-sm" href="/learn?card={other}" aria-label="{label} card">{arrow}</a>'
+        if other is not None else f'<span class="btn btn-ghost btn-sm is-off" aria-hidden="true">{arrow}</span>'
+        for other, label, arrow in ((ids[i - 1] if i else None, "Previous", "←"),
+                                    (ids[i + 1] if i + 1 < len(ids) else None, "Next", "→")))
+    where = h(card["track_title"]) + (f' · {h(card["chapter_title"])}' if card["chapter_title"] else "")
+    status = _badge("done", "success") if card["status"] == "done" else _badge("to do", "s5")
+    tags = "".join(_badge(t, "s7") for t in card["tags"])
+    head = (f'<header class="learn-card-head"><div><p class="learn-where"><a href="/learn">All tracks</a> · {where}</p>'
+            f'<p class="learn-sub">Card {i + 1} of {len(ids)} {status}</p></div><nav class="learn-nav" '
+            f'aria-label="Cards">{nav}</nav></header>')
+    timer = (f'<div class="timer" data-timer="{TIMER_SECONDS}" hidden><span class="timer-label">Say it out loud</span>'
+             f'<span class="timer-time" role="timer" aria-live="off">{TIMER_SECONDS // 60}:{TIMER_SECONDS % 60:02d}</span>'
+             '<button type="button" class="btn btn-secondary btn-sm" data-timer-toggle>Start</button>'
+             '<button type="button" class="btn btn-ghost btn-sm" data-timer-reset>Reset</button></div>')
+    follow = "".join(f"<li>{h(f)}</li>" for f in card["follow_ups"])
+    sources = "".join(
+        f'<li>{_badge(s["kind"], "s6")} {_link(s.get("url"), s["title"])}'
+        + (f' <span class="muted">· {h(s["minutes"])} min</span>' if s.get("minutes") is not None else "")
+        + (f' <span class="muted">· {h(s["why"])}</span>' if s.get("why") else "") + "</li>"
+        for s in card["sources"])
+    answer = ('<details class="learn-answer"><summary class="btn btn-secondary">Show answer</summary>'
+              f'<section><h3>Key points</h3><div class="doc">{render_markdown(card["back"])}</div></section>'
+              + (f'<section><h3>Follow-ups</h3><ul>{follow}</ul></section>' if follow else "")
+              + (f'<section><h3>Sources</h3><ul class="learn-sources">{sources}</ul></section>' if sources else "")
+              + "</details>")
+    buttons = "".join(
+        f'<form method="post" action="{path}"><input type="hidden" name="card_id" value="{h(card["id"])}">'
+        + _button(label, variant) + "</form>"
+        for path, label, variant in (("/learn/done", "Done", "primary"), ("/learn/undo", "Not done yet", "secondary")))
+    return (f'<section class="learn-card" id="learn-card" aria-labelledby="learn-q">{head}<div class="learn-card-body">'
+            + (f'<div class="chips">{tags}</div>' if tags else "")
+            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{timer}{answer}'
+            f'<div class="learn-actions">{buttons}</div></div></section>')
 
 
 LOCATION_LABELS = {"london": "London", "remote": "Remote", "other": "Other"}
@@ -1145,9 +1308,16 @@ def _description(text: str) -> str:
 # The divider between the left column and the panel (a window splitter). Rendered on every
 # Applications page, since the script may open a panel later; CSS shows it only with the script,
 # from 801px wide and while a panel is open. app.js drags it and keeps the width per browser.
-SPLIT_HANDLE = ('<div class="apps-split" role="separator" aria-orientation="vertical" aria-controls="apps-main" '
-                'aria-label="Resize the list and the panel" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" '
-                'tabindex="0" title="Drag to resize · double-click for half and half"></div>')
+def _split_handle(controls: str, label: str, key: str, names: str) -> str:
+    """A divider between two columns; app.js keeps its share in localStorage under `key`. `names` is
+    "left,right" for the screen reader text ("List 40%, panel 60%")."""
+    return (f'<div class="apps-split" role="separator" aria-orientation="vertical" aria-controls="{h(controls)}" '
+            f'aria-label="{h(label)}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50" '
+            f'data-split-key="{h(key)}" data-split-names="{h(names)}" '
+            'tabindex="0" title="Drag to resize · double-click for half and half"></div>')
+
+
+SPLIT_HANDLE = _split_handle("apps-main", "Resize the list and the panel", "apps-split", "List,panel")
 
 
 def _skip_dialog() -> str:
@@ -2149,13 +2319,16 @@ def tailored_pdf(settings: Settings, query: dict[str, list[str]], today: str) ->
 # fragments built by other helpers.
 
 def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None,
-          actions: str = "") -> Response:
-    """The app shell. `offers` is the number of new offers shown next to Applications (none when 0
-    or unknown); `actions` is trusted HTML next to the title (Applications' My CV button)."""
+          actions: str = "", cards_todo: int | None = None) -> Response:
+    """The app shell. `offers` is the number of new offers shown next to Applications and `cards_todo`
+    the Learn cards to do next to Learn (none when 0 or unknown); `actions` is trusted HTML next to the
+    title (Applications' My CV button)."""
     current = ' aria-current="page"'
     nav = "".join(
         f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{name}</span>'
         + (f'<span class="nav-count" title="New offers">{h(offers)}</span>' if href == "/" and offers else "")
+        + (f'<span class="nav-count" title="Cards to do">{h(cards_todo)}</span>' if href == "/learn" and cards_todo
+           else "")
         + "</a>"
         for href, name, icon in PAGES
     )
