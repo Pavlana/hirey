@@ -407,6 +407,15 @@ CREATE TABLE IF NOT EXISTS cards (
 
 CREATE INDEX IF NOT EXISTS idx_cards_track ON cards(track_id);
 
+-- A Learn source ticked done on a card. source_key: the source's URL, else "kind:title" (learn.source_key),
+-- so a re-import that reorders or edits other sources keeps the ticks. Ticks never mark the card done.
+CREATE TABLE IF NOT EXISTS card_source_done (
+    card_id    INTEGER NOT NULL REFERENCES cards(id),
+    source_key TEXT NOT NULL,
+    done_at    TEXT NOT NULL,
+    PRIMARY KEY (card_id, source_key)
+);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);

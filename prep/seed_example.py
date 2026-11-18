@@ -128,6 +128,8 @@ def build_prep_db(path: Path, data: dict) -> None:
         for t in data.get("tracks", []):  # Learn tracks and their cards (all to do)
             learn.add_track(conn, t["title"], t.get("subtitle"), t.get("cover"), t.get("slug"))
         learn.add_cards(conn, data.get("cards", []))
+        for t in data.get("source_ticks", []):  # Learn sources ticked done (card id, source key)
+            learn.set_source_done(conn, t["card"], t["key"], True)
     finally:
         conn.close()
 

@@ -100,7 +100,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
 | `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
 |            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, done / total and percent done; add a track |
-|            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` / `cards delete ID` | Learn cards: add from JSON (one card or a list, all or none), list, show, mark done or back to do, remove |
+|            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` / `cards delete ID` | Learn cards: add from JSON (one card or a list, all or none), list, show (with `[x]` / `[ ]` before each Learn source), mark done or back to do, remove |
 |            | `python -m prep.cli cards import FILE [--dry-run]`                   | Add or update tracks and cards from Markdown ([format](learn-format.md)); the same track and front is updated, its done status kept |
 |            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--session ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /mock and /debrief fill and save them with `cards add` after a yes |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
@@ -136,7 +136,10 @@ charts are server-rendered SVG):
   per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
   question, **Show answer** (the key
   points and likely follow-ups), the **Learn** box under it, always in view (the sources to watch or
-  read, the preparation material; links open in a new tab), and **Done** /
+  read, the preparation material; links open in a new tab). A tick in front of each source marks it
+  done (greyed and struck through; the header reads "Learn · 2 / 5 done"); clicking again unticks it.
+  Ticks are saved at once, survive a `cards import` that reorders or edits other sources (a source is
+  known by its URL, else its kind and title) and never mark the card itself done. Then **Done** /
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
   last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
   date or rating. Phones stack the card above Notes and the Learn Assistant.

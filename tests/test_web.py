@@ -1259,7 +1259,7 @@ class LearnPageTest(WebTestCase):
         self.assertIn("Follow-ups", fold)
         self.assertNotIn("Example caching notes", fold)
         box = body[body.index('<section class="learn-more"'):]
-        self.assertIn('<h3 id="learn-src">Learn</h3>', box)
+        self.assertIn('<h3 id="learn-src">Learn <span class="learn-src-count">· 0 / 1 done</span></h3>', box)
         self.assertIn("Example caching notes", box)
         self.assertNotIn("Learn more", body)
         self.assertNotIn("learn-more", self.get("/learn?card=2")[2])  # a card without sources has no box
@@ -1310,6 +1310,54 @@ class LearnPageTest(WebTestCase):
         with self.conn() as conn:
             self.assertEqual(learn.get_card(conn, 1)["status"], "todo")
 
+    def test_tick_a_source(self) -> None:
+        key = "https://example.com/caching-notes"
+        status, headers, _ = self.post("/learn/source", {"card_id": "1", "key": key, "done": "1"})
+        self.assertEqual((status, headers["Location"]), (303, "/learn?card=1&msg=source_done"))  # without JS
+        body = self.get("/learn?card=1")[2]
+        self.assertIn("· 1 / 1 done", body)
+        self.assertIn('<li class="is-done">', body)
+        self.assertIn('aria-checked="true" aria-label="Mark not done: Example caching notes"', body)
+        self.assertIn('name="done" value="0"', body)
+        with self.conn() as conn:
+            self.assertEqual(learn.get_card(conn, 1)["status"], "todo")  # the card is not marked done
+        # with JS: the Learn box comes back to swap in
+        status, _, raw = self.post("/learn/source", {"card_id": "1", "key": key, "done": "0"},
+                                   {**HOST, "Accept": "application/json"})
+        reply = json.loads(raw)
+        self.assertEqual((status, reply["message"]), (200, "Source unticked."))
+        self.assertTrue(reply["html"].startswith('<section class="learn-more" id="learn-sources"'))
+        self.assertIn("· 0 / 1 done", reply["html"])
+        self.assertNotIn("is-done", self.get("/learn?card=1")[2])
+
+    def test_fixture_ticks(self) -> None:
+        body = self.get("/learn?card=3")[2]
+        self.assertIn("· 1 / 3 done", body)
+        self.assertEqual(body.count('<li class="is-done">'), 1)
+
+    def test_bad_source_ticks(self) -> None:
+        key = "https://example.com/caching-notes"
+        self.assertEqual(self.post("/learn/source", {"card_id": "1", "key": "https://example.com/x", "done": "1"})[0], 400)
+        self.assertEqual(self.post("/learn/source", {"card_id": "999", "key": key, "done": "1"})[0], 400)
+        self.assertEqual(self.post("/learn/source", {"key": key, "done": "1"})[0], 400)
+        cross = {**HOST, "Origin": "http://evil.example"}
+        self.assertEqual(self.post("/learn/source", {"card_id": "1", "key": key, "done": "1"}, cross)[0], 403)
+        self.assertIn("· 0 / 1 done", self.get("/learn?card=1")[2])
+
+    def test_source_tick_values_are_escaped(self) -> None:
+        with self.conn() as conn:
+            card_id = learn.add_card(conn, {"track": "caching-example", "front": "Escapes?", "back": "- x", "sources": [
+                {"kind": "read", "title": "<b>\"Tom\" & 'Jerry'</b>"}]})
+        body = self.get(f"/learn?card={card_id}")[2]
+        escaped = "&lt;b&gt;&quot;Tom&quot; &amp; &#x27;Jerry&#x27;&lt;/b&gt;"
+        self.assertIn(f'name="key" value="read:{escaped}"', body)
+        self.assertIn(f'aria-label="Mark done: {escaped}"', body)
+        self.assertNotIn("<b>\"Tom", body)
+        status, _, _ = self.post("/learn/source", {"card_id": str(card_id), "key": "read:<b>\"Tom\" & 'Jerry'</b>",
+                                                   "done": "1"})
+        self.assertEqual(status, 303)
+        self.assertIn("· 1 / 1 done", self.get(f"/learn?card={card_id}")[2])
+
     def test_card_values_are_escaped(self) -> None:
         with self.conn() as conn:
             learn.add_track(conn, "<b>Track</b>", "<i>sub</i>", slug="evil")
@@ -1326,4 +1374,5 @@ class LearnPageTest(WebTestCase):
                              ("<q>src", "&lt;q&gt;src&lt;/q&gt;"), ("<u>ch", "&lt;u&gt;ch&lt;/u&gt;")):
             self.assertNotIn(raw, body)
             self.assertIn(escaped, body)
-        self.assertNotIn("javascript:", body)  # an unsafe source URL is text, never a link
+        self.assertNotIn('href="javascript:', body)  # an unsafe source URL is text, never a link
+        self.assertNotIn("<a", body.split('id="learn-sources"')[1].split("</section>")[0])
