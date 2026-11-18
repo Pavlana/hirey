@@ -48,6 +48,7 @@ CACHE_WRITE_MIN = 1_000_000  # ... and at least this many tokens
 DONE = ("completed", "cancelled")
 COUNTS = ("input", "output", "cache_read", "cache_write")
 ROLES = ("Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts")
+STANDING = ROLES[:3]
 
 _LOCK = threading.Lock()
 _LAST_TRY = [0.0]
@@ -382,7 +383,7 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
     context = []
     for e in sorted(keys.values(), key=lambda e: -e["tokens"]):
         r = role(e["project"], e["task"])
-        if r not in ("Applications Assistant", "Learn Assistant", "Coordinator"):
+        if r not in STANDING:
             continue
         marks = ",".join("?" * len(e["cwds"]))
         last: dict[str, int] = {}
@@ -403,7 +404,9 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
                         f"{_short(settings.context_warn_tokens)}: time to /compact.")
     for e in top + [k for k in keys.values() if k not in top]:
         info = tasks.get(e["task"]) if e["task"] else None
-        if info and info.get("pr_merged") and info.get("status") not in DONE:
+        # Standing tasks (the assistants, the coordinator) stay open by design.
+        if (info and info.get("pr_merged") and info.get("status") not in DONE
+                and role(e["project"], e["task"]) not in STANDING):
             lab = label((e["project"], e["task"]))
             save.append(f"{lab['ref']} {lab['title']} is still open after its PR merged: complete it to free "
                         f"its session.")

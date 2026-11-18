@@ -768,7 +768,7 @@ unknown or the cache is older than 10 minutes, and not again within a minute of 
 `assistant_task` / `prep_assistant_task` / `coordinator_task` seqs in this repo's project (or
 `assistant_project`), dev3 type coordinator, other tasks (build tasks), main checkouts. A turn is one
 API response; context size is input + cache read + cache write. Where to save: an assistant or
-coordinator whose latest turn is over `context_warn_tokens`; an open task whose PR merged; a session
+coordinator whose latest turn is over `context_warn_tokens`; an open task whose PR merged (not the assistants or the coordinator, which stay open); a session
 whose cache writes are at least 25% of its tokens and 1M tokens. The cost estimate sums each model's
 counts times `prices` (longest matching model prefix).
 

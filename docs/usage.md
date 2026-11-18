@@ -140,7 +140,7 @@ charts are server-rendered SVG):
     tasks by tokens (seq, title, turns, tokens, tokens per turn), who uses what (Applications
     Assistant, Learn Assistant, coordinator, build tasks, main checkouts), context size per turn
     for the two assistants and the coordinator (each day's last turn; "time to /compact" above
-    `context_warn_tokens`), and **Where to save**: an assistant over the threshold, a task still
+    `context_warn_tokens`), and **Where to save**: an assistant over the threshold, a task (not an assistant or the coordinator) still
     open after its PR merged, a session with many cache writes. A turn is one API response.
   - **Applications** (`?tab=applications`): applications sent, response rate (a reply, call,
     rejection or recorded interview; a warning below 10% after 25 applications), interviews and
