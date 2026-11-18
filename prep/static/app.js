@@ -303,6 +303,7 @@
         });
         const reply = await res.json();
         if (poll !== me) return; // the panel changed while waiting
+        showResend(reply.failed);
         if (reply.ok && !reply.pending) {
           poll = null;
           const replied = reply.messages !== before;
@@ -735,6 +736,7 @@
         });
         const reply = await res.json();
         if (learnPoll !== me) return;
+        showResend(reply.failed);
         if (reply.ok && !reply.pending) {
           learnPoll = null;
           swapLearn(reply.html);
@@ -758,6 +760,14 @@
 
   // Resend under a message still waiting shows once it is due (data-resend-due, epoch ms from the
   // server; at once when the ping failed): both boxes, after every swap too.
+  function showResend(ids) { // a failed ping, reported by the poll: Resend at once
+    (ids || []).forEach((id) => {
+      document.querySelectorAll(`.msg-wait input[name="msg_id"][value="${Number(id)}"]`).forEach((input) => {
+        const btn = input.form?.querySelector("[data-resend-due]");
+        if (btn) btn.hidden = false;
+      });
+    });
+  }
   setInterval(() => {
     document.querySelectorAll("[data-resend-due][hidden]").forEach((btn) => {
       if (Date.now() >= Number(btn.dataset.resendDue)) btn.hidden = false;

@@ -882,7 +882,8 @@ def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: st
     if raw and not raw.isdigit():
         return _json(400, {"ok": False, "message": "card must be a card id."})
     with closing(_connect(settings, today)) as conn:
-        payload = {"ok": True, "pending": bool(db.pending_messages(conn, topic=db.LEARN)),
+        waiting = db.pending_messages(conn, topic=db.LEARN)
+        payload = {"ok": True, "pending": bool(waiting), "failed": _failed_pings(waiting),
                    "messages": db.message_count(conn, learn=True),
                    "html": _learn_thread(conn, settings, int(raw) if raw else None)}
     return _json(200, payload)
@@ -2609,6 +2610,11 @@ def _wait_actions(m: dict, base: str, mode: str, extra: str, can_resend: bool) -
             '</form></div>')
 
 
+def _failed_pings(waiting: list[dict]) -> list[int]:
+    """Ids of waiting messages whose latest ping failed: the polling script shows their Resend at once."""
+    return [m["id"] for m in waiting if (assistant.last_ping(m["id"]) or (0, True))[1] is False]
+
+
 def _epoch(stamp: str) -> float:
     try:
         return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
@@ -2656,7 +2662,8 @@ def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> 
         job_id = (app["getjo_job_id"] if app else job_id) or None
         working = bool(app and db.open_requests(conn, app["id"])) or bool(job_id and db.open_briefs(conn, job_id))
         pending = working or bool(db.pending_messages(conn))
-        payload = {"ok": True, "pending": pending, "status": app["status"] if app else None,
+        payload = {"ok": True, "pending": pending, "failed": _failed_pings(db.pending_messages(conn)),
+                   "status": app["status"] if app else None,
                    "messages": db.message_count(conn), "html": _thread(conn, settings)}
     return _json(200, payload)
 

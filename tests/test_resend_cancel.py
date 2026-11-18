@@ -102,6 +102,16 @@ class ApplicationsBoxTest(ResendCancelBase):
         assistant._PINGS[msg] = (time.time() - assistant.RESEND_AFTER - 1, True)
         self.assertRegex(self.get(f"/?app={ACME}")[2], r'data-resend-due="\d+" title')
 
+    def test_poll_reports_a_failed_ping(self) -> None:
+        msg = self.ask()
+        self.assertEqual(json.loads(self.get("/applications/thread")[2])["failed"], [])
+        assistant._record(msg, 0)
+        self.assertEqual(json.loads(self.get("/applications/thread")[2])["failed"], [msg])
+        with self.conn() as conn:
+            learn_msg = db.add_learn_message(conn, 1, "Quiz me")
+        assistant._record(learn_msg, 0)
+        self.assertEqual(json.loads(self.get("/learn/thread?card=1")[2])["failed"], [learn_msg])
+
     def test_resend_repings_the_same_message(self) -> None:
         msg = self.ask()
         self.with_tasks()
