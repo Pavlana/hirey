@@ -81,25 +81,22 @@ Acceptance:
 
 ## Phase 4 — Learn and weekly plan
 
-Status: in progress (Learn 1/5: cards, tracks and spaced repetition, data and CLI).
+Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI).
 
 - Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
-  (question, key points, tags, follow-ups, sources to watch or read, source gap, and the
-  schedule: ease, interval, due date, reps, lapses), with a `card_reviews` history.
-- Rating with four buttons, Again / Hard / Good / Easy, scheduled SM-2-style; each button
-  previews its next review ("Good → next review in 6 days"). At most `learn_new_per_day`
-  (default 10) new cards start per day, so a large import does not flood one evening.
-- CLI for skills: `cards add|list|show|rate`, `tracks add|list` (due counts, progress).
+  (question, key points, tags, follow-ups, sources to watch or read, source gap, and a status:
+  to do or done). No schedule: progress is cards done out of all.
+- CLI for skills: `cards add|list|show|done|undo`, `tracks add|list` (done / total, percent).
 - Gaps can generate cards.
 - `/plan-week`: run at the Friday review; proposes next week's tasks from open applications, upcoming interviews, open
-  gaps and due cards, within a stated time budget; creates the tasks after confirmation.
-- The dashboard gains a Learn page: tracks with progress and cards due, the card with its
-  answer hidden until asked and the four rating buttons, notes, and a prep agent.
+  gaps and cards to do, within a stated time budget; creates the tasks after confirmation.
+- The dashboard gains a Learn page: tracks with cards done and to do, the card with its answer
+  hidden until asked and a Done button, notes, and a prep agent.
 
 Acceptance:
-- SM-2 scheduling is unit-tested against known sequences.
+- Marking a card done and back to do updates the track's done / total, unit-tested.
 - `/plan-week` never creates tasks without confirmation and never exceeds the time budget.
-- Cards due today appear in `/today`.
+- Cards done and to do appear in `/today`.
 
 ## Built outside the phases
 

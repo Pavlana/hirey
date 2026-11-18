@@ -125,7 +125,7 @@ def build_prep_db(path: Path, data: dict) -> None:
                        else (None, None, k) for k in c["targets"]]
             msg_id = db.add_compare(conn, c["question"], targets)
             db.reply_message(conn, None, msg_id, c["reply"])
-        for t in data.get("tracks", []):  # Learn tracks and their cards (new cards are due today)
+        for t in data.get("tracks", []):  # Learn tracks and their cards (all to do)
             learn.add_track(conn, t["title"], t.get("subtitle"), t.get("cover"), t.get("slug"))
         learn.add_cards(conn, data.get("cards", []))
     finally:

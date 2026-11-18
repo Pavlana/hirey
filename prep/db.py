@@ -357,7 +357,7 @@ CREATE TABLE IF NOT EXISTS cv_versions (
     created_at TEXT NOT NULL
 );
 
--- Learn: tracks of flashcards, split into chapters (prep/learn.py; scheduling in prep/srs.py).
+-- Learn: tracks of flashcards, split into chapters (prep/learn.py).
 CREATE TABLE IF NOT EXISTS tracks (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     slug       TEXT NOT NULL UNIQUE,      -- stable name for skills and JSON (rag-in-production)
@@ -389,28 +389,12 @@ CREATE TABLE IF NOT EXISTS cards (
     follow_ups    TEXT NOT NULL DEFAULT '[]',
     sources       TEXT NOT NULL DEFAULT '[]',
     source_gap_id INTEGER REFERENCES gaps(id),
-    ease          REAL NOT NULL DEFAULT 2.5,
-    interval_days INTEGER NOT NULL DEFAULT 0,
-    due_date      TEXT NOT NULL,          -- a new card is due the day it is added
-    introduced_on TEXT,                   -- local date of its first review; NULL: still a new card
-    reps          INTEGER NOT NULL DEFAULT 0,
-    lapses        INTEGER NOT NULL DEFAULT 0,
+    status        TEXT NOT NULL DEFAULT 'todo',  -- todo / done (learn.CARD_STATUSES)
+    done_at       TEXT,                          -- when it was last marked done; NULL while todo
     created_at    TEXT NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS card_reviews (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    card_id         INTEGER NOT NULL REFERENCES cards(id),
-    rating          TEXT NOT NULL,        -- again / hard / good / easy (srs.RATINGS)
-    reviewed_at     TEXT NOT NULL,
-    interval_before INTEGER NOT NULL,
-    interval_after  INTEGER NOT NULL,
-    ease_after      REAL NOT NULL
-);
-
 CREATE INDEX IF NOT EXISTS idx_cards_track ON cards(track_id);
-CREATE INDEX IF NOT EXISTS idx_cards_due ON cards(due_date);
-CREATE INDEX IF NOT EXISTS idx_card_reviews_card ON card_reviews(card_id);
 
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);

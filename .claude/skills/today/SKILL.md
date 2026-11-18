@@ -1,6 +1,6 @@
 ---
 name: today
-description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), Learn cards due today, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
+description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), Learn cards done and to do, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
 ---
 
 # /today
@@ -23,8 +23,8 @@ description: Daily job-search brief from Hirey — applications that moved to No
    - **Agent thread** (only if the output has an "Agent thread" line): messages left in the
      dashboard's Agent box are waiting. Run /ask now and give its one-line
      summary per application.
-   - **Cards** (only if the output has a "Cards due today" line): the number of Learn cards
-     due today and the tracks they are in, in one line.
+   - **Learn** (only if the output has a "Learn:" line): how many cards are done and how many
+     are left to do, with the tracks, in one line.
    - **Due now**: tasks due today or overdue, oldest first, with the company when the task
      belongs to an application. One line each.
    - **New matches** (jobs already tracked or skipped in the dashboard's New offers are left

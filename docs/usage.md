@@ -46,7 +46,7 @@ The per-user file is the normal place: every checkout and git worktree, a launch
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
-`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_LEARN_NEW_PER_DAY`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
+`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
 `PREP_PDF_PYTHON` and `PREP_FACTS_FILE`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
 `PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
@@ -72,7 +72,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 
 | Skill      | CLI                                                                 | What it does |
 |------------|---------------------------------------------------------------------|--------------|
-| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, Learn cards due today, tasks due or overdue, new getjo matches |
+| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, Learn cards done and to do, tasks due or overdue, new getjo matches |
 |            | `python -m prep.cli queue`                                           | Read-only: counts and ids of queued agent work and waiting thread messages (used by the SessionStart hook) |
 | `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
@@ -96,8 +96,8 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli session add --kind mock\|real [--app ID] [--stage S] [--score AREA=N ...] [--file F] [--gap TEXT ...]` / `session list` | Record a practice session with 1–5 scores per area; each gap named gets a drill task |
 |            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
 | `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
-|            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, cards, progress % and cards due today; add a track |
-|            | `python -m prep.cli cards add [--file F]` / `cards list [--due] [--track T]` / `cards show ID` / `cards rate ID again\|hard\|good\|easy` | Learn cards: add from JSON (one card or a list, all or none), list, show with each button's next review, rate (SM-2-style scheduling) |
+|            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, done / total and percent done; add a track |
+|            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` | Learn cards: add from JSON (one card or a list, all or none), list, show, mark done or back to do |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
@@ -187,8 +187,7 @@ field (`applications.pay`) is never shown. Each request opens the database afres
 made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
 (applications per week, default 10) and `no_response_days` (default 14: an application
 still in Applied with no stage change for that long moves to No response; checked on every
-dashboard request and by `/today`). `learn_new_per_day` (default 10) caps the new Learn cards
-started per day across all tracks; reviews of started cards are never capped.
+dashboard request and by `/today`).
 
 ### Company research and CV fit
 

@@ -26,8 +26,7 @@
 │   agent_messages, cv_versions,      │
 │   agent_message_targets,            │
 │   job_briefs, brief_requests,       │
-│   tracks, chapters, cards,          │
-│   card_reviews                      │
+│   tracks, chapters, cards           │
 │ prep/stats.py   dashboard numbers   │
 │ prep/cli.py     commands            │
 │ prep/web.py     dashboard server    │
@@ -38,7 +37,6 @@
 │ prep/cveval.py  AI check of a CV    │
 │ prep/assistant.py  dev3 message     │
 │ prep/learn.py   Learn cards, tracks │
-│ prep/srs.py     SM-2 scheduling     │
 └───────▲──────────────────▲──────────┘
         │                  │
  Claude Code skills    browser → http://localhost:8765
@@ -549,28 +547,17 @@
    each with a slug, title, subtitle and a cover colour key (`learn.TRACK_COVERS`); `chapters`
    split a track; `cards` hold the question (`front`), key points in Markdown (`back`), tags and
    likely follow-ups (JSON lists of strings), sources (a JSON list of `{kind, title, url, minutes,
-   why}`, kind `watch`, `read` or `notes`), an optional `source_gap_id` and the schedule: ease,
-   interval in days, due date, reps (right answers since the last lapse) and lapses.
-   `card_reviews` keeps each rating with the interval before and after and the new ease. Allowed
-   values are checked in `prep/learn.py`. `cli tracks add` adds a track; `cli cards add` takes a
-   JSON card or a list of them on stdin (or `--file`), names the track by id or slug and the
-   chapter by title (added when new), and adds all or none (`learn.add_cards`). A new card is due
-   the day it is added, but at most `learn_new_per_day` (default 10) new cards start per day across
-   all tracks, so a large import spreads over several evenings: `learn.due_cards` gives every
-   started card due today or earlier, then new cards in track, chapter and card order up to the
-   cap less those started today (`cards.introduced_on`, the local date of a card's first review).
-   `cli cards rate ID again|hard|good|easy` records a review
-   (`learn.rate_card`) and schedules the next one with `prep/srs.py`: pure functions where the
-   buttons map to SM-2 grades 2/3/4/5, Good follows SM-2 (1 day, 6 days, then interval × ease),
-   Again restarts the card at 1 day and counts a lapse, Hard and Easy are spread around Good as
-   in Anki so the four buttons never preview the same day, and the ease moves by SM-2's formula
-   (never below 1.3). `srs.preview` gives each button's next interval and due date, which `cli
-   cards show` prints ("Good → 6 days"). `cli tracks list` gives each track's chapters, cards,
-   cards due today or earlier and progress (the share of its cards with reps above 0). `/today`
-   prints "Cards due today: N" with a count per track whenever any card exists
-   (`learn.due_by_track`), and how many new cards the cap holds back. `cards list --due` and
-   `tracks list` count the same way. Card content (real answers, stories) stays in prep.db; fixtures hold
-   one fictional track with three cards.
+   why}`, kind `watch`, `read` or `notes`), an optional `source_gap_id`, and a status: `todo` or
+   `done` (`learn.CARD_STATUSES`) with `done_at`. There is no schedule and no due date: progress is
+   cards done out of all. Allowed values are checked in `prep/learn.py`. `cli tracks add` adds a
+   track; `cli cards add` takes a JSON card or a list of them on stdin (or `--file`), names the
+   track by id or slug and the chapter by title (added when new), and adds all or none
+   (`learn.add_cards`); a new card is to do. `cli cards done ID` marks it done and `cards undo ID`
+   puts it back to do (`learn.set_status`). `cli cards list [--track T] [--todo | --done]` lists
+   cards in track, chapter and card order; `cards show ID` prints one. `cli tracks list` gives each
+   track's chapters, "done X / Y" and the percent done. `/today` prints "Learn: X done, Y to do"
+   with "done/all" per track whenever any card exists. Card content (real answers, stories) stays
+   in prep.db; fixtures hold one fictional track with three cards.
 
 ## Dashboard
 
@@ -699,8 +686,7 @@ keys `dashboard_port` (default 8765), `weekly_target` (applications per week, de
 `no_response_days` (default 14, from 1 to 365), `research_max_age_days` (default 90),
 `stale_days` (default 3, from 1 to 365: a getjo job not listed for longer reads "may be closed"),
 `brief_auto_min_score` (default 8, from 1 to 10: new offers scored at least this get a job brief
-queued in the background; others when their panel is first opened), `learn_new_per_day` (default
-10, from 0 to 1000: new Learn cards started per day; step 26), and
+queued in the background; others when their panel is first opened), and
 the standing-assistant keys `assistant_task` (a dev3 task seq), `assistant_project` (a dev3
 project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI), and `pdf_python`
 (absolute path to a Python with WeasyPrint, for the tailored CV PDF; step 16), and `facts_file`
@@ -710,7 +696,7 @@ project id passed as `--project`) and `dev3_bin` (absolute path to the dev3 CLI)
 worktrees, launchd and the Claude app all find it without a shell environment.
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
-`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_LEARN_NEW_PER_DAY`,
+`PREP_BRIEF_AUTO_MIN_SCORE`,
 `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`, `PREP_PDF_PYTHON` and `PREP_FACTS_FILE` override single keys. Set to
 an empty string, the three assistant keys are cleared (`config.CLEARABLE`): a demo on example
 data runs with `PREP_ASSISTANT_TASK=` and never messages the assistant named in the file. An

@@ -21,7 +21,7 @@ class SeedTest(unittest.TestCase):
                                 and a["status"] not in ("rejected", "withdrawn", "no_response")]
                 self.assertEqual(len(db.list_tasks(conn, None)), len(data["tasks"]) + len(next_actions))
                 [track] = learn.list_tracks(conn)
-                self.assertEqual((track["cards"], track["chapters"], track["due"]), (3, 2, 3))
+                self.assertEqual((track["cards"], track["chapters"], track["done"]), (3, 2, 0))
             with closing(getjo.connect_ro(getjo_path)) as gconn:
                 self.assertEqual(len(getjo.matches(gconn)), 3)
 
