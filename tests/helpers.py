@@ -34,6 +34,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_STALE_DAYS": "",
             "PREP_BRIEF_AUTO_MIN_SCORE": "",
             "PREP_ASSISTANT_TASK": "",
+            "PREP_PREP_ASSISTANT_TASK": "",
             "PREP_ASSISTANT_PROJECT": "",
             "PREP_DEV3_BIN": "",
             "PREP_PDF_PYTHON": "",

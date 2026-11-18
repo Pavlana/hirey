@@ -784,6 +784,16 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-vim { padding: 1px 8px; border: 1px solid var(--border); border-radius: var(--radius-full); background: none;
   color: var(--text-muted); font: inherit; cursor: pointer; }
 .ed-vim:hover { color: var(--text); }
+/* The Prep agent: the Learn conversation (the Agent box's message styles), the reply actions under
+   each agent reply, and Check my answer under Your answer. */
+.learn-chat { display: grid; gap: var(--space-3); }
+.learn-chat .msgs { max-height: min(56vh, 600px); overflow-y: auto; padding-right: 4px; }
+.learn-view.is-agent-wide .learn-chat .msgs { max-height: min(72vh, 900px); }
+.msg-about.is-here { color: var(--accent-text); border-color: var(--accent); }
+.msg-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.msg-actions form { margin: 0; }
+.answer-check { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2);
+  margin: calc(-1 * var(--space-4)) 0 0; font-size: 12.5px; }  /* close under Your answer */
 /* Your answer on the card: a plain textarea from six rows, growing as it is typed (app.js). */
 .answer-box { display: grid; gap: var(--space-2); margin: 0; }
 .answer-box > .warning, .answer-box > .ed-current { margin: 0; }

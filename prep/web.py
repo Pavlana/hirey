@@ -108,6 +108,10 @@ MESSAGES = {
     "card_todo": "Kept as to do.",
     "track_done": "Every card in that track is done.",
     "learn_notes_saved": "Note saved.",
+    "learn_sent": "Sent to the prep agent. Its reply shows here.",
+    "learn_check_sent": "Your answer went to the prep agent. Its feedback shows in the Prep agent box.",
+    "learn_card_asked": "Asked for a card. The prep agent drafts it; say yes to save it.",
+    "learn_note_added": "Added to the notes.",
 }
 
 SECURITY_HEADERS = [
@@ -226,6 +230,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return tailored_pdf(settings, query, today)
     if path == "/learn/notes":
         return learn_notes_json(settings, query, today)
+    if path == "/learn/thread":
+        return learn_thread_json(settings, query, today)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
         "/dashboard": dashboard_page,
@@ -735,6 +741,93 @@ def learn_notes_json(settings: Settings, query: dict[str, list[str]], today: str
     return _json(200, {"ok": True, "text": note["text"], "stamp": note["stamp"]})
 
 
+# --- Learn: the Prep agent -----------------------------------------------------------------
+# Its messages are agent_messages with topic LEARN and the open card's id (db.add_learn_message); the
+# prep assistant answers them (/learn-ask), pinged with ids only. Fixed messages (Check my answer, Want a
+# card for this?) are built from ids here, never from the form's text.
+
+def _learn_back(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int | None, str]:
+    """The open card (form card_id; none: prep in general) and the page to go back to. An unknown card
+    is a LookupError."""
+    card_id = _int_field(form, "card_id")
+    if card_id is not None:
+        learn.get_card(conn, card_id)
+    return card_id, f"/learn?card={card_id}" if card_id is not None else "/learn"
+
+
+def _learn_ask(settings: Settings, conn: sqlite3.Connection, card_id: int | None, body: str, back: str) -> dict:
+    msg_id = db.add_learn_message(conn, card_id, body)
+    log.info("prep agent message %s added on card %s", msg_id, card_id)  # never the text
+    assistant.notify_learn_in_background(settings, card_id, msg_id)
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
+def send_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The Prep agent box's Send: the user's message, with the open card's id."""
+    card_id, back = _learn_back(conn, form)
+    body = form.get("body", "")
+    if not body.strip():
+        raise BadRequest("Type a question first.")
+    return _learn_ask(settings, conn, card_id, body, back)
+
+
+def check_answer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Check my answer: a fixed message (db.LEARN_CHECK) with the card's id; the agent reads the saved
+    answer itself (learn-notes answer CARD --show). Refused while the answer is empty."""
+    card_id = _card_id(form)
+    _, back = _learn_back(conn, form)
+    if settings.private_dir is None:
+        raise BadRequest("Your answer needs a private folder (private_dir).")
+    if not learnnotes.read(settings.private_dir, learnnotes.answer_key(card_id))["text"].strip():
+        raise BadRequest("Write your answer first (Your answer box), then check it.")
+    return _learn_ask(settings, conn, card_id, db.LEARN_CHECK, back)
+
+
+def _learn_reply(conn: sqlite3.Connection, form: dict[str, str]) -> dict:
+    """The Prep agent reply an action under it names (reply_id); anything else is refused."""
+    reply_id = _int_field(form, "reply_id")
+    msg = db.get_message(conn, reply_id) if reply_id is not None else None
+    if msg is None or msg["topic"] != db.LEARN or msg["author"] != "agent":
+        raise BadRequest("That is not a reply from the prep agent.")
+    return msg
+
+
+def draft_card(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Want a card for this?: a fixed message naming the reply; the agent drafts the card in the thread
+    and saves it (cards add) only after the user says yes."""
+    reply = _learn_reply(conn, form)
+    _, back = _learn_back(conn, form)
+    return {**_learn_ask(settings, conn, reply["card_id"], db.LEARN_CARD.format(reply=reply["id"]), back),
+            "msg": "learn_card_asked"}
+
+
+def add_reply_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Add to notes: the reply appended as a dated "Agent" block to its card's note (the all-prep notes
+    for a general reply), as `learn-notes CARD --append` does. Once per reply; never pay."""
+    reply = _learn_reply(conn, form)
+    _, back = _learn_back(conn, form)
+    key = str(reply["card_id"]) if reply["card_id"] is not None else learnnotes.ALL
+    if reply["body"].strip() in learnnotes.read(settings.private_dir, key)["text"]:
+        raise BadRequest("That reply is already in the notes.")
+    stamp = learnnotes.append(settings.private_dir, key, reply["body"], today)
+    log.info("prep agent reply %s added to %s", reply["id"], learnnotes.label(key))  # never the text
+    return {"redirect": back, "stamp": stamp, "note": "all" if key == learnnotes.ALL else "card",
+            "note_card": reply["card_id"]}
+
+
+def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
+    """GET /learn/thread?card=ID for polling: whether a Prep agent message is still waiting, the
+    message count (a reply arrived) and the conversation's HTML (the open card marked)."""
+    raw = (query.get("card") or [""])[0]
+    if raw and not raw.isdigit():
+        return _json(400, {"ok": False, "message": "card must be a card id."})
+    with closing(_connect(settings, today)) as conn:
+        payload = {"ok": True, "pending": bool(db.pending_messages(conn, topic=db.LEARN)),
+                   "messages": db.message_count(conn, learn=True),
+                   "html": _learn_thread(conn, settings, int(raw) if raw else None)}
+    return _json(200, payload)
+
+
 # path -> (action, page to return to, MESSAGES key)
 # The offer actions keep their old paths (forms from before the merge still post to them).
 ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
@@ -758,6 +851,10 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/learn/done": (card_done, "/learn", "card_done"),
     "/learn/undo": (card_undo, "/learn", "card_todo"),
     "/learn/notes": (save_learn_notes, "/learn", "learn_notes_saved"),
+    "/learn/message": (send_learn_message, "/learn", "learn_sent"),
+    "/learn/check": (check_answer, "/learn", "learn_check_sent"),
+    "/learn/card": (draft_card, "/learn", "learn_card_asked"),
+    "/learn/add-note": (add_reply_to_notes, "/learn", "learn_note_added"),
 }
 
 
@@ -839,7 +936,7 @@ def practice_section(conn: sqlite3.Connection) -> str:
 # --- Learn ------------------------------------------------------------------------------------
 # /learn: the tracks grid. /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
 # Notes (this card's note, or with &notes=all the general notebook: prep/learnnotes.py) and the Prep
-# agent (a placeholder for now) on the left, a divider, and the card on the right.
+# agent (the Learn conversation with the prep assistant) on the left, a divider, and the card on the right.
 
 EXPAND_ICON = "⤢"
 
@@ -922,15 +1019,13 @@ def _learn_view(settings: Settings, conn: sqlite3.Connection, card: dict, key: s
               f'aria-controls="learn-side" title="Fold Notes away" hidden>{EXPAND_ICON} Expand</button>')
     side = ('<div class="learn-side" id="learn-side">'
             + _notes_panel(settings, card["id"], key)
-            + _card("Prep agent", _empty("The prep agent is not here yet.",
-                                         "It will quiz, explain and check answers on this card."),
-                    action=expand, cls="learn-agent")
+            + _card("Prep agent", _learn_agent(conn, settings, card["id"]), action=expand, cls="learn-agent")
             + "</div>")
     handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and agent,card")
     answer = ""
     if settings.private_dir is not None:
         key = learnnotes.answer_key(card["id"])
-        answer = _answer_box(card["id"], key, learnnotes.read(settings.private_dir, key))
+        answer = _answer_box(card["id"], key, learnnotes.read(settings.private_dir, key)) + _check_form(card["id"])
     return f'<div class="learn-view" id="learn-view">{side}{handle}{_learn_card(conn, card, answer)}</div>'
 
 
@@ -1000,6 +1095,74 @@ def _answer_box(card_id: int, key: str, note: dict, draft: str | None = None, al
             f'\n{h(text)}</textarea>'
             '<p class="answer-foot"><span class="ed-saved" data-ed-saved role="status"></span>'
             '<button class="btn btn-secondary btn-sm" data-ed-save>Save</button></p></form>')
+
+
+def _check_form(card_id: int) -> str:
+    """Check my answer, under Your answer: the page script saves the answer first, then posts this."""
+    return (f'<form method="post" action="/learn/check" class="answer-check" data-ajax="learn" data-save-answer>'
+            f'<input type="hidden" name="card_id" value="{h(card_id)}">'
+            '<span class="muted">The prep agent says what you covered, what you missed and one better phrasing.</span>'
+            + _button("Check my answer", "secondary", "sm") + "</form>")
+
+
+LEARN_MESSAGES = 60  # the latest Prep agent messages shown
+
+
+def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int) -> str:
+    """The Prep agent box: the Learn conversation and a message form that carries the open card."""
+    return (f'<div class="learn-chat" id="learn-chat" data-card="{h(card_id)}">{_learn_thread(conn, settings, card_id)}'
+            '<form method="post" action="/learn/message" class="ask" data-ajax="learn">'
+            f'<input type="hidden" name="card_id" value="{h(card_id)}">'
+            f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
+            'placeholder="Ask about this card, \u201cquiz me on chapter 2\u201d, or \u201cexplain it more simply\u201d…" '
+            'aria-label="Message to the prep agent"></textarea>'
+            '<div class="ask-foot"><span class="muted">Sent with this card. The prep agent replies here.</span>'
+            + _button("Send", size="sm") + "</div></form></div>")
+
+
+def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | None) -> str:
+    """The Prep agent conversation, its latest LEARN_MESSAGES oldest first, each tagged with the card it
+    was sent from (a link; "this card" for the open one). Under each agent reply: Want a card for
+    this? and Add to notes. data-pending while a message waits for the prep assistant."""
+    messages = db.thread(conn, topic=db.LEARN, limit=LEARN_MESSAGES)
+    back = f'<input type="hidden" name="card_id" value="{h(card_id)}">' if card_id is not None else ""
+
+    def tag(m: dict) -> str:
+        if m["card_id"] is None:
+            return '<span class="msg-about">general</span>'
+        here = m["card_id"] == card_id
+        return (f'<a class="msg-about{" is-here" if here else ""}" href="/learn?card={h(m["card_id"])}">'
+                f'{"this card" if here else "card " + h(m["card_id"])}</a>')
+
+    def actions(m: dict) -> str:
+        if m["author"] != "agent":
+            return ""
+        forms = "".join(
+            f'<form method="post" action="{path}" data-ajax="learn"><input type="hidden" name="reply_id" '
+            f'value="{h(m["id"])}">{back}<button class="btn btn-ghost btn-sm">{label}</button></form>'
+            for path, label in (("/learn/card", "Want a card for this?"), ("/learn/add-note", "Add to notes")))
+        return f'<div class="msg-actions">{forms}</div>'
+
+    items = "".join(
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-card="{h(m["card_id"] or "")}">'
+        f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
+        + tag(m) + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
+        f'<div class="msg-body">{_linkify(m["body"])}</div>{actions(m)}</li>'
+        for m in messages)
+    pending = bool(db.pending_messages(conn, topic=db.LEARN))
+    if not messages:
+        state = ('<p class="muted thread-empty">No messages yet. Ask about this card, or say '
+                 '\u201cquiz me on chapter 1\u201d.</p>')
+    elif pending and settings.prep_assistant_task:
+        state = ('<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
+                 "Prep agent is working…</p>")
+    elif pending:
+        state = ('<p class="thread-state" role="status">Waiting for the prep agent: run /learn-ask in a Claude Code '
+                 "session (no prep assistant is set).</p>")
+    else:
+        state = ""
+    return (f'<div class="thread" data-learn-thread{" data-pending" if pending else ""}>'
+            + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
 
 
 def _learn_card(conn: sqlite3.Connection, card: dict, answer_box: str = "") -> str:

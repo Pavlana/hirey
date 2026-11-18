@@ -97,6 +97,14 @@ MESSAGE_TOPICS = ("cv",)
 # The topic is set by add_compare only, never taken from a form.
 COMPARE = "compare"
 MAX_TARGETS = 4
+# The Learn page's Prep agent: its messages are topic LEARN (set by add_learn_message only, never from a
+# form) with the open card in card_id (NULL: about prep in general). The Applications Agent box, its
+# pending state and /ask never see them; a separate standing assistant answers them (/learn-ask).
+LEARN = "learn"
+# Fixed messages built from ids only (the card's answer and the reply stay in their own places).
+LEARN_CHECK = ("Check my answer on this card (Your answer): what I covered, what I missed, "
+               "and one better phrasing.")
+LEARN_CARD = "Want a card for this? Draft a card from your reply {reply}; I will confirm before it is saved."
 # Job briefs: written by the agent from the getjo description, shown at the top of the panel.
 MAX_BRIEF_WORDS = 300
 MAX_FACTS = 200  # characters in the key facts line (the brief's first line)
@@ -423,7 +431,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
     # carries it too. Interested moves these messages to the new application and keeps the id.
     # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
-    "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT"},
+    # card_id: the Learn card open when a Prep agent message (topic "learn") was sent; the reply carries it.
+    "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT", "card_id": "INTEGER"},
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
     "tailored_cv_checks": {"summary": "TEXT"},
@@ -487,15 +496,15 @@ def _copy_application_messages(conn: sqlite3.Connection) -> None:
 
 def _backfill_message_targets(conn: sqlite3.Connection) -> None:
     """A message from before agent_message_targets gets one target row from its own columns (an
-    application with its getjo job id, a job, or a topic); general messages get none."""
+    application with its getjo job id, a job, or a topic); general and Prep agent (LEARN) messages get none."""
     conn.execute(
         "INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
         "SELECT m.id, m.application_id, COALESCE(m.getjo_job_id, a.getjo_job_id), m.topic "
         "FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id "
         "WHERE (m.application_id IS NOT NULL OR m.getjo_job_id IS NOT NULL OR m.topic IS NOT NULL) "
-        "AND COALESCE(m.topic, '') != ? "
+        "AND COALESCE(m.topic, '') NOT IN (?, ?) "
         "AND NOT EXISTS (SELECT 1 FROM agent_message_targets t WHERE t.message_id = m.id)",
-        (COMPARE,))
+        (COMPARE, LEARN))
 
 
 def _backfill_tailored_versions(conn: sqlite3.Connection) -> None:
@@ -2187,33 +2196,38 @@ def message_targets(conn: sqlite3.Connection, msg_ids: list[int] | None = None) 
 
 
 def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | None = None,
-           job_id: str | None = None, topic: str | None = None) -> list[dict]:
+           job_id: str | None = None, topic: str | None = None, card_id: int | None = None) -> list[dict]:
     """Messages oldest first: id, application_id, getjo_job_id, topic, company, author, body, status,
     reply_to, created_at. With `app_id` only that application's, with `job_id` only that job's
     (before and after it was tracked), with `topic` only that topic's; otherwise the whole
     conversation (with `limit`, its latest messages). company is None for a message about an
-    untracked job or a topic."""
+    untracked job or a topic. Learn messages (topic LEARN) only come with topic=LEARN (with `card_id`,
+    only that card's); the whole conversation leaves them out."""
     key = app_id if app_id is not None else job_id if job_id else topic
     column = "application_id" if app_id is not None else "getjo_job_id" if job_id else "topic" if topic else ""
     # its own messages, and comparisons that name it
     where = (f"WHERE m.{column} = :key OR m.id IN (SELECT message_id FROM agent_message_targets WHERE {column} = :key)"
-             if column else "")
+             if column else f"WHERE COALESCE(m.topic, '') != '{LEARN}'")
+    if topic == LEARN:
+        where = "WHERE m.topic = :key" + (" AND m.card_id = :card" if card_id is not None else "")
     rows = conn.execute(
         f"""
         SELECT * FROM (
-            SELECT m.id, m.application_id, m.getjo_job_id, m.topic, a.company, m.author, m.body, m.status,
-                   m.reply_to, m.created_at
+            SELECT m.id, m.application_id, m.getjo_job_id, m.topic, m.card_id, a.company, m.author, m.body,
+                   m.status, m.reply_to, m.created_at
             FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
             {where} ORDER BY m.id DESC {'LIMIT :limit' if limit else ''}
         ) ORDER BY id
         """,
-        {"key": key, "limit": limit},
+        {"key": key, "limit": limit, "card": card_id},
     )
     return [dict(r) for r in rows]
 
 
-def message_count(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM agent_messages").fetchone()[0]
+def message_count(conn: sqlite3.Connection, learn: bool = False) -> int:
+    """Messages in the Applications conversation, or with `learn` in the Prep agent's."""
+    op = "=" if learn else "!="
+    return conn.execute(f"SELECT COUNT(*) FROM agent_messages WHERE COALESCE(topic, '') {op} ?", (LEARN,)).fetchone()[0]
 
 
 def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None,
@@ -2221,9 +2235,12 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id
     """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
     claimed now: `claimed` is True for a live claim), oldest first, with getjo_job_id, topic, company
     and role (None for a message about an untracked job, a topic or the whole search). With `app_id`
-    only that application's, with `job_id` only that untracked job's, with `topic` only that topic's."""
+    only that application's, with `job_id` only that untracked job's, with `topic` only that topic's.
+    Learn messages (topic LEARN) only come with topic=LEARN."""
     where = "WHERE m.author = 'user' AND m.status IN ('pending', 'claimed')"
     params: tuple = ()
+    if topic != LEARN:
+        where += f" AND COALESCE(m.topic, '') != '{LEARN}'"
     if app_id is not None:
         where, params = where + " AND m.application_id = ?", (app_id,)
     elif job_id is not None:
@@ -2232,7 +2249,8 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id
         where, params = where + " AND m.application_id IS NULL AND m.getjo_job_id IS NULL AND m.topic = ?", (topic,)
     rows = conn.execute(
         f"""
-        SELECT m.id, m.application_id, m.getjo_job_id, m.topic, m.status, m.created_at, m.claimed_at, a.company, a.role
+        SELECT m.id, m.application_id, m.getjo_job_id, m.topic, m.card_id, m.status, m.created_at, m.claimed_at,
+               a.company, a.role
         FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
         {where} ORDER BY m.id
         """,
@@ -2287,6 +2305,26 @@ def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
         "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, msg_id, cutoff))
     conn.commit()
     return cursor.rowcount == 1
+
+
+def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) -> int:
+    """A user message to the Prep agent (topic LEARN) while card `card_id` is open (None: prep in
+    general), pending until /learn-ask answers it. LookupError for an unknown card."""
+    body = _message_body(body)
+    if card_id is not None and conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone() is None:
+        raise LookupError(f"no card with id {card_id}")
+    with conn:
+        cursor = conn.execute(
+            "INSERT INTO agent_messages (topic, card_id, author, body, status, created_at) "
+            "VALUES (?, ?, 'user', ?, 'pending', ?)", (LEARN, card_id, body, now_iso()))
+    return cursor.lastrowid
+
+
+def get_message(conn: sqlite3.Connection, msg_id: int) -> dict | None:
+    """One message: id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, created_at."""
+    row = conn.execute("SELECT id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, "
+                       "created_at FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+    return dict(row) if row else None
 
 
 def message_application(conn: sqlite3.Connection, msg_id: int) -> int | None:
@@ -2346,16 +2384,18 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
         )
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
+    card = (conn.execute("SELECT card_id FROM agent_messages WHERE id = ?", (to_id,)).fetchone()[0]
+            if to_id is not None else None)  # a Prep agent reply is about the question's card
     cursor = conn.execute(
-        "INSERT INTO agent_messages (application_id, getjo_job_id, topic, author, body, reply_to, created_at) "
-        "VALUES (?, ?, ?, 'agent', ?, ?, ?)",
-        (app_id, job_id, topic, body, to_id, stamp),
+        "INSERT INTO agent_messages (application_id, getjo_job_id, topic, card_id, author, body, reply_to, created_at) "
+        "VALUES (?, ?, ?, ?, 'agent', ?, ?, ?)",
+        (app_id, job_id, topic, card, body, to_id, stamp),
     )
     if to_id is not None:  # the reply is about what the question was about
         conn.execute("INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
                      "SELECT ?, application_id, getjo_job_id, topic FROM agent_message_targets WHERE message_id = ? "
                      "ORDER BY id", (cursor.lastrowid, to_id))
-    elif app_id is not None or job_id is not None or topic is not None:
+    elif app_id is not None or job_id is not None or (topic is not None and topic != LEARN):
         _add_targets(conn, cursor.lastrowid, [(app_id, job_id, topic)])
     return cursor.lastrowid
 

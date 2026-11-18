@@ -46,24 +46,24 @@ The per-user file is the normal place: every checkout and git worktree, a launch
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
-`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
+`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_ASSISTANT_TASK`, `PREP_PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
 `PREP_PDF_PYTHON` and `PREP_FACTS_FILE`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
-`PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
-on example data never messages the standing assistant; empty path and number overrides are
+`PREP_ASSISTANT_TASK=` (or `PREP_PREP_ASSISTANT_TASK=`, `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
+on example data never messages the standing assistants; empty path and number overrides are
 ignored.
 
 ## Try it with example data
 
 ```bash
 python -m prep.seed_example
-PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
-PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
+PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today
+PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
 # then open http://localhost:8766
 ```
 
-`PREP_ASSISTANT_TASK=` (empty) keeps the example run away from the standing assistant set in the
-settings file: its messages and queued research would otherwise be sent to it.
+`PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` (empty) keep the example run away from the standing
+assistants set in the settings file: its messages and queued research would otherwise be sent to them.
 
 The seed shifts the example dates so the most recent ones fall around today. The example databases are built from made-up fixtures in `tests/fixtures/example.json`
 (fictional companies only) and are gitignored.
@@ -91,6 +91,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | `/ask`, `/research` | `python -m prep.cli notes APP [--show \| --append [TEXT]]` | The panel's Notes: print them, or add a dated "Agent · 17 Nov" block at the end (TEXT, or stdin when left out); never rewrites the user's text, refuses pay |
 | Prep agent | `python -m prep.cli learn-notes CARD_ID\|all [--show \| --append [TEXT]]` | The Learn page's Notes: a card's note or the "all prep" notebook; print it, or add a dated "Agent" block at the end; never rewrites, refuses pay |
 | Prep agent | `python -m prep.cli learn-notes answer CARD_ID [--show]` | The user's own answer on a card (Your answer); read only |
+| `/learn-ask` | `python -m prep.cli learn-thread show MSG [--claim]` / `learn-thread reply --to MSG` / `learn-thread pending` | The Learn page's Prep agent: a message with its card (front, back, follow-ups, Learn sources), the track's chapters, the private context files and the conversation; the reply (text on stdin or `--file`); the messages waiting |
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
@@ -130,7 +131,7 @@ charts are server-rendered SVG):
   progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
   do (`?track=SLUG`; any card is `?card=ID`). The card view keeps the tracks above it as a compact
   row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Prep agent** on the
-  left (placeholders for now), the card on the right, with the same divider as Applications (its
+  left, the card on the right, with the same divider as Applications (its
   width kept per browser on its own). **⤢ Expand** on the Prep agent folds Notes away, remembered
   per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
   question, **Show answer** (the key
@@ -343,6 +344,50 @@ they arrive:
 4. Restart the dashboard (`launchctl kickstart -k gui/$(id -u)/uk.inter-prep.dashboard`, or
    stop and start `python -m prep.web`). A message sent from a panel now shows up in that
    task's terminal as `/ask <app> <msg>`.
+
+### Prep agent (Learn)
+
+The Learn page's **Prep agent** box is a study partner for the open card: one conversation for all of
+Learn, each message tagged with the card that was open (a link back to it). Typical messages:
+
+- A question about the card ("explain this more simply", "give me an example"). The agent answers in
+  plain English from the card, its **Learn** sources (it may open those links) and general knowledge,
+  and ends with a one-line "Say it in the interview" version. It never invents facts about an
+  employer or the user and keeps the `confirmed` / `accelerator-default` / `unknown` labels.
+- "Quiz me on chapter 2": one question per reply from that chapter of the open card's track, then
+  short feedback on each answer and the next question.
+- **Check my answer**, under the card's Your answer box: saves the answer, then asks the agent, which
+  replies with what was covered, what was missed and one better phrasing. An empty answer is refused.
+
+Under each agent reply, **Want a card for this?** asks the agent to draft a card from that reply; it
+is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends the reply to the
+card's note (the all-prep notes for a general reply) as a dated "Agent" block, at once and once per
+reply; a reply mentioning pay is refused.
+
+The dashboard stores each message (topic `learn`, with the card id) and pings the prep assistant
+with ids only: `/learn-ask <card id> <message id>`. Without one the message waits; the SessionStart
+hook and `/today` report it, and `/learn-ask` answers it in any Claude Code session. Learn messages
+never show in the Applications Agent box.
+
+### Prep assistant (optional)
+
+A second long-running dev3 task, separate from the standing assistant, that answers the Prep agent:
+
+1. On the project's dev3 board, create a task, for example titled "Prep assistant", with this
+   description: "Standing prep assistant for Hirey's Learn page. When messaged
+   `/learn-ask <card> <msg>` or `/learn-ask general <msg>`, run /learn-ask. Between messages, wait.
+   Never commit, push, apply to jobs or contact anyone." Start it with Claude Code and leave it
+   running.
+2. Note its seq number (shown on the card).
+3. Add to `~/.config/inter_prep/settings.toml` (`assistant_project` and `dev3_bin`, when set, apply
+   to both assistants):
+
+   ```toml
+   prep_assistant_task = 24             # the prep assistant task's seq
+   ```
+
+4. Restart the dashboard. A message sent from the Learn page now shows up in that task's terminal
+   as `/learn-ask <card> <msg>`.
 
 ### Keep it running with launchd (macOS)
 

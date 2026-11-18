@@ -587,9 +587,10 @@
     window.addEventListener("pagehide", () => {
       if (dirty && !conflict && navigator.sendBeacon) navigator.sendBeacon(form.action, new URLSearchParams(new FormData(form)));
     });
-    // Back on the page with nothing unsaved: pick up what an agent added meanwhile.
-    document.addEventListener("visibilitychange", async () => {
-      if (document.visibilityState !== "visible" || dirty || saving || conflict) return;
+    // Back on the page with nothing unsaved, or told so (learn:refresh, after Add to notes or a
+    // prep agent reply): pick up what an agent added meanwhile.
+    async function pickUp() {
+      if (dirty || saving || conflict) return;
       try {
         const q = new URLSearchParams({ card: form.dataset.card, note: form.dataset.note });
         const reply = await (await fetch(`/learn/notes?${q}`, { credentials: "same-origin" })).json();
@@ -600,7 +601,9 @@
         onText();
         status(`updated ${hhmm()}`);
       } catch { /* kept as it is */ }
-    });
+    }
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") pickUp(); });
+    form.addEventListener("learn:refresh", pickUp);
     onText();
     return { save };
   }
@@ -685,15 +688,73 @@
   }
 
   // Your answer: a plain textarea (no vim keys) that grows with the text, from its six rows.
+  // Check my answer saves it first (saveAnswer).
   const answer = document.querySelector("form[data-learn-answer]");
+  let saveAnswer = () => Promise.resolve();
   if (answer && window.fetch) {
     const area = answer.querySelector("textarea");
     const grow = () => {
       area.style.height = "auto"; // CSSOM, not an inline style attribute: allowed by the CSP
       area.style.height = `${area.scrollHeight + 2}px`;
     };
-    autosaving(answer, { onText: grow, savedLabel: "saved" });
+    const box = autosaving(answer, { onText: grow, savedLabel: "saved" });
+    saveAnswer = () => box.save("auto");
   }
+
+  // --- Learn: the Prep agent --------------------------------------------------------------------
+  // The conversation with the prep assistant (/learn-ask). While a message waits for it, poll
+  // /learn/thread every few seconds (for at most a few minutes), then swap in the conversation and
+  // let the Notes editor pick up anything the agent added. Its forms post with data-ajax="learn".
+  let learnPoll = null;
+  const learnChat = () => document.querySelector("#learn-chat [data-learn-thread]");
+  function scrollLearn() {
+    const msgs = learnChat()?.querySelector(".msgs");
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  }
+  function refreshNotes() {
+    document.querySelector("form[data-learn-notes]")?.dispatchEvent(new Event("learn:refresh"));
+  }
+  function swapLearn(html) {
+    const thread = learnChat();
+    if (thread && html) thread.outerHTML = html;
+    scrollLearn();
+  }
+  function watchLearn() {
+    if (learnPoll) clearTimeout(learnPoll.timer);
+    learnPoll = null;
+    const thread = learnChat();
+    if (!thread || !thread.hasAttribute("data-pending") || !window.fetch) return;
+    const card = document.getElementById("learn-chat").dataset.card;
+    const me = { timer: null, started: Date.now(), before: thread.querySelectorAll(".msg").length };
+    learnPoll = me;
+    const tick = async () => {
+      if (learnPoll !== me) return;
+      try {
+        const res = await fetch(`/learn/thread?card=${encodeURIComponent(card)}`, {
+          headers: { Accept: "application/json" }, credentials: "same-origin",
+        });
+        const reply = await res.json();
+        if (learnPoll !== me) return;
+        if (reply.ok && !reply.pending) {
+          learnPoll = null;
+          swapLearn(reply.html);
+          refreshNotes();
+          toast("The prep agent replied.");
+          return;
+        }
+      } catch { /* the server restarted or is busy: try again */ }
+      if (Date.now() - me.started > POLL_FOR_MS) {
+        learnPoll = null;
+        const state = learnChat()?.querySelector(".thread-state");
+        if (state) state.textContent = "Still waiting. The reply shows here when the prep agent answers; reload to check.";
+        return;
+      }
+      me.timer = setTimeout(tick, POLL_MS);
+    };
+    me.timer = setTimeout(tick, POLL_MS);
+  }
+  scrollLearn();
+  watchLearn();
 
   // --- Applications ---------------------------------------------------------------------
   // The server renders every state from the query string (?view=, ?app=ID or ?job=ID side panel,
@@ -1025,6 +1086,7 @@
     if (button) button.disabled = true;
     const mode = form.dataset.ajax;
     try {
+      if (form.hasAttribute("data-save-answer")) await saveAnswer(); // Check my answer: the latest text
       const reply = await post(form.action, new URLSearchParams(new FormData(form)));
       if (mode === "interested") {
         // An offer's Interested: its application panel opens in the pipeline (Interested).
@@ -1067,6 +1129,13 @@
         if (thread && reply.html) thread.outerHTML = reply.html;
         applyChatFilter();
         watchThread();
+        toast(reply.message);
+      } else if (mode === "learn") {
+        // The Prep agent: a message, Check my answer, Want a card for this?, or Add to notes.
+        swapLearn(reply.html);
+        if (form.elements.body) form.elements.body.value = "";
+        if (reply.note) refreshNotes();
+        watchLearn();
         toast(reply.message);
       } else if (mode === "thread") {
         // The Agent box: swap in the server-built, escaped conversation and wait for the reply.
