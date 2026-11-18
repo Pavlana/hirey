@@ -17,14 +17,18 @@ Internal names keep the project's original name: the Python package is `prep`, s
 `~/.config/inter_prep/` and the launchd label is `uk.inter-prep.dashboard`.
 
 Python 3.11+, standard library by default (no frameworks, no build step; one pinned library,
-WeasyPrint, renders the tailored CV PDF), 632 unit tests.
+WeasyPrint, renders the tailored CV PDF), 699 unit tests.
 
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
 ![New offers with the agent's job brief, and the Applications Assistant box](docs/screenshots/new-offers.png)
 
-| Pipeline and an application (Mock interview) | Comparing two ticked jobs | Dashboard |
+| Pipeline and an application (Mock interview) | Comparing two ticked jobs | Metrics: Applications |
 |---|---|---|
-| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Applications Assistant box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
+| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Applications Assistant box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Metrics, Applications tab](docs/screenshots/metrics-applications.png) |
+
+| Metrics: Usage (Claude Code tokens per day, task, role; context size; where to save) |
+|---|
+| ![Metrics, Usage tab](docs/screenshots/metrics-usage.png) |
 
 | Learn: a card with Your answer, the notes (vim keys on) and the tracks |
 |---|
@@ -70,12 +74,14 @@ WeasyPrint, renders the tailored CV PDF), 632 unit tests.
 - **Interview practice.** A mock interview runs in the Applications Assistant box for a chosen stage: one
   question per reply, then 1–5 scores per area. `/debrief` turns a pasted transcript of a real
   interview into questions, what went well and what to improve. Each weakness becomes a gap with
-  a drill task, and the Dashboard shows score trends per area.
+  a drill task.
 - **Master CV with history.** CV changes go through the agent only: a backup of the current text
   first, then an atomic replace. The panel shows skills by theme, versions, diffs and restore with
   undo.
-- **Dashboard.** Weekly target, reply rate, and server-rendered SVG charts: status donut, tier ×
-  status treemap, stage-conversion funnel, applications per week, practice scores.
+- **Metrics.** Two tabs of server-rendered SVG charts. Usage: Claude Code tokens from the local
+  transcripts (counts only) per day, task and role, context size of the standing assistants, and
+  where to save. Applications: applications per week, response rate, stage funnel and which job
+  boards bring the best matches.
 - **Daily brief.** `/today` lists what moved, what is due, pending agent work and new strong
   matches.
 
@@ -90,7 +96,7 @@ flowchart LR
     jobs -. read-only, SQLite mode=ro .-> core
 
     subgraph hirey [Hirey]
-        web[Dashboard<br/>prep.web, 127.0.0.1 only] <--> db[(prep.db<br/>applications, tasks,<br/>agent_requests, agent_messages,<br/>cv_fits, tailored_cvs, ...)]
+        web[Dashboard: Applications, Learn, Metrics<br/>prep.web, 127.0.0.1 only] <--> db[(prep.db<br/>applications, tasks,<br/>agent_requests, agent_messages,<br/>cv_fits, tailored_cvs, ...)]
         core[prep.cli + prep.db] <--> db
     end
 
@@ -164,6 +170,7 @@ is in [docs/usage.md](docs/usage.md). It covers the venv and the launchd job, wh
 ```
 prep/            db.py (schema, migrations, queue, stage rules) · cli.py (every command the agents use)
                  web.py (dashboard) · stats.py + charts.py (numbers, SVG) · getjo.py (read-only view)
+                 usage.py (Claude Code token counts from transcripts, read only)
                  research.py · cvfile.py · cvcheck.py (tailored CV rules) · cveval.py (AI check) · cvpdf.py (PDF)
                  assistant.py (ids-only ping) · privacy.py · static/
 .claude/skills/  today, applied, stage, task, research, ask, mock, debrief: the agent's instructions, each

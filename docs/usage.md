@@ -65,6 +65,18 @@ PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJ
 `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` (empty) keep the example run away from the standing
 assistants set in the settings file: its messages and queued research would otherwise be sent to them.
 
+The seed also writes made-up Claude Code transcripts to `data/example-claude-projects/` (token
+counts only, with the dev3 tasks they belong to stored in `data/example.db`). To see them on the
+Metrics page's Usage tab, name the example assistants and point at a dev3 that does not exist, so
+nothing can be sent anywhere:
+
+```bash
+PREP_ASSISTANT_TASK=7 PREP_PREP_ASSISTANT_TASK=9 PREP_ASSISTANT_PROJECT=e0e0e0e0-1111-4222-8333-944445555666 \
+PREP_DEV3_BIN=/nonexistent/dev3 PREP_CLAUDE_PROJECTS_DIR=$PWD/data/example-claude-projects \
+PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
+# then open http://localhost:8766/metrics
+```
+
 The seed shifts the example dates so the most recent ones fall around today. The example databases are built from made-up fixtures in `tests/fixtures/example.json`
 (fictional companies only) and are gitignored.
 
@@ -119,13 +131,23 @@ charts are server-rendered SVG):
   remembered per browser; a bare `/` opens the view picked last). The nav shows the new offers
   count next to Applications. The Applications Assistant box sits under the list in both views; the panel on the
   right shows the selected application or job offer. Details below.
-- **Dashboard** (`/dashboard`): applied in the last 7 days against `weekly_target`, total applications,
-  reply rate (with a warning below 10% after 25 applications), and charts:
-  applications by status (donut), tiers split by status (treemap), stage conversion (funnel),
-  applications per week (columns with the target). Below them, **Practice**: practice sessions
-  (mock · real), open gaps and a 1–5 score trend per area. Apart from Practice it counts
-  applications only; tasks are a to-do list on the Applications page.
-  `/progress` redirects here.
+- **Metrics** (`/metrics`, last in the nav; `/dashboard` and `/progress` redirect here), two tabs:
+  - **Usage** (`?tab=usage`, the default): Claude Code token use, to see which sessions cost the
+    most and where to save. Filters: project (each project seen, or all) and 7 / 14 / 30 days.
+    Tiles: tokens, turns and sessions; cache-read share; an API-equivalent cost when `[prices]` are
+    set ("estimate at API prices, not your subscription bill"); assistants over the context
+    threshold. Then tokens per day (stacked: cache read, cache write, output, fresh input), top
+    tasks by tokens (seq, title, turns, tokens, tokens per turn), who uses what (Applications
+    Assistant, Learn Assistant, coordinator, build tasks, main checkouts), context size per turn
+    for the two assistants and the coordinator (each day's last turn; "time to /compact" above
+    `context_warn_tokens`), and **Where to save**: an assistant over the threshold, a task still
+    open after its PR merged, a session with many cache writes. A turn is one API response.
+  - **Applications** (`?tab=applications`): applications sent, response rate (a reply, call,
+    rejection or recorded interview; a warning below 10% after 25 applications), interviews and
+    offers; applications sent per week (last 12 weeks, with the `weekly_target` line); the stage
+    funnel Applied → Screen (recruiter call) → Interview (technical, system design or final) →
+    Offer; and per getjo source (job board): jobs seen, average score, strong matches (7+) and
+    applications sent from them.
 - **Learn** (`/learn`; the nav shows the number of cards to do): "X done · Y to do" and the next
   interview (company, stage, day) under the title, then one tile per track: a cover colour with a
   progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
@@ -219,7 +241,7 @@ The dashboard binds to `127.0.0.1` only and refuses any other address; requests 
 header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. The pay
 field (`applications.pay`) is never shown. Each request opens the database afresh, so changes
 made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
-(applications per week, default 10) and `no_response_days` (default 14: an application
+(applications per week, the target line on Metrics, default 10) and `no_response_days` (default 14: an application
 still in Applied with no stage change for that long moves to No response; checked on every
 dashboard request and by `/today`).
 
@@ -455,6 +477,29 @@ Uninstall:
 launchctl bootout gui/$(id -u)/uk.inter-prep.dashboard
 rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 ```
+
+## Token usage (Metrics, Usage tab)
+
+The Usage tab reads Claude Code's transcripts under `claude_projects_dir` (default
+`~/.claude/projects`), every `*.jsonl` below it, read only. Of each line it keeps the time, working
+directory, session id and, for API responses, the message id, model and four token counts. Message
+text is never stored, logged or shown. Each page load reads only what was appended since the last
+one (byte offsets in `prep.db`); `python -m prep.cli usage scan` does the same from the command line,
+for example once before the first page load.
+
+A session's working directory names its dev3 task (`~/.dev3.0/worktrees/<project>/<task id>/…`).
+Seq, title, type and whether its PR merged come from `dev3` (cached, refreshed at most every 10
+minutes); without dev3 the task id is shown. Settings:
+
+- `claude_projects_dir`: absolute path to the transcripts (default `~/.claude/projects`).
+- `coordinator_task`: dev3 seq of the coordinator; tasks of dev3 type coordinator count anyway.
+- `context_warn_tokens`: context per turn above which an assistant reads "time to /compact"
+  (default 300000).
+- `[prices."<model id or prefix>"]` with `input`, `output`, `cache_read`, `cache_write` in dollars
+  per million tokens: shows an estimate at API prices. Without prices the tile is hidden.
+
+The Applications and Learn Assistants are the `assistant_task` and `prep_assistant_task` seqs (in
+`assistant_project` when set, else in this checkout's project).
 
 ## Privacy model
 

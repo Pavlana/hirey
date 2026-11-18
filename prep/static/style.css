@@ -317,6 +317,16 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 
 
 
+/* --- Metrics page ------------------------------------------------------------- */
+.metrics-filters { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-bottom: var(--space-5); }
+.stack-legend { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-bottom: var(--space-3); font-size: 12.5px; color: var(--text-muted); }
+.stack-key { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: currentColor; margin-right: 6px; vertical-align: -1px; }
+.chart.share-bar { height: 14px; margin-bottom: var(--space-3); }
+.warn-text { display: block; color: var(--warning); font-size: 12px; white-space: nowrap; }
+.save-list { margin: 0; padding-left: 1.2em; display: grid; gap: var(--space-2); font-size: 13.5px; }
+.card-wide .chart.columns { width: 100%; }
+
 /* --- charts (prep/charts.py) --------------------------------------------------- */
 .chart { display: block; width: 100%; height: auto; overflow: visible; font-family: var(--font); }
 .chart .axis { fill: var(--text-faint); font-size: 11px; }
@@ -327,23 +337,7 @@ progress::-moz-progress-bar { background: var(--accent); border-radius: var(--ra
 .chart .target-label { fill: var(--text-muted); font-size: 11px; }
 .chart rect, .chart circle, .chart polygon { transition: opacity .15s; }
 .chart rect:hover, .chart circle:hover { opacity: .8; }
-.donut-wrap { display: flex; align-items: center; gap: var(--space-6); flex-wrap: wrap; }
-.donut { width: 180px; flex: none; }
-.donut .track { stroke: var(--surface-2); }
-.donut-total { fill: var(--text); font-family: var(--font-display); font-size: 36px; letter-spacing: -.03em; }
-.donut-label { fill: var(--text-muted); font-size: 12px; }
-.legend { list-style: none; margin: 0; padding: 0; flex: 1 1 200px; display: grid; gap: 7px; }
-.legend li { display: grid; grid-template-columns: 12px 1fr auto 44px; align-items: center; gap: var(--space-2); }
-.swatch { width: 10px; height: 10px; border-radius: 3px; background: currentColor; }
-.legend-label { color: var(--text); }
-.legend-n { font-weight: 600; font-variant-numeric: tabular-nums; }
-.legend-pct { color: var(--text-muted); text-align: right; font-variant-numeric: tabular-nums; font-size: 12.5px; }
-.treemap .tm-head { fill: var(--text); font-size: 12.5px; font-weight: 600; }
-.treemap .tm-text { font-size: 12px; font-weight: 600; }
-.treemap rect { fill-opacity: .9; }
 .funnel { max-width: 620px; margin: 0 auto; }
-.card-weeks svg.chart { max-width: 620px; margin: 0 auto; }
-.tiles-practice { margin-top: var(--space-5); }
 .chart.trend { width: 220px; min-width: 140px; }
 .chart .trend-line { stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .funnel .funnel-empty { fill: var(--border-strong); }

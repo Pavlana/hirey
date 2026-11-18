@@ -1,4 +1,4 @@
-"""Inline SVG charts for the dashboard: donut, treemap, funnel, columns and trend.
+"""Inline SVG charts for the Metrics page: funnel, columns, stacked columns, share bar and trend.
 
 Charts are rendered on the server, so they need no script and no library. They use SVG
 presentation attributes and CSS classes only, because the Content-Security-Policy forbids
@@ -10,7 +10,6 @@ no xmlns attribute: inline SVG in HTML does not need one.
 Each chart returns "" when there is nothing to draw, so the caller can show an empty state.
 """
 
-import math
 from html import escape
 
 SHADES = tuple(f"s{i}" for i in range(1, 11))  # dark to light
@@ -43,74 +42,6 @@ def _fit(text: str, width: float, char: float = 7.2) -> str:
     if room >= len(text):
         return text
     return text[: max(room - 1, 1)] + "…" if room > 1 else ""
-
-
-def donut(items: list[Item], label: str) -> str:
-    """A donut of `items` with the total and `label` in the middle, plus a legend."""
-    total = sum(v for _, v, _ in items if v > 0)
-    if total <= 0:
-        return ""
-    size, r, width = 180, 68, 26
-    mid = size / 2
-    circumference = 2 * math.pi * r
-    shown = [i for i in items if i[1] > 0]
-    gap = 4 if len(shown) > 1 else 0
-    arcs, offset = [], 0.0
-    for name, value, color in shown:
-        length = circumference * value / total
-        arcs.append(
-            f'<circle class="{_c(color)}" cx="{_n(mid)}" cy="{_n(mid)}" r="{r}" fill="none" stroke="currentColor" '
-            f'stroke-width="{width}" stroke-dasharray="{_n(max(length - gap, .5))} {_n(circumference)}" '
-            f'stroke-dashoffset="{_n(-offset)}"><title>{_e(name)}: {value}</title></circle>'
-        )
-        offset += length
-    svg = (
-        f'<svg class="chart donut" viewBox="0 0 {size} {size}" role="img" aria-label="{_e(label)}: {total}">'
-        f'<circle class="track" cx="{_n(mid)}" cy="{_n(mid)}" r="{r}" fill="none" stroke-width="{width}"/>'
-        f'<g transform="rotate(-90 {_n(mid)} {_n(mid)})">{"".join(arcs)}</g>'
-        f'<text class="donut-total" x="{_n(mid)}" y="{_n(mid + 6)}" text-anchor="middle">{total}</text>'
-        f'<text class="donut-label" x="{_n(mid)}" y="{_n(mid + 26)}" text-anchor="middle">{_e(label)}</text></svg>'
-    )
-    rows = "".join(
-        f'<li><span class="swatch {_c(color)}"></span><span class="legend-label">{_e(name)}</span>'
-        f'<span class="legend-n">{value}</span><span class="legend-pct">{value / total:.0%}</span></li>'
-        for name, value, color in shown
-    )
-    return f'<div class="donut-wrap">{svg}<ul class="legend">{rows}</ul></div>'
-
-
-def treemap(groups: list[tuple[str, str, list[Item]]], width: int = 440, height: int = 250) -> str:
-    """Slice-and-dice treemap: one column per group (width by group total), split into
-    blocks by item value. `groups` holds (group label, group colour, items)."""
-    groups = [(g, c, [i for i in items if i[1] > 0]) for g, c, items in groups]
-    groups = [g for g in groups if g[2]]
-    total = sum(v for _, _, items in groups for _, v, _ in items)
-    if total <= 0:
-        return ""
-    head, gap = 24, 4
-    usable_w = width - gap * (len(groups) - 1)
-    parts, x = [], 0.0
-    for glabel, gcolor, items in groups:
-        gtotal = sum(v for _, v, _ in items)
-        w = usable_w * gtotal / total
-        title = _fit(f"{glabel} · {gtotal}", w - 4) or str(gtotal)
-        parts.append(f'<text class="tm-head {_c(gcolor)}" x="{_n(x + 2)}" y="16" fill="currentColor">{_e(title)}</text>')
-        usable_h = height - head - gap * (len(items) - 1)
-        y = float(head)
-        for name, value, color in items:
-            h = usable_h * value / gtotal
-            parts.append(
-                f'<rect class="{_c(color)}" x="{_n(x)}" y="{_n(y)}" width="{_n(w)}" height="{_n(h)}" rx="6" '
-                f'fill="currentColor"><title>{_e(glabel)} · {_e(name)}: {value}</title></rect>'
-            )
-            if h >= 22 and w >= 34:
-                text = _fit(f"{name} {value}", w - 14)
-                if text:
-                    parts.append(f'<text class="tm-text {_k(color)}" x="{_n(x + 8)}" y="{_n(y + 16)}">{_e(text)}</text>')
-            y += h + gap
-        x += w + gap
-    return (f'<svg class="chart treemap" viewBox="0 0 {width} {height}" role="img" '
-            f'aria-label="Treemap of {total} items">{"".join(parts)}</svg>')
 
 
 def funnel(stages: list[tuple[str, int, float | None, str]], width: int = 440) -> str:
@@ -149,12 +80,12 @@ def funnel(stages: list[tuple[str, int, float | None, str]], width: int = 440) -
             f'aria-label="Funnel of {len(stages)} stages">{"".join(parts)}</svg>')
 
 
-def _axis(top: int, x0: float, width: int, y_of) -> str:
+def _axis(top: int, x0: float, width: int, y_of, fmt=str) -> str:
     """Three horizontal gridlines (0, half, top) with labels."""
     marks = sorted({0, top // 2, top}) if top > 1 else [0, top]
     return "".join(
         f'<line class="grid" x1="{_n(x0)}" x2="{width}" y1="{_n(y_of(m))}" y2="{_n(y_of(m))}"/>'
-        f'<text class="axis" x="{_n(x0 - 6)}" y="{_n(y_of(m) + 4)}" text-anchor="end">{m}</text>'
+        f'<text class="axis" x="{_n(x0 - 6)}" y="{_n(y_of(m) + 4)}" text-anchor="end">{_e(fmt(m))}</text>'
         for m in marks
     )
 
@@ -191,6 +122,55 @@ def columns(points: list[tuple[str, int]], target: int | None = None, color: str
         )
     return (f'<svg class="chart columns" viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Column chart of {len(points)} periods">{"".join(parts)}</svg>')
+
+
+def stacked_columns(points: list[tuple[str, list[int]]], series: list[tuple[str, str]], fmt=str,
+                    width: int = 1000, height: int = 240) -> str:
+    """Vertical columns, each a stack of `series` (name, colour) values, bottom first, with the
+    column total above it and a tooltip per block. `fmt` formats axis and total labels."""
+    top = max((sum(v) for _, v in points), default=0)
+    if top <= 0:
+        return ""
+    left, bottom, top_pad = 44, 22, 16
+    plot_h = height - bottom - top_pad
+    y_of = lambda v: top_pad + plot_h * (1 - v / top)  # noqa: E731
+    slot = (width - left) / len(points)
+    bw = slot * .6
+    parts = [_axis(top, left, width, y_of, fmt)]
+    for i, (label, values) in enumerate(points):
+        x = left + i * slot + (slot - bw) / 2
+        base = 0
+        for (name, color), v in zip(series, values):
+            if v > 0:
+                y0, y1 = y_of(base), y_of(base + v)
+                parts.append(f'<rect class="{_c(color)}" x="{_n(x)}" y="{_n(y1)}" width="{_n(bw)}" '
+                             f'height="{_n(y0 - y1)}" fill="currentColor"><title>{_e(label)} · {_e(name)}: '
+                             f'{_e(fmt(v))}</title></rect>')
+            base += v
+        parts.append(f'<text class="axis" x="{_n(x + bw / 2)}" y="{height - 4}" text-anchor="middle">{_e(label)}</text>')
+        if base:
+            parts.append(f'<text class="chart-value" x="{_n(x + bw / 2)}" y="{_n(y_of(base) - 5)}" '
+                         f'text-anchor="middle">{_e(fmt(base))}</text>')
+    return (f'<svg class="chart columns stacked" viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="Stacked column chart of {len(points)} periods">{"".join(parts)}</svg>')
+
+
+def share_bar(items: list[Item], width: int = 400, height: int = 14) -> str:
+    """One rounded bar split into each item's share, with a tooltip per part."""
+    total = sum(v for _, v, _ in items if v > 0)
+    if total <= 0:
+        return ""
+    parts, x = [], 0.0
+    for label, v, color in items:
+        if v <= 0:
+            continue
+        w = width * v / total
+        parts.append(f'<rect class="{_c(color)}" x="{_n(x)}" y="0" width="{_n(w)}" height="{height}" '
+                     f'fill="currentColor"><title>{_e(label)}: {v / total:.0%}</title></rect>')
+        x += w
+    return (f'<svg class="chart share-bar" viewBox="0 0 {width} {height}" preserveAspectRatio="none" role="img" '
+            f'aria-label="Shares of {len(parts)} parts"><clipPath id="share-clip"><rect width="{width}" '
+            f'height="{height}" rx="{height / 2}"/></clipPath><g clip-path="url(#share-clip)">{"".join(parts)}</g></svg>')
 
 
 def trend(points: list[tuple[str, int]], low: int = 1, high: int = 5, color: str = "s7",

@@ -30,6 +30,13 @@ Keys:
                     worktree), used for tailored CV PDFs when the running Python lacks it
     facts_file      optional absolute path to the facts bank: true facts about the user not in cv.md,
                     which tailored CV claims may trace to (default private_dir/cv-facts.md)
+    claude_projects_dir  absolute path to Claude Code's transcripts, read only for token counts on the
+                    Metrics page's Usage tab (default ~/.claude/projects)
+    coordinator_task  optional dev3 task seq of the coordinator (else tasks of dev3 type coordinator)
+    context_warn_tokens  context size per turn above which the Usage tab says "time to /compact"
+                    (default 300000)
+    [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
+                    cache_read, cache_write) for the Usage tab's cost estimate; none set: no estimate
 
 An env var set to an empty string clears the assistant keys (CLEARABLE); for every other key an
 empty value is ignored. Relative paths are resolved against the repo root, never the current directory,
@@ -51,6 +58,9 @@ DEFAULT_NO_RESPONSE_DAYS = 14
 DEFAULT_RESEARCH_MAX_AGE_DAYS = 90
 DEFAULT_STALE_DAYS = 3
 DEFAULT_BRIEF_AUTO_MIN_SCORE = 8
+DEFAULT_CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+DEFAULT_CONTEXT_WARN_TOKENS = 300_000
+PRICE_KINDS = ("input", "output", "cache_read", "cache_write")
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -70,11 +80,14 @@ ENV_KEYS = {
     "dev3_bin": "PREP_DEV3_BIN",
     "pdf_python": "PREP_PDF_PYTHON",
     "facts_file": "PREP_FACTS_FILE",
+    "claude_projects_dir": "PREP_CLAUDE_PROJECTS_DIR",
+    "coordinator_task": "PREP_COORDINATOR_TASK",
+    "context_warn_tokens": "PREP_CONTEXT_WARN_TOKENS",
 }
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
 # on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the Applications and Learn Assistants named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
-CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin")
+CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin", "coordinator_task")
 
 
 class ConfigError(Exception):
@@ -98,6 +111,11 @@ class Settings:
     dev3_bin: Path | None = None
     pdf_python: Path | None = None
     facts_file: Path | None = None
+    claude_projects_dir: Path = DEFAULT_CLAUDE_PROJECTS_DIR
+    coordinator_task: int | None = None
+    context_warn_tokens: int = DEFAULT_CONTEXT_WARN_TOKENS
+    # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
+    prices: tuple[tuple[str, tuple[float, float, float, float]], ...] = ()
 
 
 def _resolve(value: str) -> Path:
@@ -148,7 +166,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "private_dir", "dev3_bin", "pdf_python", "facts_file"):
+    for key in ("getjo_db", "private_dir", "dev3_bin", "pdf_python", "facts_file", "claude_projects_dir"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -170,6 +188,11 @@ def load_settings(path: Path | None = None) -> Settings:
         dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,
         pdf_python=Path(data["pdf_python"]).expanduser() if data.get("pdf_python") else None,
         facts_file=Path(data["facts_file"]).expanduser() if data.get("facts_file") else None,
+        claude_projects_dir=(Path(data["claude_projects_dir"]).expanduser() if data.get("claude_projects_dir")
+                             else DEFAULT_CLAUDE_PROJECTS_DIR),
+        coordinator_task=_int(data, "coordinator_task", 0, 1, 10**9) if data.get("coordinator_task") else None,
+        context_warn_tokens=_int(data, "context_warn_tokens", DEFAULT_CONTEXT_WARN_TOKENS, 1000, 10**8),
+        prices=_prices(data.get("prices")),
     )
 
 
@@ -178,6 +201,26 @@ def facts_path(settings: Settings) -> Path | None:
     if settings.facts_file:
         return settings.facts_file
     return settings.private_dir / "cv-facts.md" if settings.private_dir else None
+
+
+def _prices(value: object) -> tuple[tuple[str, tuple[float, float, float, float]], ...]:
+    """[prices."model"] tables: input, output, cache_read, cache_write in dollars per million tokens."""
+    if not value:
+        return ()
+    if not isinstance(value, dict):
+        raise ConfigError("prices must be a table of [prices.\"<model>\"] tables")
+    out = []
+    for model, table in value.items():
+        if not isinstance(table, dict):
+            raise ConfigError(f"prices.{model} must be a table with {', '.join(PRICE_KINDS)}")
+        nums = []
+        for kind in PRICE_KINDS:
+            v = table.get(kind, 0)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
+                raise ConfigError(f"prices.{model}.{kind} must be a number of dollars per million tokens, got {v!r}")
+            nums.append(float(v))
+        out.append((str(model), tuple(nums)))
+    return tuple(sorted(out, key=lambda p: -len(p[0])))  # longest prefix first
 
 
 def _project(value: object) -> str | None:

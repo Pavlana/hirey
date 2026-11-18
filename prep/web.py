@@ -1,6 +1,7 @@
 """Local dashboard over prep.db: Applications (the landing page, whose left column switches
-between the pipeline and New offers from getjo) and Dashboard, plus a read-only view of the
-agent's research and CV fit files.
+between the pipeline and New offers from getjo), Learn and Metrics (tabs Usage: Claude Code tokens
+from its transcripts, read only, prep/usage.py; and Applications: the search's numbers), plus a
+read-only view of the agent's research and CV fit files.
 
     python -m prep.web [--port 8765]
 
@@ -39,7 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research, stats
+from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research, stats,
+                  usage)
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -77,10 +79,10 @@ Response = tuple[int, list[tuple[str, str]], bytes]
 PAGES = (
     ("/", "Applications", '<rect x="3" y="3" width="5" height="18" rx="1.5"/><rect x="10" y="3" width="5" height="12" rx="1.5"/>'
                           '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
-    ("/dashboard", "Dashboard", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
-                                '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
     ("/learn", "Learn", '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5z"/>'
                         '<path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/>'),
+    ("/metrics", "Metrics", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
+                          '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
               'l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>')
@@ -139,8 +141,8 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: dusty-blue, eucalyptus,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "ochre", "/dashboard": "sage", "/learn": "dusty-violet"}
-# Closed outcomes take s1-s3 (neutral greys on the Dashboard), then to_apply and the funnel
+PAGE_THEMES = {"/": "ochre", "/metrics": "sage", "/learn": "dusty-violet"}
+# Closed outcomes take s1-s3, then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
     "rejected": "s1", "withdrawn": "s2", "no_response": "s3", "skipped": "s2", "to_apply": "s4", "applied": "s5",
@@ -241,7 +243,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return learn_thread_json(settings, query, today)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
-        "/dashboard": dashboard_page,
+        "/metrics": lambda s, c, t: metrics_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
@@ -258,7 +260,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         offers = new_offer_count(settings, conn, _now(today), offer_score(query))
         cards_todo = learn.counts(conn)["todo"]
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, path if path in ("/dashboard", "/learn") else "/", offers,
+    return _page(200, title, subtitle, notice + content, path if path in ("/metrics", "/learn") else "/", offers,
                  head[0] if head else "", cards_todo)
 
 
@@ -266,10 +268,10 @@ OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers 
 
 
 def _moved(path: str, query: dict[str, list[str]]) -> str | None:
-    """Where an old page lives now, or None: the Dashboard moved to /dashboard (with /progress, merged
-    into it earlier), Applications and /tasks to /, and Job Offers to /?view=offers with its filters."""
-    if path == "/progress":
-        return "/dashboard"
+    """Where an old page lives now, or None: the Dashboard (and /progress, merged into it earlier) is
+    now Metrics, Applications and /tasks moved to /, and Job Offers to /?view=offers with its filters."""
+    if path in ("/progress", "/dashboard"):
+        return "/metrics"
     if path in ("/applications", "/tasks"):
         return "/" + (f"?{urlencode(query, doseq=True)}" if query else "")
     if path in OLD_OFFERS:
@@ -940,76 +942,173 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
 # --- pages (GET) ------------------------------------------------------------------------
 # Each returns (title, subtitle, HTML content). Only columns that are shown are read; never pay.
 
-def dashboard_page(settings: Settings, conn: sqlite3.Connection, today: str) -> tuple[str, str, str]:
-    apps = stats.application_stages(conn)
-    week = stats.applied_last_7_days(conn, today)
-    target = settings.weekly_target
-    reply = stats.reply_rate(apps)
-    to_apply = sum(1 for a in apps if not a["submitted"])
+METRICS_TABS = (("usage", "Usage"), ("applications", "Applications"))
+TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
+ROLE_SHADES = {"Applications Assistant": "s8", "Learn Assistant": "s6", "Coordinator": "s4", "Build tasks": "s3",
+               "Main checkouts": "s2"}
 
+
+def metrics_filters(query: dict[str, list[str]]) -> dict:
+    """tab (usage | applications), days (7, 14 or 30) and project (a name, "all" or "" for the default)."""
+    tab = (query.get("tab") or [""])[0]
+    days = (query.get("days") or [""])[0]
+    project = (query.get("project") or [""])[0].strip()
+    return {"tab": tab if tab in dict(METRICS_TABS) else "usage",
+            "days": int(days) if days.isdigit() and int(days) in usage.DAYS else 14,
+            "project": project[:100]}
+
+
+def metrics_url(f: dict, **changes: object) -> str:
+    pairs = {**f, **changes}
+    q = {"tab": pairs["tab"]}
+    if pairs["tab"] == "usage":
+        q.update({"project": pairs["project"], "days": pairs["days"] if pairs["days"] != 14 else ""})
+    return "/metrics?" + urlencode({k: v for k, v in q.items() if v not in ("", None)})
+
+
+def _switch(label: str, options: list[tuple[str, str, bool]]) -> str:
+    """Pill links: (href, text, active)."""
+    tabs = "".join(f'<a class="view-tab{" is-active" if active else ""}" href="{h(href)}"{CURRENT if active else ""}>'
+                   f"{h(text)}</a>" for href, text, active in options)
+    return f'<nav class="view-switch" aria-label="{h(label)}">{tabs}</nav>'
+
+
+def metrics_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                 query: dict[str, list[str]]) -> tuple[str, str, str, str]:
+    """/metrics: Usage (Claude Code tokens, prep/usage.py) and Applications (search numbers) tabs."""
+    f = metrics_filters(query)
+    tabs = _switch("Metrics", [(metrics_url(f, tab=t), name, f["tab"] == t) for t, name in METRICS_TABS])
+    if f["tab"] == "applications":
+        return "Metrics", f"Job search · {today}", applications_tab(settings, conn, today), tabs
+    return "Metrics", f"Claude Code tokens · {today}", usage_tab(settings, conn, today, f), tabs
+
+
+def _tok(n: float) -> str:
+    return usage.short(n)
+
+
+def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict) -> str:
+    try:
+        usage.sync(conn, settings)
+    except (OSError, sqlite3.Error) as e:
+        log.warning("usage scan failed (%s)", e.__class__.__name__)
+    names = usage.report(conn, settings, today, 1)["projects"]
+    home = usage.home_project(usage.projects(conn), settings)
+    project = f["project"] or (home if home in names else "all")
+    r = usage.report(conn, settings, today, f["days"], None if project == "all" else project)
+    filters = ('<div class="metrics-filters">'
+               + _switch("Project", [(metrics_url(f, project=p), p, project == p) for p in [*names, "all"]]
+                         if names else [])
+               + _switch("Days", [(metrics_url(f, project=project, days=d), f"{d} days", f["days"] == d)
+                                  for d in usage.DAYS])
+               + "</div>") if names else ""
+    if not r["total"]:
+        where = h(str(settings.claude_projects_dir))
+        return filters + _card("Usage", _empty(f"No Claude Code usage in the last {f['days']} days.",
+                                               f"Transcripts are read from {where} (setting claude_projects_dir)."))
+    share = "–" if r["cache_read_share"] is None else f"{r['cache_read_share']:.0%}"
+    over = [c for c in r["context"] if c["over"]]
+    tiles = (
+        _tile(f"Tokens, last {f['days']} days", _tok(r["total"]),
+              f"<small>{r['turns']:,} turns · {r['sessions']} sessions</small>", "accent")
+        + _tile("Cache-read share", share, "<small>context re-read from the cache, the cheap part</small>",
+                "success" if r["cache_read_share"] and r["cache_read_share"] >= .8 else "")
+        + (_tile("API-equivalent cost", f"${r['cost']:,.0f}",
+                 "<small>estimate at API prices, not your subscription bill"
+                 + (f" · {h(_tok(r['unpriced']))} tokens without a price left out" if r["unpriced"] else "")
+                 + "</small>") if r["cost"] is not None else "")
+        + _tile(f"Context over {_tok(settings.context_warn_tokens)}", str(len(over)),
+                "<small>" + (h(", ".join(c["role"] for c in over)) + ": time to /compact" if over
+                             else "assistants and coordinator") + "</small>", "warning" if over else "")
+    )
+    days = [(f"{date.fromisoformat(d).day} {date.fromisoformat(d):%b}", [cr, cw, o, i]) for d, i, o, cr, cw in r["days"]]
+    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in TOKEN_SERIES)
+    per_day = (f'<div class="stack-legend">{legend}</div>'
+               + charts.stacked_columns(days, list(TOKEN_SERIES), _tok)
+               + _note("Stacked from the bottom: cache read, cache write, output, fresh input. A turn is one "
+                       "API response."))
+    top = _table(("Task", "Title", ("Turns", "num"), ("Tokens", "num"), ("Per turn", "num")),
+                 [(_mono(h(t["ref"])), h(t["title"]), f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"])))
+                  for t in r["top"]], "No tasks.")
+    roles = [(name, n, ROLE_SHADES.get(name, "s3")) for name, n in r["roles"]]
+    who = charts.share_bar(roles) + _table(
+        ("Role", ("Share", "num"), ("Tokens", "num")),
+        [(f'<span class="swatch {shade}"></span>{h(name)}', f"{n / r['total']:.0%}", h(_tok(n)))
+         for name, n, shade in roles], "No usage.")
+    ctx_rows = []
+    for c in r["context"]:
+        top_v = max(max(v for _, v in c["trend"]), settings.context_warn_tokens)
+        warn = '<span class="warn-text">time to /compact</span>' if c["over"] else ""
+        points = [(d, v) for d, v in c["trend"]]
+        ctx_rows.append((h(c["role"]), _mono(h(c["ref"])), charts.trend(points, 0, top_v), h(_tok(c["latest"])) + warn))
+    ctx = _table(("Who", "Task", "By day", ("Latest", "num")), ctx_rows,
+                 "No assistant or coordinator turns in this period.",
+                 hint="Settings assistant_task, prep_assistant_task and coordinator_task name them.")
+    save = ("<ul class=\"save-list\">" + "".join(f"<li>{h(t)}</li>" for t in r["save"]) + "</ul>" if r["save"]
+            else _empty("Nothing stands out."))
+    return (filters + f'<div class="tiles">{tiles}</div>'
+            + _card("Tokens per day", per_day, cls="card-wide")
+            + '<div class="columns">' + _card("Top tasks by tokens", top, count=len(r["top"]))
+            + _card("Who uses what", who) + "</div>"
+            + '<div class="columns">'
+            + _card("Context size per turn", ctx + _note(
+                f"Input plus cache read and written per response: each day's last turn, up to {usage.CONTEXT_DAYS} "
+                f"active days, latest on the right. "
+                f"Warning above {_tok(settings.context_warn_tokens)} (setting context_warn_tokens)."))
+            + _card("Where to save", save) + "</div>")
+
+
+def applications_tab(settings: Settings, conn: sqlite3.Connection, today: str) -> str:
+    """Applications sent per week, response rate, stage funnel and job boards. Never reads pay."""
+    apps = stats.application_stages(conn)
+    reply = stats.reply_rate(apps)
+    steps = stats.stage_funnel(apps)
+    reached = {label: n for label, n, _ in steps}
     rate = "–" if reply["rate"] is None else f"{reply['rate']:.0%}"
     tiles = (
-        _tile("Applied in the last 7 days", f"{week} / {target}", _meter(week, target),
-              "success" if week >= target else "accent")
-        + _tile("Total applications", str(reply["submitted"]), f"<small>plus {to_apply} not yet sent</small>")
-        + _tile("Reply rate", rate, f"<small>{reply['replied']} of {reply['submitted']} replied</small>",
-                "warning" if reply["warning"] else "")
+        _tile("Applications sent", str(reply["submitted"]), "<small>all time</small>", "accent")
+        + _tile("Response rate", rate, f"<small>{reply['replied']} of {reply['submitted']} got a reply, call or "
+                                       f"rejection</small>", "warning" if reply["warning"] else "")
+        + _tile("Interviews", str(reached["Interview"]), "<small>reached an interview</small>")
+        + _tile("Offers", str(reached["Offer"]), f"<small>from {reply['submitted']} sent</small>",
+                "success" if reached["Offer"] else "")
     )
     warning = ""
     if reply["warning"]:
-        warning = (f'<div class="warning" role="alert">Reply rate is below {stats.REPLY_WARNING_RATE:.0%} after '
+        warning = (f'<div class="warning" role="alert">Response rate is below {stats.REPLY_WARNING_RATE:.0%} after '
                    f'{reply["submitted"]} applications. Review the CV, targeting or tiers.</div>')
-
-    no_apps = "No applications yet."
-    status_chart = charts.donut(
-        [(_status_label(s), n, STATUS_SHADES.get(s, "s5")) for s, n in stats.counts_by_status(apps)],
-        "applications")
-    tier_chart = charts.treemap([
-        (_tier_label(t), TIER_SHADES.get(t, "s3"),
-         [(_status_label(s), n, STATUS_SHADES.get(s, "s5")) for s, n in by_status])
-        for t, by_status in stats.counts_by_tier_status(apps)
-    ])
-    funnel = charts.funnel([
-        (_status_label(stage), n, share, STATUS_SHADES.get(stage, "s5"))
-        for stage, n, share in stats.conversion(apps)
-    ])
-    per_week = charts.columns(_weeks(stats.applications_per_week(conn, today)), target)
-    content = (
+    no_apps = "No applications sent yet."
+    target = settings.weekly_target
+    per_week = charts.columns(_weeks(stats.applications_per_week(conn, today)), target, width=1000, height=230)
+    funnel = charts.funnel([(label, n, share, shade) for (label, n, share), shade
+                            in zip(steps, ("s5", "s6", "s8", "s10"))]) if reply["submitted"] else ""
+    return (
         f'<div class="tiles">{tiles}</div>{warning}'
+        + _card("Applications sent per week", per_week + _note(
+            f"Week starting Monday, last {stats.WEEKS_SHOWN} weeks. Target {target} per week."), cls="card-wide")
         + '<div class="columns">'
-        + _card("Applications by status", status_chart or _empty(no_apps), count=len(apps))
-        + _card("Tiers by status", (tier_chart + _note("Column width: applications per tier. "
-                                                       "Blocks: their current status.")) if tier_chart
-                else _empty(no_apps))
+        + _card("Stage funnel", (funnel + _note("Screen: recruiter call. Interview: technical, system design or "
+                                                "final. Share of applications sent, counting later stages too."))
+                if funnel else _empty(no_apps), cls="card-funnel")
+        + _card("Which job boards bring the best matches", boards_table(settings, apps))
         + "</div>"
-        + _card("Stage conversion", (funnel + _note("Sent applications that reached each stage or a later "
-                                                    "one, with their share.")) if funnel else _empty(no_apps),
-                cls="card-funnel")
-        + _card("Applications per week", per_week + _note(f"Week starting Monday. Target {target} per week."),
-                cls="card-weeks")
-        + practice_section(conn)
     )
-    return "Dashboard", f"Pipeline and progress · {today}", content
 
 
-def practice_section(conn: sqlite3.Connection) -> str:
-    """Practice: session and open-gap tiles, then each area's 1-5 scores over time (stats.practice)."""
-    p = stats.practice(conn)
-    tiles = (
-        _tile("Practice sessions", str(p["sessions"]), f"<small>{p['mock']} mock · {p['real']} real</small>")
-        + _tile("Open gaps", str(p["open_gaps"]), "<small>including CV fit gaps</small>",
-                "warning" if p["open_gaps"] else "")
-    )
-    rows = [
-        (h(area), charts.trend(points), str(len(points)), h(points[0][1]), h(points[-1][1]),
-         h(f"{points[-1][1] - points[0][1]:+d}") if len(points) > 1 else "–")
-        for area, points in p["areas"]
-    ]
-    table = _table(("Area", "", ("Sessions", "num"), ("First", "num"), ("Latest", "num"), ("Change", "num")),
-                   rows, "No practice scores yet.", hint="python -m prep.cli session add --kind mock --score AREA=N")
-    note = _note("Score 1-5 per session, oldest on the left.") if rows else ""
-    return (f'<div class="tiles tiles-practice">{tiles}</div>'
-            + _card("Practice scores by area", table + note, count=len(rows), cls="card-practice"))
+def boards_table(settings: Settings, apps: list[dict]) -> str:
+    """Per getjo source: jobs seen, average score, strong matches, applications sent from them."""
+    applied = {a["getjo_job_id"] for a in apps if a["submitted"] and a["getjo_job_id"]}
+    try:
+        with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+            rows = getjo.source_stats(gconn, applied)
+    except (getjo.GetjoUnavailable, sqlite3.Error) as e:
+        return _empty("getjo's database is not available.", str(e) if isinstance(e, getjo.GetjoUnavailable) else "")
+    table = _table(("Source", ("Jobs seen", "num"), ("Avg score", "num"), (f"Strong ({getjo.DEFAULT_THRESHOLD}+)", "num"),
+                    ("Applied", "num")),
+                   [(h(r["source"]), str(r["seen"]), "–" if r["avg_score"] is None else f"{r['avg_score']:.1f}",
+                     str(r["strong"]), str(r["applied"])) for r in rows], "getjo has no jobs yet.")
+    return table + (_note("From getjo (read-only): jobs seen, average CV score of the scored ones, strong matches "
+                          "and applications sent from them.") if rows else "")
 
 
 # --- Learn ------------------------------------------------------------------------------------
@@ -2925,10 +3024,6 @@ def _note(text: str) -> str:
 
 def _status_label(status: str) -> str:
     return db.status_label(status).capitalize()
-
-
-def _tier_label(tier: str) -> str:
-    return "No tier" if tier == "unset" else f"Tier {tier}"
 
 
 def _weeks(weeks: list[tuple[str, int]]) -> list[tuple[str, int]]:

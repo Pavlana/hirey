@@ -9,19 +9,18 @@ Definitions (used everywhere, documented in docs/how-it-works.md):
   current status. Applications older than the status_history table only have their
   current status. A submitted application with no funnel stage (e.g. only rejected) has
   reached "applied".
-- Replied: furthest stage is recruiter_call or later, or the application was rejected.
-  applied, no_response and a withdrawal straight from applied are not replies.
+- Replied (the response rate): furthest stage is recruiter_call or later, the application was
+  rejected, or an interview is recorded for it. applied, no_response and a withdrawal straight
+  from applied are not replies.
 - Reply rate: replied / submitted. A warning shows when it is below 10% after 25 or more
   submitted applications.
-- Conversion: for each FUNNEL stage, how many submitted applications reached it or a later
-  stage (cumulative, so skipped stages still count) and their share of submitted.
-- Weeks start on Monday. "Last 7 days" is today and the 6 days before it, by date_applied.
-- Practice: every row of the sessions table (mock and real), with each area's 1-5 scores in
-  session order (date, then id). Areas are grouped ignoring case; the first spelling is shown.
-  Open gaps counts every open gap, including those from CV fit checks.
+- Stage funnel: four steps, each counting submitted applications whose furthest stage reached it
+  or a later one (cumulative, so skipped stages still count), with their share of submitted:
+  Applied (every submitted one), Screen (recruiter_call), Interview (technical, system_design or
+  final), Offer (offer).
+- Weeks start on Monday, counted by date_applied.
 """
 
-import json
 import sqlite3
 from datetime import date, timedelta
 
@@ -30,7 +29,9 @@ from prep import db
 FUNNEL = ("applied", "recruiter_call", "technical", "system_design", "final", "offer")
 REPLY_WARNING_MIN_APPS = 25
 REPLY_WARNING_RATE = 0.10
-WEEKS_SHOWN = 8
+WEEKS_SHOWN = 12
+# (label, first FUNNEL stage that counts) for the Metrics page's stage funnel.
+STEPS = (("Applied", "applied"), ("Screen", "recruiter_call"), ("Interview", "technical"), ("Offer", "offer"))
 
 
 def _today(today: str | None) -> date:
@@ -49,36 +50,27 @@ def is_submitted(statuses: set[str], date_applied: str | None) -> bool:
     return bool(date_applied) or bool(statuses & (set(FUNNEL) | {"rejected", "no_response"}))
 
 
-def is_replied(statuses: set[str], stage: str | None) -> bool:
-    return "rejected" in statuses or (stage is not None and FUNNEL.index(stage) >= 1)
+def is_replied(statuses: set[str], stage: str | None, interviewed: bool = False) -> bool:
+    return interviewed or "rejected" in statuses or (stage is not None and FUNNEL.index(stage) >= 1)
 
 
 def application_stages(conn: sqlite3.Connection) -> list[dict]:
-    """One dict per application: id, status, tier, date_applied, submitted, stage, replied."""
+    """One dict per application: id, status, tier, date_applied, getjo_job_id, submitted, stage, replied."""
     history: dict[int, set[str]] = {}
     for row in conn.execute("SELECT application_id, status FROM status_history"):
         history.setdefault(row[0], set()).add(row[1])
+    interviewed = {r[0] for r in conn.execute("SELECT DISTINCT application_id FROM interviews")}
     result = []
-    for row in conn.execute("SELECT id, status, tier, date_applied FROM applications ORDER BY id"):
+    for row in conn.execute("SELECT id, status, tier, date_applied, getjo_job_id FROM applications ORDER BY id"):
         statuses = history.get(row["id"], set()) | {row["status"]}
         submitted = is_submitted(statuses, row["date_applied"])
         stage = furthest_stage(statuses, submitted)
         result.append({
             "id": row["id"], "status": row["status"], "tier": row["tier"],
-            "date_applied": row["date_applied"], "submitted": submitted,
-            "stage": stage, "replied": submitted and is_replied(statuses, stage),
+            "date_applied": row["date_applied"], "getjo_job_id": row["getjo_job_id"], "submitted": submitted,
+            "stage": stage, "replied": submitted and is_replied(statuses, stage, row["id"] in interviewed),
         })
     return result
-
-
-def applied_last_7_days(conn: sqlite3.Connection, today: str | None = None) -> int:
-    end = _today(today)
-    start = end - timedelta(days=6)
-    row = conn.execute(
-        "SELECT COUNT(*) FROM applications WHERE date_applied BETWEEN ? AND ?",
-        (start.isoformat(), end.isoformat()),
-    ).fetchone()
-    return row[0]
 
 
 def reply_rate(apps: list[dict]) -> dict:
@@ -90,32 +82,13 @@ def reply_rate(apps: list[dict]) -> dict:
     return {"submitted": len(submitted), "replied": replied, "rate": rate, "warning": warning}
 
 
-def counts_by_status(apps: list[dict]) -> list[tuple[str, int]]:
-    """(status, count) in APPLICATION_STATUSES order, only statuses that occur."""
-    counts = [(s, sum(1 for a in apps if a["status"] == s)) for s in db.APPLICATION_STATUSES]
-    return [(s, n) for s, n in counts if n]
-
-
-def counts_by_tier(apps: list[dict]) -> list[tuple[str, int]]:
-    """(tier, count) for A, B, C and "unset", only tiers that occur."""
-    counts = [(t, sum(1 for a in apps if a["tier"] == t)) for t in db.TIERS]
-    counts.append(("unset", sum(1 for a in apps if a["tier"] is None)))
-    return [(t, n) for t, n in counts if n]
-
-
-def counts_by_tier_status(apps: list[dict]) -> list[tuple[str, list[tuple[str, int]]]]:
-    """For each tier that occurs (A, B, C, "unset"): its (status, count) pairs, as counts_by_status."""
-    tiers = [t for t, _ in counts_by_tier(apps)]
-    return [(t, counts_by_status([a for a in apps if (a["tier"] or "unset") == t])) for t in tiers]
-
-
-def conversion(apps: list[dict]) -> list[tuple[str, int, float | None]]:
-    """(stage, reached, share of submitted) for each FUNNEL stage."""
+def stage_funnel(apps: list[dict]) -> list[tuple[str, int, float | None]]:
+    """(step label, reached, share of submitted) for each of STEPS."""
     submitted = [a for a in apps if a["submitted"]]
     result = []
-    for i, stage in enumerate(FUNNEL):
-        reached = sum(1 for a in submitted if FUNNEL.index(a["stage"]) >= i)
-        result.append((stage, reached, reached / len(submitted) if submitted else None))
+    for label, first in STEPS:
+        reached = sum(1 for a in submitted if FUNNEL.index(a["stage"]) >= FUNNEL.index(first))
+        result.append((label, reached, reached / len(submitted) if submitted else None))
     return result
 
 
@@ -142,21 +115,3 @@ def applications_per_week(conn: sqlite3.Connection, today: str | None = None,
                           weeks: int = WEEKS_SHOWN) -> list[tuple[str, int]]:
     rows = conn.execute("SELECT date_applied FROM applications WHERE date_applied IS NOT NULL")
     return _per_week([r[0] for r in rows], today, weeks)
-
-
-def practice(conn: sqlite3.Connection) -> dict:
-    """Practice sessions for the dashboard: "sessions", "mock", "real" (counts), "open_gaps" and
-    "areas", a list of (area, [(date, score), ...]) sorted by area name, scores oldest first."""
-    rows = conn.execute("SELECT date, kind, scores FROM sessions ORDER BY date, id").fetchall()
-    areas: dict[str, tuple[str, list[tuple[str, int]]]] = {}
-    for row in rows:
-        for area, score in json.loads(row["scores"] or "{}").items():
-            areas.setdefault(area.casefold(), (area, []))[1].append((row["date"], score))
-    open_gaps = conn.execute("SELECT COUNT(*) FROM gaps WHERE status = 'open'").fetchone()[0]
-    return {
-        "sessions": len(rows),
-        "mock": sum(1 for r in rows if r["kind"] == "mock"),
-        "real": sum(1 for r in rows if r["kind"] == "real"),
-        "open_gaps": open_gaps,
-        "areas": [areas[k] for k in sorted(areas)],
-    }
