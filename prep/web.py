@@ -816,7 +816,7 @@ def learn_page(settings: Settings, conn: sqlite3.Connection, today: str,
         card = learn.get_card(conn, card_id)
     except LookupError as e:
         raise NotFound() from e
-    return "Learn", subtitle, _learn_view(conn, card)
+    return "Learn", subtitle, _tracks_grid(learn.list_tracks(conn), current=card["track_id"]) + _learn_view(conn, card)
 
 
 def _next_interview(conn: sqlite3.Connection, today: str) -> str:
@@ -844,7 +844,9 @@ def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
 
 
-def _tracks_grid(tracks: list[dict], empty_track: bool = False) -> str:
+def _tracks_grid(tracks: list[dict], empty_track: bool = False, current: int | None = None) -> str:
+    """The tracks as tiles; above the card view (`current`: the open card's track, highlighted) they
+    are a compact row."""
     if not tracks:
         return _card("Tracks", _empty("No tracks yet.", "python -m prep.cli tracks add TITLE, then cards add"))
     tiles = []
@@ -852,13 +854,15 @@ def _tracks_grid(tracks: list[dict], empty_track: bool = False) -> str:
         cover = t["cover"] if t["cover"] in learn.TRACK_COVERS else "slate"
         sub = f'<span class="track-sub">{h(t["subtitle"])}</span>' if t["subtitle"] else ""
         tiles.append(
-            f'<a class="track" href="/learn?{h(urlencode([("track", t["slug"])]))}">'
+            f'<a class="track{" is-current" if t["id"] == current else ""}" '
+            f'href="/learn?{h(urlencode([("track", t["slug"])]))}"{CURRENT if t["id"] == current else ""}>'
             f'<span class="track-cover cover-{cover}">{_ring(t["progress"])}</span>'
             f'<span class="track-body"><strong class="track-title">{h(t["title"])}</strong>{sub}'
             f'<span class="track-meta">{h(_plural(t["chapters"], "chapter"))} · {h(_plural(t["cards"], "card"))}</span>'
             f'<span class="track-done">{h(t["done"])} done / {h(t["cards"])}</span></span></a>')
     notice = _banner("That track has no cards yet.", "notice") if empty_track else ""
-    return f'{notice}<div class="tracks">{"".join(tiles)}</div>'
+    row = " tracks-row" if current is not None else ""
+    return f'{notice}<nav class="tracks{row}" aria-label="Tracks">{"".join(tiles)}</nav>'
 
 
 def _learn_view(conn: sqlite3.Connection, card: dict) -> str:
@@ -903,15 +907,17 @@ def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
     answer = ('<details class="learn-answer"><summary class="btn btn-secondary">Show answer</summary>'
               f'<section><h3>Key points</h3><div class="doc">{render_markdown(card["back"])}</div></section>'
               + (f'<section><h3>Follow-ups</h3><ul>{follow}</ul></section>' if follow else "")
-              + (f'<section><h3>Sources</h3><ul class="learn-sources">{sources}</ul></section>' if sources else "")
               + "</details>")
+    # The sources are the preparation material, so they stay in view; only the answer is folded.
+    learn_box = (f'<section class="learn-more" aria-labelledby="learn-src"><h3 id="learn-src">Learn</h3>'
+                 f'<ul class="learn-sources">{sources}</ul></section>' if sources else "")
     buttons = "".join(
         f'<form method="post" action="{path}"><input type="hidden" name="card_id" value="{h(card["id"])}">'
         + _button(label, variant) + "</form>"
         for path, label, variant in (("/learn/done", "Done", "primary"), ("/learn/undo", "Not done yet", "secondary")))
     return (f'<section class="learn-card" id="learn-card" aria-labelledby="learn-q">{head}<div class="learn-card-body">'
             + (f'<div class="chips">{tags}</div>' if tags else "")
-            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{timer}{answer}'
+            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{timer}{answer}{learn_box}'
             f'<div class="learn-actions">{buttons}</div></div></section>')
 
 

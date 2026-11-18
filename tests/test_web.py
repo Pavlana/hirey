@@ -1242,6 +1242,28 @@ class LearnPageTest(WebTestCase):
         self.assertIn('action="/learn/undo"', body)
         self.assertIn('href="/learn?card=2" aria-label="Next card"', body)
 
+    def test_card_view_shows_tracks_row_with_current_track(self) -> None:
+        with self.conn() as conn:
+            learn.add_track(conn, "Other track", slug="other")
+        body = self.get("/learn?card=1")[2]
+        self.assertIn('class="tracks tracks-row"', body)
+        self.assertIn('<a class="track is-current" href="/learn?track=caching-example" aria-current="true">', body)
+        self.assertIn('<a class="track" href="/learn?track=other">', body)
+        self.assertLess(body.index("tracks-row"), body.index('class="learn-view"'))
+        self.assertNotIn("is-current", self.get("/learn")[2])  # the grid alone has no current track
+
+    def test_learn_sources_stay_out_of_the_answer_fold(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        fold = body[body.index('<details class="learn-answer"'):body.index("</details>")]
+        self.assertIn("Key points", fold)
+        self.assertIn("Follow-ups", fold)
+        self.assertNotIn("Example caching notes", fold)
+        box = body[body.index('<section class="learn-more"'):]
+        self.assertIn('<h3 id="learn-src">Learn</h3>', box)
+        self.assertIn("Example caching notes", box)
+        self.assertNotIn("Learn more", body)
+        self.assertNotIn("learn-more", self.get("/learn?card=2")[2])  # a card without sources has no box
+
     def test_track_opens_first_card_to_do(self) -> None:
         with self.conn() as conn:
             learn.set_status(conn, 1, "done")

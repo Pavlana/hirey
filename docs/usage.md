@@ -124,12 +124,14 @@ charts are server-rendered SVG):
 - **Learn** (`/learn`; the nav shows the number of cards to do): "X done · Y to do" and the next
   interview (company, stage, day) under the title, then one tile per track: a cover colour with a
   progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
-  do (`?track=SLUG`; any card is `?card=ID`). The card view: **Notes** and **Prep agent** on the
+  do (`?track=SLUG`; any card is `?card=ID`). The card view keeps the tracks above it as a compact
+  row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Prep agent** on the
   left (placeholders for now), the card on the right, with the same divider as Applications (its
   width kept per browser on its own). **⤢ Expand** on the Prep agent folds Notes away, remembered
   per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
   question, a 2-minute **Say it out loud** timer (Start / Pause, Reset), **Show answer** (the key
-  points, likely follow-ups and sources; source links open in a new tab), and **Done** /
+  points and likely follow-ups), the **Learn** box under it, always in view (the sources to watch or
+  read, the preparation material; links open in a new tab), and **Done** /
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
   last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
   date or rating. Phones stack the card above Notes and the Prep agent.
