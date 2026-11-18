@@ -3,7 +3,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 
-from prep import db, getjo
+from prep import db, getjo, learn
 from prep.seed_example import build_getjo_db, build_prep_db, load_fixtures
 
 
@@ -20,6 +20,8 @@ class SeedTest(unittest.TestCase):
                 next_actions = [a for a in data["applications"] if a.get("next_action")
                                 and a["status"] not in ("rejected", "withdrawn", "no_response")]
                 self.assertEqual(len(db.list_tasks(conn, None)), len(data["tasks"]) + len(next_actions))
+                [track] = learn.list_tracks(conn)
+                self.assertEqual((track["cards"], track["chapters"], track["due"]), (3, 2, 3))
             with closing(getjo.connect_ro(getjo_path)) as gconn:
                 self.assertEqual(len(getjo.matches(gconn)), 3)
 

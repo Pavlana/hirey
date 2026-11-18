@@ -72,7 +72,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 
 | Skill      | CLI                                                                 | What it does |
 |------------|---------------------------------------------------------------------|--------------|
-| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, tasks due or overdue, new getjo matches |
+| `/today`   | `python -m prep.cli today [--threshold 7] [--limit 15]`              | Applications moved to No response, Learn cards due today, tasks due or overdue, new getjo matches |
 |            | `python -m prep.cli queue`                                           | Read-only: counts and ids of queued agent work and waiting thread messages (used by the SessionStart hook) |
 | `/applied` | `python -m prep.cli applied --job-id ID \| --url URL \| --company C --role R [--status to_apply] [--date D]` | Record an application (applied today, or Interested with `--status to_apply`), linked to getjo when it matches; adds its first tasks |
 |            | `python -m prep.cli apps [--status S]`                               | List applications |
@@ -96,6 +96,8 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli session add --kind mock\|real [--app ID] [--stage S] [--score AREA=N ...] [--file F] [--gap TEXT ...]` / `session list` | Record a practice session with 1–5 scores per area; each gap named gets a drill task |
 |            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
 | `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
+|            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, cards, progress % and cards due today; add a track |
+|            | `python -m prep.cli cards add [--file F]` / `cards list [--due] [--track T]` / `cards show ID` / `cards rate ID again\|hard\|good\|easy` | Learn cards: add from JSON (one card or a list, all or none), list, show with each button's next review, rate (SM-2-style scheduling) |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).

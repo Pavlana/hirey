@@ -25,7 +25,9 @@
 │   tailored_cv_checks,               │
 │   agent_messages, cv_versions,      │
 │   agent_message_targets,            │
-│   job_briefs, brief_requests        │
+│   job_briefs, brief_requests,       │
+│   tracks, chapters, cards,          │
+│   card_reviews                      │
 │ prep/stats.py   dashboard numbers   │
 │ prep/cli.py     commands            │
 │ prep/web.py     dashboard server    │
@@ -35,6 +37,8 @@
 │ prep/cvcheck.py tailored CV check   │
 │ prep/cveval.py  AI check of a CV    │
 │ prep/assistant.py  dev3 message     │
+│ prep/learn.py   Learn cards, tracks │
+│ prep/srs.py     SM-2 scheduling     │
 └───────▲──────────────────▲──────────┘
         │                  │
  Claude Code skills    browser → http://localhost:8765
@@ -541,6 +545,27 @@
    when the notes have none (`cli.has_questions_section`). `thread show` and `research next` print
    the notes as context. `cli update --notes` still replaces them (and moves the stamp). Notes text
    is never logged.
+26. Learn cards (data and CLI; the Learn page comes later). `tracks` hold flashcards in order,
+   each with a slug, title, subtitle and a cover colour key (`learn.TRACK_COVERS`); `chapters`
+   split a track; `cards` hold the question (`front`), key points in Markdown (`back`), tags and
+   likely follow-ups (JSON lists of strings), sources (a JSON list of `{kind, title, url, minutes,
+   why}`, kind `watch`, `read` or `notes`), an optional `source_gap_id` and the schedule: ease,
+   interval in days, due date, reps (right answers since the last lapse) and lapses.
+   `card_reviews` keeps each rating with the interval before and after and the new ease. Allowed
+   values are checked in `prep/learn.py`. `cli tracks add` adds a track; `cli cards add` takes a
+   JSON card or a list of them on stdin (or `--file`), names the track by id or slug and the
+   chapter by title (added when new), and adds all or none (`learn.add_cards`). A new card is due
+   the day it is added. `cli cards rate ID again|hard|good|easy` records a review
+   (`learn.rate_card`) and schedules the next one with `prep/srs.py`: pure functions where the
+   buttons map to SM-2 grades 2/3/4/5, Good follows SM-2 (1 day, 6 days, then interval × ease),
+   Again restarts the card at 1 day and counts a lapse, Hard and Easy are spread around Good as
+   in Anki so the four buttons never preview the same day, and the ease moves by SM-2's formula
+   (never below 1.3). `srs.preview` gives each button's next interval and due date, which `cli
+   cards show` prints ("Good → 6 days"). `cli tracks list` gives each track's chapters, cards,
+   cards due today or earlier and progress (the share of its cards with reps above 0). `/today`
+   prints "Cards due today: N" with a count per track whenever any card exists
+   (`learn.due_by_track`). Card content (real answers, stories) stays in prep.db; fixtures hold
+   one fictional track with three cards.
 
 ## Dashboard
 

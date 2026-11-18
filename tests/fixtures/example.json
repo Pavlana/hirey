@@ -49,5 +49,19 @@
   "comparisons": [
     {"targets": ["a:1", "j:ashby:initech-cloud:x1"], "question": "Which of these two fits me better?",
      "reply": "Acme Rockets fits better: Python and the platform scope match the CV; Initech asks for Go and Terraform, which the CV does not show.\n- Acme: hybrid 2 days, 4 stages\n- Initech: hybrid 3 days, on-call 1 week in 6"}
+  ],
+  "tracks": [
+    {"slug": "caching-example", "title": "Caching for a toy shop", "subtitle": "Example track (fictional)", "cover": "teal"}
+  ],
+  "cards": [
+    {"track": "caching-example", "chapter": "Basics", "front": "What is a cache-aside read?",
+     "back": "- Read the cache first\n- On a miss, read the store and fill the cache\n- Set a TTL",
+     "tags": ["round 1", "asked often"], "follow_ups": ["What happens on a cold start?"],
+     "sources": [{"kind": "read", "title": "Example caching notes", "minutes": 10, "why": "short overview"}]},
+    {"track": "caching-example", "chapter": "Basics", "front": "When does a cache stampede happen?",
+     "back": "- Many misses on one hot key at once\n- Fix: request coalescing or early refresh", "tags": ["round 1"]},
+    {"track": "caching-example", "chapter": "Trade-offs", "front": "Write-through or write-back for the toy shop cart?",
+     "back": "- Write-through: simpler and safe\n- Write-back: faster writes, risk of loss",
+     "follow_ups": ["How would it be tested?"], "sources": [{"kind": "notes", "title": "Caching notes"}]}
   ]
 }

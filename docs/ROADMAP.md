@@ -79,17 +79,21 @@ Acceptance:
 - Session files are written only under `private_dir`; nothing new is tracked by git.
 - Tests cover session/gap/task creation with fixture data.
 
-## Phase 4 — Cards and weekly plan
+## Phase 4 — Learn and weekly plan
 
-Status: not started.
+Status: in progress (Learn 1/5: cards, tracks and spaced repetition, data and CLI).
 
-- New `cards` table: spaced-repetition flashcards (front, back, topic, ease, interval, due
-  date, source gap).
-- `/cards`: review due cards in the terminal session; grade 0–5; scheduling follows SM-2.
+- Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
+  (question, key points, tags, follow-ups, sources to watch or read, source gap, and the
+  schedule: ease, interval, due date, reps, lapses), with a `card_reviews` history.
+- Rating with four buttons, Again / Hard / Good / Easy, scheduled SM-2-style; each button
+  previews its next review ("Good → next review in 6 days").
+- CLI for skills: `cards add|list|show|rate`, `tracks add|list` (due counts, progress).
 - Gaps can generate cards.
 - `/plan-week`: run at the Friday review; proposes next week's tasks from open applications, upcoming interviews, open
   gaps and due cards, within a stated time budget; creates the tasks after confirmation.
-- The dashboard gains a Cards page (due count, review history).
+- The dashboard gains a Learn page: tracks with progress and cards due, the card with its
+  answer hidden until asked and the four rating buttons, notes, and a prep agent.
 
 Acceptance:
 - SM-2 scheduling is unit-tested against known sequences.

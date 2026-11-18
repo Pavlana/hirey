@@ -48,6 +48,9 @@
     python -m prep.cli thread pending
     python -m prep.cli brief next | queue (--job ID | APP_ID) [--redo]   (job briefs for the panel)
     python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
+    python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
+    python -m prep.cli cards add [--file PATH]   (a JSON card or list of cards on stdin; all or none)
+    python -m prep.cli cards list [--due] [--track ID|SLUG] | show CARD_ID | rate CARD_ID again|hard|good|easy
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
@@ -67,7 +70,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, research
+from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, research, srs
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -149,6 +152,10 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     if line:
         print(line + "\n")
 
+    line = _cards_line(conn, today)
+    if line:
+        print(line + "\n")
+
     due = db.tasks_due(conn, today)
     print(f"Tasks due today or overdue ({len(due)}):")
     print("\n".join(f"  {_task_line(t)}" for t in due) or "  none")
@@ -194,6 +201,16 @@ def _resolve_job(args: argparse.Namespace, settings: Settings) -> tuple[dict | N
                 ids = ", ".join(c["id"] for c in candidates)
                 return None, f"several getjo jobs match, not linked (pass --job-id): {ids}"
     return None, "no matching getjo job; stored without a link"
+
+
+def _cards_line(conn: sqlite3.Connection, today: str) -> str | None:
+    """Learn cards due today or earlier, per track; None when there are no cards at all."""
+    if not learn.card_count(conn):
+        return None
+    tracks = learn.due_by_track(conn, today)
+    total = sum(n for _, n in tracks)
+    per_track = f" ({', '.join(f'{title} {n}' for title, n in tracks)})" if tracks else ""
+    return f"Cards due today: {total}{per_track}"
 
 
 def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -1633,6 +1650,72 @@ def _print_review(conn: sqlite3.Connection, limit: int | None = REVIEW_TOP) -> N
             f"{db.REQUEST_LABELS[r['kind']].lower()} for #{r['application_id']} {r['company']}" for r in work))
 
 
+def _track_line(t: dict) -> str:
+    return (f"{t['slug']} · {t['title']} · {t['chapters']} chapters, {t['cards']} cards · "
+            f"{t['progress']}% · {t['due']} due today")
+
+
+def _card_line(c: dict) -> str:
+    chapter = f" / {c['chapter_title']}" if c["chapter_title"] else ""
+    return f"#{c['id']} [{c['track_slug']}{chapter}] {c['front']} (due {c['due_date']})"
+
+
+def cmd_tracks(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.tracks_cmd == "add":
+        track = learn.get_track(conn, learn.add_track(conn, args.title, args.subtitle, args.cover, args.slug))
+        print(f"Added track {track['slug']} · {track['title']} ({track['cover']})")
+    else:
+        print("\n".join(_track_line(t) for t in learn.list_tracks(conn)) or "no tracks")
+    return 0
+
+
+def cmd_cards(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if args.cards_cmd == "add":
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"cards must be JSON: {e}") from e
+        cards = data if isinstance(data, list) else [data]
+        if not cards or not all(isinstance(c, dict) for c in cards):
+            raise ValueError("give a JSON card object or a list of them")
+        for card_id in learn.add_cards(conn, cards):
+            print(f"Added card {_card_line(learn.get_card(conn, card_id))}")
+    elif args.cards_cmd == "list":
+        cards = learn.list_cards(conn, args.track, args.due)
+        print("\n".join(_card_line(c) for c in cards) or ("no cards due" if args.due else "no cards"))
+    elif args.cards_cmd == "show":
+        _print_card(learn.get_card(conn, args.card_id))
+    elif args.cards_cmd == "rate":
+        card = learn.rate_card(conn, args.card_id, args.rating)
+        print(f"Rated #{card['id']} {args.rating}: next review in {srs.interval_label(card['interval_days'])} "
+              f"({card['due_date']}); ease {card['ease']:.2f}, reps {card['reps']}, lapses {card['lapses']}")
+    return 0
+
+
+def _print_card(card: dict) -> None:
+    chapter = f" / {card['chapter_title']}" if card["chapter_title"] else ""
+    print(f"Card #{card['id']} · {card['track_title']}{chapter}")
+    tags = [*card["tags"], *([f"last: {card['last_rating']}"] if card["last_rating"] else [])]
+    if tags:
+        print("Tags: " + ", ".join(tags))
+    print(f"Due {card['due_date']} · interval {srs.interval_label(card['interval_days'])} · ease {card['ease']:.2f}"
+          f" · reps {card['reps']} · lapses {card['lapses']}")
+    if card["source_gap_id"]:
+        print(f"From gap #{card['source_gap_id']}")
+    print(f"\nQ: {card['front']}\n\nKey points:\n{card['back']}")
+    if card["follow_ups"]:
+        print("\nLikely follow-ups:\n" + "\n".join(f"- {f}" for f in card["follow_ups"]))
+    if card["sources"]:
+        print("\nLearn more:")
+        for s in card["sources"]:
+            extra = "".join(f" · {v}" for v in (f"{s['minutes']} min" if s.get("minutes") is not None else None,
+                                                 s.get("url"), s.get("why")) if v)
+            print(f"- {s['kind']}: {s['title']}{extra}")
+    preview = srs.preview(learn.card_state(card), db.today_iso())
+    print("\nNext review: " + " · ".join(f"{r.capitalize()} → {srs.interval_label(d)}" for r, (d, _) in preview.items()))
+
+
 def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
     return dict(conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone())
 
@@ -1897,6 +1980,30 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "queue":
             t.add_argument("--redo", action="store_true")
     p.set_defaults(func=cmd_brief)
+
+    p = sub.add_parser("tracks", help="Learn tracks: list (due counts, progress) or add")
+    lsub = p.add_subparsers(dest="tracks_cmd", required=True)
+    lsub.add_parser("list", help="every track with chapters, cards, progress % and cards due today")
+    t = lsub.add_parser("add", help="add a track at the end")
+    t.add_argument("title")
+    t.add_argument("--subtitle")
+    t.add_argument("--cover", choices=learn.TRACK_COVERS, help="colour key (default: the next one)")
+    t.add_argument("--slug", help="default: made from the title")
+    p.set_defaults(func=cmd_tracks)
+
+    p = sub.add_parser("cards", help="Learn cards: add, list, show, rate (spaced repetition, SM-2)")
+    ksub = p.add_subparsers(dest="cards_cmd", required=True)
+    t = ksub.add_parser("add", help="add cards from JSON (one object or a list) on stdin or --file; all or none")
+    t.add_argument("--file", help="a JSON file (default: stdin)")
+    t = ksub.add_parser("list", help="cards in track order (--due: due today or earlier)")
+    t.add_argument("--due", action="store_true")
+    t.add_argument("--track", help="track id or slug")
+    t = ksub.add_parser("show", help="a card: question, key points, follow-ups, sources, next review per button")
+    t.add_argument("card_id", type=int)
+    t = ksub.add_parser("rate", help="record a review and schedule the next one")
+    t.add_argument("card_id", type=int)
+    t.add_argument("rating", choices=srs.RATINGS)
+    p.set_defaults(func=cmd_cards)
 
     p = sub.add_parser("review", help="read-only: the top 3 open tasks in the order to look at them, and the agent's work")
     p.add_argument("--all", action="store_true", help="every open task, not only the top 3")

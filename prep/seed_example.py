@@ -19,7 +19,7 @@ import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import db
+from prep import db, learn
 from prep.config import REPO_ROOT
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "example.json"
@@ -92,8 +92,8 @@ def build_getjo_db(path: Path, jobs: list[dict], old_schema: bool = False) -> No
 
 
 def build_prep_db(path: Path, data: dict) -> None:
-    """Create prep.db at `path` from fixture applications, tasks, gaps, practice sessions and Agent thread messages
-    (replaces any existing file)."""
+    """Create prep.db at `path` from fixture applications, tasks, gaps, practice sessions, Agent thread messages
+    and Learn tracks and cards (replaces any existing file)."""
     path.unlink(missing_ok=True)
     conn = db.connect(path)
     try:
@@ -125,6 +125,9 @@ def build_prep_db(path: Path, data: dict) -> None:
                        else (None, None, k) for k in c["targets"]]
             msg_id = db.add_compare(conn, c["question"], targets)
             db.reply_message(conn, None, msg_id, c["reply"])
+        for t in data.get("tracks", []):  # Learn tracks and their cards (new cards are due today)
+            learn.add_track(conn, t["title"], t.get("subtitle"), t.get("cover"), t.get("slug"))
+        learn.add_cards(conn, data.get("cards", []))
     finally:
         conn.close()
 
