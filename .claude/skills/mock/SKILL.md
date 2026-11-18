@@ -1,18 +1,18 @@
 ---
 name: mock
-description: Run a mock interview for one application in the Hirey Agent box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest "Mock ·" line in agent replies about that application is a question footer, not "finished"); also when the user types /mock APP [stage].
+description: Run a mock interview for one application in the Hirey Applications Assistant box, for a chosen stage (recruiter call, coding interview, system design, company interview) — one question per reply, then 1–5 scores per area, the weaknesses as gaps with drill tasks, and the transcript saved privately under sessions/. Use when /ask hands over a "Start a mock interview: …" message, a message asking for a mock ("mock me for system design"), or an answer while a mock is in progress (the latest "Mock ·" line in agent replies about that application is a question footer, not "finished"); also when the user types /mock APP [stage].
 ---
 
 # /mock
 
-A mock interview runs in the dashboard's **Agent box**, in the conversation about one application.
+A mock interview runs in the dashboard's **Applications Assistant box**, in the conversation about one application.
 The panel's Mock interview control (a stage and a button) stores the message
 `Start a mock interview: <stage label> (<stage>)` about the application and pings `/ask APP MSG`;
-/ask hands it here. The user answers in the Agent box; each answer is a new message, pinged as
+/ask hands it here. The user answers in the Applications Assistant box; each answer is a new message, pinged as
 `/ask APP MSG` again. The conversation is the mock's state: no table, nothing to start or stop.
 Run every command from the repo root.
 `/mock APP [stage]` typed in a terminal session does not run a mock there: say that mocks run in
-the Agent box and start from the Mock interview control in the application's panel.
+the Applications Assistant box and start from the Mock interview control in the application's panel.
 
 Stages are the interview stages, exactly: `recruiter_call`, `technical` (coding interview),
 `system_design`, `final` (company interview). Each has a question set with its score areas and

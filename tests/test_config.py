@@ -67,7 +67,7 @@ class LoadSettingsTest(unittest.TestCase):
         self.assertEqual(config.CLEARABLE, ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin"))
 
     def test_prep_assistant_task(self) -> None:
-        # The Learn page's Prep agent has its own standing assistant; an empty env var clears it.
+        # The Learn page's Learn Assistant has its own dev3 task; an empty env var clears it.
         path = self.write("assistant_task = 42\nprep_assistant_task = 51\n")
         s = load_settings(path)
         self.assertEqual((s.assistant_task, s.prep_assistant_task), (42, 51))

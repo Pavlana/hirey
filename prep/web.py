@@ -18,7 +18,7 @@ so tests call it directly. Every value from a database is HTML-escaped. The pay 
 never read for display.
 
 The dashboard never runs the agent: Research / CV fit buttons and Interested only queue
-requests (db.agent_requests) for the /research skill, and the Agent box only stores the user's
+requests (db.agent_requests) for the /research skill, and the Applications Assistant box only stores the user's
 message (db.agent_messages) for the /ask skill. When assistant_task is set,
 new work is also sent to that dev3 agent (prep.assistant), in the background, by id only.
 """
@@ -31,6 +31,7 @@ import logging
 import re
 import sqlite3
 import sys
+import time
 from collections.abc import Callable, Mapping
 from contextlib import closing
 from datetime import date, datetime
@@ -87,7 +88,7 @@ EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 
 # Fixed messages shown after an action; the URL carries only the key, never free text.
 MESSAGES = {
     "applied": "Recorded as applied. Its panel shows the first tasks.",
-    "interested": "Interested · research queued. It is in Pipeline → Interested; the agent researches the company "
+    "interested": "Interested · research queued. It is in Pipeline → Interested; the assistant researches the company "
                   "and checks the CV fit.",
     "uninterested": "Interested undone; the job is back in New offers.",
     "applied_today": "Marked as applied today. Chase if no reply is due in 7 days.",
@@ -97,21 +98,25 @@ MESSAGES = {
     "unskipped": "Skip undone; the job is back in New offers.",
     "task_done": "Task marked done.",
     "task_reopened": "Task reopened.",
-    "research_queued": "Queued for the agent. It runs in the next Claude session (/research).",
-    "message_sent": "Sent to the agent. Its reply shows in the thread.",
-    "mock_started": "Mock interview asked for. The agent's first question shows in the Agent box.",
+    "research_queued": "Queued for the Applications Assistant. It runs in the next Claude session (/research).",
+    "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
+    "mock_started": "Mock interview asked for. The assistant's first question shows in the Applications Assistant box.",
     "notes_saved": "Notes saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
-    "brief_queued": "Brief queued. The agent writes it from the job description; it shows here.",
+    "brief_queued": "Brief queued. The assistant writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
     "card_done": "Card done. Here is the next one to do.",
     "card_todo": "Kept as to do.",
     "track_done": "Every card in that track is done.",
     "learn_notes_saved": "Note saved.",
-    "learn_sent": "Sent to the prep agent. Its reply shows here.",
-    "learn_check_sent": "Your answer went to the prep agent. Its feedback shows in the Prep agent box.",
-    "learn_card_asked": "Asked for a card. The prep agent drafts it; say yes to save it.",
+    "learn_sent": "Sent to the Learn Assistant. Its reply shows here.",
+    "learn_check_sent": "Your answer went to the Learn Assistant. Its feedback shows in the Learn Assistant box.",
+    "learn_card_asked": "Asked for a card. The Learn Assistant drafts it; say yes to save it.",
     "learn_note_added": "Added to the notes.",
+    "resent": "Sent to the Applications Assistant again.",
+    "cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
+    "learn_resent": "Sent to the Learn Assistant again.",
+    "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
 }
 
 SECURITY_HEADERS = [
@@ -357,7 +362,7 @@ def _return_to(value: str | None, page: str, msg: str = "") -> str:
 
 class Form(dict):
     """A posted form: the first value of each field (stripped), plus `all`, every value of each field
-    (the Agent box's repeated `about`)."""
+    (the Applications Assistant box's repeated `about`)."""
     all: dict[str, list[str]]
 
 
@@ -482,7 +487,7 @@ def apply_application(settings: Settings, conn: sqlite3.Connection, form: dict[s
     """The panel's Mark applied: Interested → Applied today, at once (the toast offers Undo)."""
     app_id = _app_id(conn, form)
     if not db.move_application(conn, app_id, "applied", today, only_from="to_apply"):
-        raise BadRequest("It is no longer Interested; ask the agent to change the stage.")
+        raise BadRequest("It is no longer Interested; ask the assistant to change the stage.")
     log.info("application %s marked applied from the panel", app_id)
     return {"redirect": _here(app_id), "app_id": app_id}
 
@@ -510,9 +515,9 @@ def skip_application(settings: Settings, conn: sqlite3.Connection, form: dict[st
 
 
 def send_message(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
-    """The Agent box: store the user's message (author is always user, whatever the form says), about
+    """The Applications Assistant box: store the user's message (author is always user, whatever the form says), about
     the ticked targets (repeated `about`: "a:<app id>", "j:<getjo job id>", "cv"; none = the whole
-    search, one = that one, 2-4 = a comparison), and ping the standing assistant with
+    search, one = that one, 2-4 = a comparison), and ping the Applications Assistant with
     `/ask <app | job | cv | compare | general> <message>`, ids only, in the background. An older form's
     `app_id` / `job_id` / `topic` still work. The message stays pending until /ask replies through the
     CLI. The JSON reply is the thread."""
@@ -582,7 +587,7 @@ def _send_about(settings: Settings, conn: sqlite3.Connection, form: Form) -> dic
 def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
     """The panel's Mock interview: store the fixed start message (db.MOCK_START, built here from the
     stage, never free text) about the application and ping `/ask <app> <message>` like any message.
-    The agent runs the mock in the Agent box (/mock). The JSON reply is the thread."""
+    The agent runs the mock in the Applications Assistant box (/mock). The JSON reply is the thread."""
     app_id = _app_id(conn, form)
     if db.get_application(conn, app_id)["status"] in db.CLOSED_STATUSES:
         raise BadRequest("This application is closed; a mock is for an open one.")
@@ -595,9 +600,43 @@ def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: 
     return {"redirect": _here(app_id), "html": _thread(conn, settings)}
 
 
+def _msg_id(form: dict[str, str]) -> int:
+    msg_id = _int_field(form, "msg_id")
+    if msg_id is None:
+        raise BadRequest("Which message? (msg_id)")
+    return msg_id
+
+
+def _unreachable(name: str, seq: int | None) -> BadRequest:
+    return BadRequest(f"Couldn't reach the {name} (seq {seq}). Is its task running?")
+
+
+def resend_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Resend, on a message still waiting in the Applications Assistant box: the same message goes
+    back to pending (a stale or stuck claim dropped) and the assistant is pinged again with its id, at
+    once (not in the background) so a failed ping is reported. No new message row."""
+    if not settings.assistant_task:
+        raise BadRequest("No Applications Assistant task is set (assistant_task): run /ask in a Claude Code session.")
+    msg = db.reopen_message(conn, _msg_id(form))
+    about, job = db.message_subject(conn, msg["id"])
+    log.info("message %s sent to the assistant again", msg["id"])
+    if not assistant.notify_message(settings, about, msg["id"], job=about is None and job is not None,
+                                    topic=msg["topic"]):
+        raise _unreachable("Applications Assistant", settings.assistant_task)
+    return {"html": _thread(conn, settings)}
+
+
+def cancel_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Cancel, on a message still waiting in the Applications Assistant box: marked cancelled, kept."""
+    msg_id = _msg_id(form)
+    db.cancel_message(conn, msg_id)
+    log.info("message %s cancelled", msg_id)
+    return {"html": _thread(conn, settings)}
+
+
 def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
     """Write brief / Redo brief: queue a job brief for the agent (Redo when one exists) and ping the
-    standing assistant. A second click while it is open changes nothing."""
+    Applications Assistant. A second click while it is open changes nothing."""
     job_id = form.get("job_id")
     if not job_id:
         raise BadRequest("job_id is missing.")
@@ -741,9 +780,9 @@ def learn_notes_json(settings: Settings, query: dict[str, list[str]], today: str
     return _json(200, {"ok": True, "text": note["text"], "stamp": note["stamp"]})
 
 
-# --- Learn: the Prep agent -----------------------------------------------------------------
+# --- Learn: the Learn Assistant -----------------------------------------------------------------
 # Its messages are agent_messages with topic LEARN and the open card's id (db.add_learn_message); the
-# prep assistant answers them (/learn-ask), pinged with ids only. Fixed messages (Check my answer, Want a
+# Learn Assistant answers them (/learn-ask), pinged with ids only. Fixed messages (Check my answer, Want a
 # card for this?) are built from ids here, never from the form's text.
 
 def _learn_back(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int | None, str]:
@@ -757,13 +796,13 @@ def _learn_back(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int | N
 
 def _learn_ask(settings: Settings, conn: sqlite3.Connection, card_id: int | None, body: str, back: str) -> dict:
     msg_id = db.add_learn_message(conn, card_id, body)
-    log.info("prep agent message %s added on card %s", msg_id, card_id)  # never the text
+    log.info("Learn Assistant message %s added on card %s", msg_id, card_id)  # never the text
     assistant.notify_learn_in_background(settings, card_id, msg_id)
     return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
 
 
 def send_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The Prep agent box's Send: the user's message, with the open card's id."""
+    """The Learn Assistant box's Send: the user's message, with the open card's id."""
     card_id, back = _learn_back(conn, form)
     body = form.get("body", "")
     if not body.strip():
@@ -784,11 +823,11 @@ def check_answer(settings: Settings, conn: sqlite3.Connection, form: dict[str, s
 
 
 def _learn_reply(conn: sqlite3.Connection, form: dict[str, str]) -> dict:
-    """The Prep agent reply an action under it names (reply_id); anything else is refused."""
+    """The Learn Assistant reply an action under it names (reply_id); anything else is refused."""
     reply_id = _int_field(form, "reply_id")
     msg = db.get_message(conn, reply_id) if reply_id is not None else None
     if msg is None or msg["topic"] != db.LEARN or msg["author"] != "agent":
-        raise BadRequest("That is not a reply from the prep agent.")
+        raise BadRequest("That is not a reply from the Learn Assistant.")
     return msg
 
 
@@ -810,19 +849,41 @@ def add_reply_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[
     if reply["body"].strip() in learnnotes.read(settings.private_dir, key)["text"]:
         raise BadRequest("That reply is already in the notes.")
     stamp = learnnotes.append(settings.private_dir, key, reply["body"], today)
-    log.info("prep agent reply %s added to %s", reply["id"], learnnotes.label(key))  # never the text
+    log.info("Learn Assistant reply %s added to %s", reply["id"], learnnotes.label(key))  # never the text
     return {"redirect": back, "stamp": stamp, "note": "all" if key == learnnotes.ALL else "card",
             "note_card": reply["card_id"]}
 
 
+def resend_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Resend in the Learn Assistant box: as resend_message, pinging `/learn-ask` with the same id."""
+    if not settings.prep_assistant_task:
+        raise BadRequest("No Learn Assistant task is set (prep_assistant_task): run /learn-ask in a Claude Code session.")
+    card_id, back = _learn_back(conn, form)
+    msg = db.reopen_message(conn, _msg_id(form), learn=True)
+    log.info("Learn Assistant message %s sent again", msg["id"])
+    if not assistant.notify_learn(settings, msg["card_id"], msg["id"]):
+        raise _unreachable("Learn Assistant", settings.prep_assistant_task)
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
+def cancel_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Cancel in the Learn Assistant box: as cancel_message."""
+    card_id, back = _learn_back(conn, form)
+    msg_id = _msg_id(form)
+    db.cancel_message(conn, msg_id, learn=True)
+    log.info("Learn Assistant message %s cancelled", msg_id)
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
 def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
-    """GET /learn/thread?card=ID for polling: whether a Prep agent message is still waiting, the
+    """GET /learn/thread?card=ID for polling: whether a Learn Assistant message is still waiting, the
     message count (a reply arrived) and the conversation's HTML (the open card marked)."""
     raw = (query.get("card") or [""])[0]
     if raw and not raw.isdigit():
         return _json(400, {"ok": False, "message": "card must be a card id."})
     with closing(_connect(settings, today)) as conn:
-        payload = {"ok": True, "pending": bool(db.pending_messages(conn, topic=db.LEARN)),
+        waiting = db.pending_messages(conn, topic=db.LEARN)
+        payload = {"ok": True, "pending": bool(waiting), "failed": _failed_pings(waiting),
                    "messages": db.message_count(conn, learn=True),
                    "html": _learn_thread(conn, settings, int(raw) if raw else None)}
     return _json(200, payload)
@@ -843,6 +904,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/mock": (start_mock, "/", "mock_started"),
+    "/applications/resend": (resend_message, "/", "resent"),
+    "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/notes": (save_notes, "/", "notes_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
@@ -855,6 +918,8 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/learn/check": (check_answer, "/learn", "learn_check_sent"),
     "/learn/card": (draft_card, "/learn", "learn_card_asked"),
     "/learn/add-note": (add_reply_to_notes, "/learn", "learn_note_added"),
+    "/learn/resend": (resend_learn_message, "/learn", "learn_resent"),
+    "/learn/cancel": (cancel_learn_message, "/learn", "learn_cancelled"),
 }
 
 
@@ -936,7 +1001,7 @@ def practice_section(conn: sqlite3.Connection) -> str:
 # --- Learn ------------------------------------------------------------------------------------
 # /learn: the tracks grid. /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
 # Notes (this card's note, or with &notes=all the general notebook: prep/learnnotes.py) and the Prep
-# agent (the Learn conversation with the prep assistant) on the left, a divider, and the card on the right.
+# agent (the Learn conversation with the Learn Assistant) on the left, a divider, and the card on the right.
 
 EXPAND_ICON = "⤢"
 
@@ -1019,9 +1084,9 @@ def _learn_view(settings: Settings, conn: sqlite3.Connection, card: dict, key: s
               f'aria-controls="learn-side" title="Fold Notes away" hidden>{EXPAND_ICON} Expand</button>')
     side = ('<div class="learn-side" id="learn-side">'
             + _notes_panel(settings, card["id"], key)
-            + _card("Prep agent", _learn_agent(conn, settings, card["id"]), action=expand, cls="learn-agent")
+            + _card("Learn Assistant", _learn_agent(conn, settings, card["id"]), action=expand, cls="learn-agent")
             + "</div>")
-    handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and agent,card")
+    handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and assistant,card")
     answer = ""
     if settings.private_dir is not None:
         key = learnnotes.answer_key(card["id"])
@@ -1101,29 +1166,29 @@ def _check_form(card_id: int) -> str:
     """Check my answer, under Your answer: the page script saves the answer first, then posts this."""
     return (f'<form method="post" action="/learn/check" class="answer-check" data-ajax="learn" data-save-answer>'
             f'<input type="hidden" name="card_id" value="{h(card_id)}">'
-            '<span class="muted">The prep agent says what you covered, what you missed and one better phrasing.</span>'
+            '<span class="muted">The Learn Assistant says what you covered, what you missed and one better phrasing.</span>'
             + _button("Check my answer", "secondary", "sm") + "</form>")
 
 
-LEARN_MESSAGES = 60  # the latest Prep agent messages shown
+LEARN_MESSAGES = 60  # the latest Learn Assistant messages shown
 
 
 def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int) -> str:
-    """The Prep agent box: the Learn conversation and a message form that carries the open card."""
+    """The Learn Assistant box: the Learn conversation and a message form that carries the open card."""
     return (f'<div class="learn-chat" id="learn-chat" data-card="{h(card_id)}">{_learn_thread(conn, settings, card_id)}'
             '<form method="post" action="/learn/message" class="ask" data-ajax="learn">'
             f'<input type="hidden" name="card_id" value="{h(card_id)}">'
             f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
             'placeholder="Ask about this card, \u201cquiz me on chapter 2\u201d, or \u201cexplain it more simply\u201d…" '
-            'aria-label="Message to the prep agent"></textarea>'
-            '<div class="ask-foot"><span class="muted">Sent with this card. The prep agent replies here.</span>'
+            'aria-label="Message to the Learn Assistant"></textarea>'
+            '<div class="ask-foot"><span class="muted">Sent with this card. The Learn Assistant replies here.</span>'
             + _button("Send", size="sm") + "</div></form></div>")
 
 
 def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | None) -> str:
-    """The Prep agent conversation, its latest LEARN_MESSAGES oldest first, each tagged with the card it
+    """The Learn Assistant conversation, its latest LEARN_MESSAGES oldest first, each tagged with the card it
     was sent from (a link; "this card" for the open one). Under each agent reply: Want a card for
-    this? and Add to notes. data-pending while a message waits for the prep assistant."""
+    this? and Add to notes. data-pending while a message waits for the Learn Assistant."""
     messages = db.thread(conn, topic=db.LEARN, limit=LEARN_MESSAGES)
     back = f'<input type="hidden" name="card_id" value="{h(card_id)}">' if card_id is not None else ""
 
@@ -1136,17 +1201,20 @@ def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | N
 
     def actions(m: dict) -> str:
         if m["author"] != "agent":
-            return ""
+            return _wait_actions(m, "/learn", "learn", back, bool(settings.prep_assistant_task))
         forms = "".join(
             f'<form method="post" action="{path}" data-ajax="learn"><input type="hidden" name="reply_id" '
             f'value="{h(m["id"])}">{back}<button class="btn btn-ghost btn-sm">{label}</button></form>'
             for path, label in (("/learn/card", "Want a card for this?"), ("/learn/add-note", "Add to notes")))
         return f'<div class="msg-actions">{forms}</div>'
 
+    flags = _msg_flags(conn, messages)
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-card="{h(m["card_id"] or "")}">'
-        f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
-        + tag(m) + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}{_cancelled_cls(m)}" '
+        f'data-card="{h(m["card_id"] or "")}">'
+        f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
+        + tag(m) + flags.get(m["id"], "")
+        + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
         f'<div class="msg-body">{_linkify(m["body"])}</div>{actions(m)}</li>'
         for m in messages)
     pending = bool(db.pending_messages(conn, topic=db.LEARN))
@@ -1155,10 +1223,10 @@ def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | N
                  '\u201cquiz me on chapter 1\u201d.</p>')
     elif pending and settings.prep_assistant_task:
         state = ('<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 "Prep agent is working…</p>")
+                 "Learn Assistant is working…</p>")
     elif pending:
-        state = ('<p class="thread-state" role="status">Waiting for the prep agent: run /learn-ask in a Claude Code '
-                 "session (no prep assistant is set).</p>")
+        state = ('<p class="thread-state" role="status">Waiting for the Learn Assistant: run /learn-ask in a Claude Code '
+                 "session (no Learn Assistant task is set).</p>")
     else:
         state = ""
     return (f'<div class="thread" data-learn-thread{" data-pending" if pending else ""}>'
@@ -1520,7 +1588,7 @@ def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str
         f'<header class="panel-head"><div><h2 id="panel-title">{h(job["company"])}</h2>'
         f'<p class="panel-role">{h(job["title"])}</p><p class="panel-sub">{sub}</p></div>'
         f'<span class="panel-head-actions">{tick}<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
-        'Ask the agent</a>'
+        'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         '<div class="panel-body">'
         f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div></section>'
@@ -1702,7 +1770,7 @@ def list_order(rows: list[dict]) -> list[dict]:
 def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
               query: dict[str, list[str]]) -> tuple[str, str, str]:
     """The landing page. Left: a switch between the pipeline (grouped by stage, with a stage strip
-    that filters it) and New offers (getjo jobs not yet tracked), with the Agent box under it.
+    that filters it) and New offers (getjo jobs not yet tracked), with the Applications Assistant box under it.
     Right: the side panel for the application named by ?app=ID or else the job named by ?job=ID (a
     tracked job opens its application; an unknown id is ignored)."""
     f = home_filters(query)
@@ -1798,21 +1866,21 @@ def sel_targets(conn: sqlite3.Connection, f: dict, rows: list[dict], found: dict
 
 
 def _sel_tick(f: dict, key: str, label: str, text: str = "") -> str:
-    """The ☐ that ticks `key` for the Agent box (a link changing `sel`, so it works without the script;
+    """The ☐ that ticks `key` for the Applications Assistant box (a link changing `sel`, so it works without the script;
     at the limit it only says so). `text` adds a visible label (the panel header's "Ask about this")."""
     on = key in f["sel"]
     nxt = toggle_sel(f["sel"], key)
     href = home_url(f, sel=nxt) if nxt is not None else _return_to(home_url(f), "/", "sel_limit")
     words = f'<span class="sel-text">{h(text)}</span>' if text else ""
     return (f'<a class="sel-tick{" is-on" if on else ""}{" has-text" if text else ""}" href="{h(href)}" role="checkbox" '
-            f'aria-checked="{"true" if on else "false"}" data-sel="{h(key)}" aria-label="Ask the agent about {h(label)}" '
-            f'title="Tick to ask the agent about it"><span class="box" aria-hidden="true"></span>{words}</a>')
+            f'aria-checked="{"true" if on else "false"}" data-sel="{h(key)}" aria-label="Ask the assistant about {h(label)}" '
+            f'title="Tick to ask the assistant about it"><span class="box" aria-hidden="true"></span>{words}</a>')
 
 
 def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, opened: dict | None) -> dict:
     """Queue job briefs the agent has not been asked for: every new offer scored at least
     brief_auto_min_score (in the background), and an untracked offer whose panel is open (`opened`).
-    Pings the standing assistant once when any were added. Returns {job id: brief…} plus "open" (the
+    Pings the Applications Assistant once when any were added. Returns {job id: brief…} plus "open" (the
     job ids with a brief request open)."""
     wanted = [] if found["error"] else [j["id"] for j in found["new"] if (j["score"] or 0) >= settings.brief_auto_min_score]
     if opened is not None:
@@ -1943,7 +2011,7 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
     """The side panel, top to bottom: header (with the Ask-about tick), the job brief (`brief`, from
     _brief_section; none without a getjo job), the latest comment (read-only), shortcut buttons, tasks
     (tick to mark done), the agent's results (company research, CV fit, tailored CV versions) and
-    the stage history. Everything else is asked of the agent in the Agent box under the list."""
+    the stage history. Everything else is asked of the agent in the Applications Assistant box under the list."""
     app, found = r["app"], r["found"]
     here = home_url(f, app=app["id"])
     link = (f'<span>{_link(app["link"], "Job posting ↗")}</span>'
@@ -1961,7 +2029,7 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         f'{_job_closed_badge() if r["closed"] else ""}'
         f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
         f'<span class="panel-head-actions">{tick}<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
-        'Ask the agent</a>'
+        'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         f'<div class="panel-body">'
         + brief
@@ -1983,11 +2051,11 @@ def _comments_section(conn: sqlite3.Connection, app_id: int) -> str:
     if found:
         latest = found[0]
         earlier = (f'<p class="muted">{len(found) - 1} earlier comment{"s" if len(found) > 2 else ""}; '
-                   'ask the agent to list them.</p>' if len(found) > 1 else "")
+                   'ask the assistant to list them.</p>' if len(found) > 1 else "")
         body = (f'<p class="comment-latest"><span class="mono muted">{h(latest["at"][:10])}</span> '
                 f'<span class="comment-body">{h(latest["body"])}</span></p>{earlier}')
     else:
-        body = '<p class="muted">No comments yet. Ask the agent to add one.</p>'
+        body = '<p class="muted">No comments yet. Ask the assistant to add one.</p>'
     return f'<section class="panel-comments" aria-labelledby="comments-{h(app_id)}"><h3 id="comments-{h(app_id)}">Comments</h3>{body}</section>'
 
 
@@ -2062,7 +2130,7 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
 
 def _mock_form(app: dict, here: str) -> str:
     """Mock interview for a chosen stage (the current one when it is an interview stage): a fixed message
-    in the Agent box, where the agent asks the questions and gives the scores (/mock)."""
+    in the Applications Assistant box, where the agent asks the questions and gives the scores (/mock)."""
     current = app["status"] if app["status"] in db.INTERVIEW_STAGES else db.INTERVIEW_STAGES[0]
     options = "".join(f'<option value="{s}"{" selected" if s == current else ""}>{h(db.status_label(s).capitalize())}</option>'
                       for s in db.INTERVIEW_STAGES)
@@ -2156,7 +2224,7 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
             for v in reversed(versions))
         actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
         body = (f'<ul class="versions">{items}</ul>' + _check_body(check, versions[-1]["version"], ai) +
-                '<p class="muted">Ask the agent for changes; each one is a new version. Tell it which file you sent.</p>')
+                '<p class="muted">Ask the assistant for changes; each one is a new version. Tell it which file you sent.</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
 
@@ -2167,8 +2235,8 @@ def _notes_card(app_id: int, notes: dict, here: str, draft: str | None = None, a
     stale one). With `draft` (a refused save), the editor is open with that text under the current
     notes, after `alert`."""
     text, stamp = notes["notes"], notes["stamp"]
-    body = render_markdown(text, '<p class="muted">No notes yet. Questions to ask, call notes, what the agent '
-                                 'finds: edit here or ask the agent to note it.</p>', breaks=True)
+    body = render_markdown(text, '<p class="muted">No notes yet. Questions to ask, call notes, what the assistant '
+                                 'finds: edit here or ask the assistant to note it.</p>', breaks=True)
     when = f' <span class="mono muted">{h(_short_day(stamp))}</span>' if stamp and text else ""
     opened = " open" if draft is not None else ""
     form = (f'<details class="notes-edit"{opened}><summary class="btn btn-ghost btn-sm">Edit</summary>'
@@ -2229,7 +2297,7 @@ def _history(conn: sqlite3.Connection, app_id: int) -> str:
 
 # --- the My CV panel ----------------------------------------------------------------------
 # The master CV (private_dir/cv.md) with its skills and saved versions. Read-only apart from
-# Restore: changes are asked of the agent in the Agent box ("About my CV"), which writes them
+# Restore: changes are asked of the agent in the Applications Assistant box ("About my CV"), which writes them
 # through `cli cv save` (prep.cvfile). Only cv.md and recorded cv-history files are read.
 
 def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
@@ -2251,7 +2319,7 @@ def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
         if current is not None:
             state = f'<span class="muted">saved as v{h(current)} · {h(_short_day(by_id[current]["created_at"]))}</span>'
         elif versions:
-            state = ('<span class="badge badge-warning" title="cv.md was edited outside the agent; the next change '
+            state = ('<span class="badge badge-warning" title="cv.md was edited outside the assistant; the next change '
                      'or restore keeps this text as a version first">changed since the last version</span>')
         else:
             state = '<span class="muted">no saved versions yet</span>'
@@ -2266,7 +2334,7 @@ def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
                 f'<a class="btn btn-secondary btn-sm" href="#{card}" data-jump="{card}">{label}</a>'
                 for card, label in (("cv-skills", "Skills"), ("cv-text", "CV"), ("cv-history", f"History {len(versions)}")))
             body = (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{jumps}</div>'
-                    '<p class="muted">To change it, tick "Ask about this" and ask the agent below; each change is '
+                    '<p class="muted">To change it, tick "Ask about this" and ask the assistant below; each change is '
                     'saved as a version.</p></section>'
                     + _cv_skills(groups)
                     + f'<section class="cv-doc" id="cv-text"><h3>CV</h3><div class="doc">{render_markdown(text)}</div></section>'
@@ -2277,7 +2345,7 @@ def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
         f'<p class="panel-sub">{sub}</p></div>'
         f'<span class="panel-head-actions">{_sel_tick(f, "cv", "my CV", "Ask about this")}'
         '<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
-        'Ask the agent</a>'
+        'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         f'<div class="panel-body">{body}</div></aside>'
     )
@@ -2311,7 +2379,7 @@ def _cv_history(versions: list[dict], current: int | None, f: dict, here: str) -
     """Saved versions newest first: number, date, the note of what changed, and Open · Compare ·
     Restore (the current one is marked and has Open only)."""
     if not versions:
-        body = '<p class="muted">No saved versions yet. The first change through the agent saves this text as v1.</p>'
+        body = '<p class="muted">No saved versions yet. The first change through the assistant saves this text as v1.</p>'
     else:
         items = []
         for v in versions:
@@ -2383,17 +2451,17 @@ def _diff_line(op: str, line: str, kinds: dict[str, tuple[str, str]]) -> str:
             f'{"−" if op == "-" else "+" if op == "+" else ""}</span><span class="diff-text">{h(line) or "&nbsp;"}</span></div>')
 
 
-AGENT_MESSAGES = 60  # the latest messages shown in the Agent box
+AGENT_MESSAGES = 60  # the latest messages shown in the Applications Assistant box
 
 
 def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: list[dict]) -> str:
-    """The Agent box under the list: one conversation for every application and job. A new message is
+    """The Applications Assistant box under the list: one conversation for every application and job. A new message is
     about the ticked targets (`targets`, from sel_targets: none = the whole search, one = that job,
     2-4 = a comparison), shown as chips above the input. All | Selected filters the conversation to
     messages about any ticked target while something is ticked."""
     return (
         f'<section class="card card-agent agent" id="agent" aria-labelledby="agent-title">'
-        f'<header class="card-head"><h2 id="agent-title">Agent</h2>'
+        f'<header class="card-head"><h2 id="agent-title">Applications Assistant</h2>'
         '<button type="button" class="btn btn-ghost btn-sm agent-back" data-back-to-panel>← Back to the job</button>'
         f'<div class="agent-filter" role="group" aria-label="Show messages"{"" if targets else " hidden"}>'
         '<button type="button" class="view-btn is-active" data-filter-chat="all">All</button>'
@@ -2403,8 +2471,8 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         f'<input type="hidden" name="return" value="{h(home_url(f))}">{_agent_about(f, targets)}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
         'placeholder="Ask anything: which tasks need me, a question about the ticked jobs, a comparison, a change '
-        '(tasks, comments, stage, tier, CV), or paste a recruiter email…" aria-label="Message to the agent"></textarea>'
-        '<div class="ask-foot"><span class="muted">The agent does the edits and replies here.</span>'
+        '(tasks, comments, stage, tier, CV), or paste a recruiter email…" aria-label="Message to the Applications Assistant"></textarea>'
+        '<div class="ask-foot"><span class="muted">The assistant does the edits and replies here.</span>'
         + _button("Send", size="sm") + "</div></form></div></section>"
     )
 
@@ -2474,28 +2542,84 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
                     f'{h(names.get(m["getjo_job_id"], "job offer"))}</a>')
         return '<span class="msg-about">all jobs</span>'
 
+    flags = _msg_flags(conn, messages)
     items = "".join(
-        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}" data-app="{h(m["application_id"] or "")}" '
+        f'<li class="msg msg-{"agent" if m["author"] == "agent" else "user"}{_cancelled_cls(m)}" '
+        f'data-app="{h(m["application_id"] or "")}" '
         f'data-job="{h(m["getjo_job_id"] or "")}" data-topic="{h(m["topic"] or "")}" '
         f'data-targets="{h(" ".join(t["key"] for t in targets.get(m["id"], [])))}">'
-        f'<div class="msg-meta"><span class="msg-who">{"agent" if m["author"] == "agent" else "you"}</span>'
-        + about(m)
+        f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
+        + about(m) + flags.get(m["id"], "")
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div></li>'
+        f'<div class="msg-body">{_linkify(m["body"])}</div>'
+        + (_wait_actions(m, "/applications", "thread", "", bool(settings.assistant_task))
+           if m["author"] == "user" else "")
+        + "</li>"
         for m in messages
     )
     pending = bool(db.pending_messages(conn))
     if not messages:
         state = '<p class="muted thread-empty">No messages yet.</p>'
     elif pending and settings.assistant_task:
-        state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Agent is working…</p>'
+        state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Applications Assistant is working…</p>'
     elif pending:
-        state = ('<p class="thread-state" role="status">Waiting for the agent: run /ask in a Claude Code session '
-                 "(no standing assistant is set).</p>")
+        state = ('<p class="thread-state" role="status">Waiting for the Applications Assistant: run /ask in a Claude Code session '
+                 "(no Applications Assistant task is set).</p>")
     else:
         state = ""
     return (f'<div class="thread" data-thread{" data-pending" if pending else ""}>'
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
+
+
+def _cancelled_cls(m: dict) -> str:
+    return " is-cancelled" if m["status"] == "cancelled" else ""
+
+
+def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]:
+    """A "Cancelled" flag on each cancelled user message and an "after cancel" one on a reply to it."""
+    status = {m["id"]: m["status"] for m in messages}
+    flags = {}
+    for m in messages:
+        if m["status"] == "cancelled":
+            flags[m["id"]] = '<span class="msg-flag">Cancelled</span>'
+        elif m["author"] == "agent" and m["reply_to"] is not None:
+            to = status.get(m["reply_to"]) or (db.get_message(conn, m["reply_to"]) or {}).get("status")
+            if to == "cancelled":
+                flags[m["id"]] = '<span class="msg-flag">after cancel</span>'
+    return flags
+
+
+def _wait_actions(m: dict, base: str, mode: str, extra: str, can_resend: bool) -> str:
+    """Resend and Cancel under a user message still waiting for its reply. Resend shows once the
+    message has waited assistant.RESEND_AFTER seconds since its last ping (data-resend-due, epoch ms,
+    revealed by the page script), or at once when that ping failed; only with an assistant task set."""
+    if m["status"] not in db.WAITING:
+        return ""
+    hidden = f'<input type="hidden" name="msg_id" value="{h(m["id"])}">{extra}'
+    resend = ""
+    if can_resend:
+        ping = assistant.last_ping(m["id"])
+        since = ping[0] if ping else _epoch(m["created_at"])
+        due = int((since + assistant.RESEND_AFTER) * 1000)
+        show = (ping is not None and not ping[1]) or time.time() * 1000 >= due
+        resend = (f'<form method="post" action="{base}/resend" data-ajax="{mode}">{hidden}'
+                  f'<button class="btn btn-ghost btn-sm" data-resend-due="{due}"{"" if show else " hidden"}'
+                  ' title="Ping the assistant again about this message">Resend</button></form>')
+    return (f'<div class="msg-actions msg-wait">{resend}<form method="post" action="{base}/cancel" data-ajax="{mode}">'
+            f'{hidden}<button class="btn btn-ghost btn-sm" title="Stop waiting: the assistant skips it">Cancel</button>'
+            '</form></div>')
+
+
+def _failed_pings(waiting: list[dict]) -> list[int]:
+    """Ids of waiting messages whose latest ping failed: the polling script shows their Resend at once."""
+    return [m["id"] for m in waiting if (assistant.last_ping(m["id"]) or (0, True))[1] is False]
+
+
+def _epoch(stamp: str) -> float:
+    try:
+        return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return 0.0
 
 
 _URL = re.compile(r"(https?://[^\s<>\"']+)")
@@ -2538,7 +2662,8 @@ def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> 
         job_id = (app["getjo_job_id"] if app else job_id) or None
         working = bool(app and db.open_requests(conn, app["id"])) or bool(job_id and db.open_briefs(conn, job_id))
         pending = working or bool(db.pending_messages(conn))
-        payload = {"ok": True, "pending": pending, "status": app["status"] if app else None,
+        payload = {"ok": True, "pending": pending, "failed": _failed_pings(db.pending_messages(conn)),
+                   "status": app["status"] if app else None,
                    "messages": db.message_count(conn), "html": _thread(conn, settings)}
     return _json(200, payload)
 

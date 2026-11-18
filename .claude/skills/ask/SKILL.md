@@ -1,17 +1,17 @@
 ---
 name: ask
-description: Answer messages left in the Agent box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage, or a mock interview (started from the panel, or an answer while one is in progress). Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the standing assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Applications Assistant box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage, or a mock interview (started from the panel, or an answer while one is in progress). Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the Applications Assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
 
-The dashboard's Applications page has one **Agent** box under the pipeline list: a single
+The dashboard's Applications page has one **Applications Assistant** box under the pipeline list: a single
 conversation for the whole search. The user ticks ☐ rows (and My CV) to say what a message is
 about, shown as "About:" chips: nothing ticked is the whole search ("all jobs"); one tick is one
 application, one job offer not yet tracked, or the master CV ("My CV"); 2 to 4 ticks are a
 **comparison** (a tag per target). The panel has no forms for
 editing the application: the user asks here, and this skill does the edit and answers. The
-dashboard only stores the message (status pending) and pings the standing assistant; the list,
+dashboard only stores the message (status pending) and pings the Applications Assistant; the list,
 the panel and the conversation refresh on their own once the reply is in. Run every command from
 the repo root.
 
@@ -60,7 +60,13 @@ tasks in review order (as `review` below) and the latest 30 messages of the conv
 question about one job, run `thread show APP` (without `--claim`) for its context.
 
 This claims the waiting messages for this session. If it prints "another session is already
-answering", leave that thread alone. The output contains:
+answering", leave that thread alone.
+
+**Cancelled messages.** The user can cancel a message that is still waiting (Cancel in the
+Applications Assistant box). If the message is cancelled, do nothing: no claim, no reply, no
+change. `thread show --message MSG` prints "was cancelled by the user … Do nothing" and stops; in
+the thread a cancelled message shows as `user, cancelled` and is never claimed. A reply to it that
+was already being written may still be saved; the box marks it "after cancel". The output contains:
 
 - the application (company, role, stage, link, contact)
 - context files: company research (`companies/<slug>.md`), CV fit (`fit/<id>-<slug>.md`),
@@ -287,7 +293,7 @@ REPLY
 ```
 
 The reply goes with the message's application, job offer or the whole search by itself. Use plain text:
-short paragraphs, `-` bullets or `1.` numbers, and URLs as they are (the Agent box makes http(s)
+short paragraphs, `-` bullets or `1.` numbers, and URLs as they are (the Applications Assistant box makes http(s)
 links clickable). Markdown is not rendered. The dashboard picks the reply up within seconds.
 
 If the reply command says the message is already answered, another session got there first. Do
@@ -297,4 +303,4 @@ not reply again.
 
 In this session, say in one line per message what was done ("#7 Globex: answered the
 interview-process question; company file updated", "general: listed 6 tasks to review"). Nothing
-more is needed: the user reads the reply in the Agent box.
+more is needed: the user reads the reply in the Applications Assistant box.

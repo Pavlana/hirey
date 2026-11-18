@@ -113,19 +113,19 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Example data: `python -m prep.seed_example`, then
   `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
-  `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep it from messaging the real standing assistants)
+  `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep it from messaging the real Applications and Learn Assistants)
 - Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
   `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
   `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
   after the user confirms), `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`, `cards delete ID`;
   `learn-notes CARD_ID|all [--show | --append [TEXT]]` (the Learn page's Notes, private_dir/notes/learn/),
   `learn-notes answer CARD_ID --show` (the card's Your answer, read only)
-- Prep agent (used by /learn-ask; the Learn page's Prep agent box, pinged to `prep_assistant_task`):
+- Learn Assistant (used by /learn-ask; the Learn page's Learn Assistant box, pinged to `prep_assistant_task`):
   `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
   `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
-- Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
+- Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then

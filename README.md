@@ -20,15 +20,15 @@ Python 3.11+, standard library by default (no frameworks, no build step; one pin
 WeasyPrint, renders the tailored CV PDF), 632 unit tests.
 
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
-![New offers with the agent's job brief, and the Agent box](docs/screenshots/new-offers.png)
+![New offers with the agent's job brief, and the Applications Assistant box](docs/screenshots/new-offers.png)
 
 | Pipeline and an application (Mock interview) | Comparing two ticked jobs | Dashboard |
 |---|---|---|
-| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Agent box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
+| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Applications Assistant box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
 
 | Learn: a card with Your answer, the notes (vim keys on) and the tracks |
 |---|
-| ![Learn card view with Your answer, the Notes editor and the Prep agent](docs/screenshots/learn.png) |
+| ![Learn card view with Your answer, the Notes editor and the Learn Assistant](docs/screenshots/learn.png) |
 
 ## What it does
 
@@ -55,7 +55,7 @@ WeasyPrint, renders the tailored CV PDF), 632 unit tests.
   is traced to the master CV or a private facts bank (an unsourced claim blocks), the CV fit is
   scored again on the tailored copy and compared with the master CV's, and the top of page one
   gets a six-second skim score. Its findings join the same verdict.
-- **One conversation with the agent.** The Agent box on the Applications page is a chat thread.
+- **One conversation with the agent.** The Applications Assistant box on the Applications page is a chat thread.
   Ticking rows sets what a message is about: one job (tracked or not), the master CV, nothing
   (the whole search), or two to four jobs for a side-by-side **comparison** of differences, pros
   and cons and fit per role. Examples: "which tasks
@@ -67,7 +67,7 @@ WeasyPrint, renders the tailored CV PDF), 632 unit tests.
   interview → Offer, or a closed outcome), with the interview date, a short comment and new
   to-dos. Each stage adds its own prep tasks and closes the previous stage's tasks. An application
   with no reply for 14 days moves to *No response* on its own.
-- **Interview practice.** A mock interview runs in the Agent box for a chosen stage: one
+- **Interview practice.** A mock interview runs in the Applications Assistant box for a chosen stage: one
   question per reply, then 1–5 scores per area. `/debrief` turns a pasted transcript of a real
   interview into questions, what went well and what to improve. Each weakness becomes a gap with
   a drill task, and the Dashboard shows score trends per area.
@@ -104,7 +104,7 @@ flowchart LR
 How a request moves through the system, using "Tailor CV" as the example:
 
 1. The person clicks **Tailor CV** in an application's panel. The dashboard inserts a pending
-   row in `agent_requests` and, if a standing assistant is set up, sends it
+   row in `agent_requests` and, if the Applications Assistant is set up, sends it
    `dev3 message "/research <id>"`. The argv is built from ids only, with no shell and a
    timeout. Without an assistant, the request waits for the next Claude Code session (a
    SessionStart hook prints the pending ids).
@@ -115,7 +115,7 @@ How a request moves through the system, using "Tailor CV" as the example:
    the thread.
 3. The dashboard polls the thread, shows "Tailored CV ready · v2" and renders the file read-only.
    It opens only a path that is recorded in the database and resolves inside `private_dir`.
-4. The person replies in the Agent box ("lead with the platform work"). That message is a new
+4. The person replies in the Applications Assistant box ("lead with the platform work"). That message is a new
    queued item, and the loop repeats.
 
 The components and the full data flow are in [docs/how-it-works.md](docs/how-it-works.md).
@@ -155,7 +155,7 @@ The empty `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep the exampl
 step needs WeasyPrint in a virtual environment (`.venv`, from `requirements.txt`); without it, the
 two PDF render tests are skipped and everything else works. The
 agent features run in Claude Code from this directory: open a session and type `/today`,
-`/research` or `/ask`. The real setup (settings file, getjo path, launchd, standing assistant)
+`/research` or `/ask`. The real setup (settings file, getjo path, launchd, Applications and Learn Assistants)
 is in [docs/usage.md](docs/usage.md). It covers the venv and the launchd job, which runs
 `.venv/bin/python`.
 
@@ -193,7 +193,7 @@ pull request and the running dashboard.
 
 ## Docs
 
-- [docs/usage.md](docs/usage.md): setup, commands, dashboard reference, standing assistant,
+- [docs/usage.md](docs/usage.md): setup, commands, dashboard reference, Applications Assistant,
   launchd, privacy model
 - [docs/how-it-works.md](docs/how-it-works.md): components and data flow
 - [docs/ROADMAP.md](docs/ROADMAP.md): phases and acceptance criteria

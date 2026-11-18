@@ -1,6 +1,6 @@
 # Usage and reference
 
-Setup, commands, the dashboard in detail, the standing assistant, launchd and the privacy
+Setup, commands, the dashboard in detail, the Applications Assistant, launchd and the privacy
 model. The overview is in the [README](../README.md); components and data flow are in
 [how-it-works.md](how-it-works.md).
 
@@ -50,7 +50,7 @@ the Claude app all find it without environment variables. Single keys can be ove
 `PREP_PDF_PYTHON` and `PREP_FACTS_FILE`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
 `PREP_ASSISTANT_TASK=` (or `PREP_PREP_ASSISTANT_TASK=`, `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
-on example data never messages the standing assistants; empty path and number overrides are
+on example data never messages the Applications and Learn Assistants; empty path and number overrides are
 ignored.
 
 ## Try it with example data
@@ -84,14 +84,14 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks and queues the AI check |
 |            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file |
 |            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim) from its `.eval.md` file |
-| `/ask`     | `python -m prep.cli thread show [APP \| --job ID \| --message MSG \| --cv] [--claim]` / `thread reply [APP] --to MSG` / `thread pending` | The Agent box: a thread with its context (no id: the whole search; `--job`: an offer not yet tracked; `--message`: a comparison), the reply (text on stdin or `--file`), the messages waiting |
+| `/ask`     | `python -m prep.cli thread show [APP \| --job ID \| --message MSG \| --cv] [--claim]` / `thread reply [APP] --to MSG` / `thread pending` | The Applications Assistant box: a thread with its context (no id: the whole search; `--job`: an offer not yet tracked; `--message`: a comparison), the reply (text on stdin or `--file`), the messages waiting |
 |            | `python -m prep.cli review [--all]`                                  | Read-only: the top 3 open tasks in review order (`--all`: every open task) |
 |            | `python -m prep.cli task edit ID [--title T] [--due D \| --no-due]` / `task delete ID` | Change or delete a task |
 |            | `python -m prep.cli comments list APP` / `comments amend REF "text"` / `comments remove REF` | An application's comments with their refs (`c12`, `h34`); a removed stage comment keeps its move |
 | `/ask`, `/research` | `python -m prep.cli notes APP [--show \| --append [TEXT]]` | The panel's Notes: print them, or add a dated "Agent · 17 Nov" block at the end (TEXT, or stdin when left out); never rewrites the user's text, refuses pay |
-| Prep agent | `python -m prep.cli learn-notes CARD_ID\|all [--show \| --append [TEXT]]` | The Learn page's Notes: a card's note or the "all prep" notebook; print it, or add a dated "Agent" block at the end; never rewrites, refuses pay |
-| Prep agent | `python -m prep.cli learn-notes answer CARD_ID [--show]` | The user's own answer on a card (Your answer); read only |
-| `/learn-ask` | `python -m prep.cli learn-thread show MSG [--claim]` / `learn-thread reply --to MSG` / `learn-thread pending` | The Learn page's Prep agent: a message with its card (front, back, follow-ups, Learn sources), the track's chapters, the private context files and the conversation; the reply (text on stdin or `--file`); the messages waiting |
+| Learn Assistant | `python -m prep.cli learn-notes CARD_ID\|all [--show \| --append [TEXT]]` | The Learn page's Notes: a card's note or the "all prep" notebook; print it, or add a dated "Agent" block at the end; never rewrites, refuses pay |
+| Learn Assistant | `python -m prep.cli learn-notes answer CARD_ID [--show]` | The user's own answer on a card (Your answer); read only |
+| `/learn-ask` | `python -m prep.cli learn-thread show MSG [--claim]` / `learn-thread reply --to MSG` / `learn-thread pending` | The Learn page's Learn Assistant: a message with its card (front, back, follow-ups, Learn sources), the track's chapters, the private context files and the conversation; the reply (text on stdin or `--file`); the messages waiting |
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
@@ -117,7 +117,7 @@ charts are server-rendered SVG):
 - **Applications** (`/`, the landing page; `/applications` and `/tasks` redirect here): the
   left column switches between **Pipeline N** and **New offers M** (`?view=pipeline|offers`,
   remembered per browser; a bare `/` opens the view picked last). The nav shows the new offers
-  count next to Applications. The Agent box sits under the list in both views; the panel on the
+  count next to Applications. The Applications Assistant box sits under the list in both views; the panel on the
   right shows the selected application or job offer. Details below.
 - **Dashboard** (`/dashboard`): applied in the last 7 days against `weekly_target`, total applications,
   reply rate (with a warning below 10% after 25 applications), and charts:
@@ -130,19 +130,19 @@ charts are server-rendered SVG):
   interview (company, stage, day) under the title, then one tile per track: a cover colour with a
   progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
   do (`?track=SLUG`; any card is `?card=ID`). The card view keeps the tracks above it as a compact
-  row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Prep agent** on the
+  row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Learn Assistant** on the
   left, the card on the right, with the same divider as Applications (its
-  width kept per browser on its own). **⤢ Expand** on the Prep agent folds Notes away, remembered
+  width kept per browser on its own). **⤢ Expand** on the Learn Assistant folds Notes away, remembered
   per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
   question, **Show answer** (the key
   points and likely follow-ups), the **Learn** box under it, always in view (the sources to watch or
   read, the preparation material; links open in a new tab), and **Done** /
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
   last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
-  date or rating. Phones stack the card above Notes and the Prep agent.
+  date or rating. Phones stack the card above Notes and the Learn Assistant.
   **Notes** has two tabs: **this card** (a note per card) and **all prep** (one general notebook),
   saved as private Markdown files under `private_dir/notes/learn/`. The editor has line numbers and
-  a monospace font, about 13–15 lines tall (it scrolls inside, so the Prep agent stays in view below); it autosaves 1.5 s after the last change, when it loses focus, and on Cmd/Ctrl-S,
+  a monospace font, about 13–15 lines tall (it scrolls inside, so the Learn Assistant stays in view below); it autosaves 1.5 s after the last change, when it loses focus, and on Cmd/Ctrl-S,
   with "autosaved HH:MM" on its status line. A save over a note that changed meanwhile (an agent
   added to it) never overwrites it: an addition at the end is kept below the text being edited and
   saved again; any other change pauses autosave and shows the note as it is now, and the next Save
@@ -174,7 +174,7 @@ charts are server-rendered SVG):
   the agent tagged with that job, and follows the job into its application if it is marked
   Interested. Decided jobs also drop out of `/today`.
 - **Pipeline** (the default view of `/`): the pipeline list on the left with
-  the Agent box under it (below), and the selected application on the right (half and half
+  the Applications Assistant box under it (below), and the selected application on the right (half and half
   from 801px wide, a full-screen sheet on phones). A divider between the two columns moves the
   split: drag it, or focus it (Tab) and use ←/→ (Shift for bigger steps), Home/End for the
   limits, Enter or a double-click for half and half again. Each side keeps a minimum width (360px
@@ -199,7 +199,7 @@ charts are server-rendered SVG):
   Skipped and lists the job under New offers → Show skipped. An Interested or Applied application
   whose getjo job has since closed or expired keeps its place, with a "closed" badge on the row
   and in the panel. Everything else (tasks, comments, stage,
-  interview dates, tier, which CV was sent) is asked of the agent in the Agent box. Esc or ✕
+  interview dates, tier, which CV was sent) is asked of the agent in the Applications Assistant box. Esc or ✕
   closes the panel. Every task is added, changed or removed through the agent; tasks with no
   application are listed by `/task` and `/today`.
 - **Notes** (in every application's panel, first under Results): one place per job for what is
@@ -234,7 +234,7 @@ fit score, top gaps) with an **Open** link to a read-only view of the file.
 **Tailor CV** asks the agent for a copy of `cv.md` tailored to the job. Each version is its own
 file, `private_dir/cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md` (for example
 `CV_Globex_FDE_210926_2.md`), and every version is kept; `cv.md` is never changed. Changes are
-asked for in the Agent box and saved as the next version. Telling the agent which file was sent
+asked for in the Applications Assistant box and saved as the next version. Telling the agent which file was sent
 ("sent CV_Globex_FDE_210926_2") marks that version as sent.
 
 ### PDF of a tailored CV
@@ -271,9 +271,9 @@ Queued work is picked up three ways:
   settings, new requests are sent at once to that long-running dev3 task as
   `/research <id>`.
 
-### Agent box
+### Applications Assistant box
 
-Under the pipeline list is one **Agent** box: a conversation with the standing assistant for the
+Under the pipeline list is one **Applications Assistant** box: a conversation with the Applications Assistant for the
 whole search. Tick ☐ rows (Pipeline or New offers, up to 4, kept in the URL across views and
 reloads), the open panel's **Ask about this** or the ☐ by **My CV** to say what a message is
 about; "About:" above the input shows them as chips (× unticks one, **Clear all** all of them).
@@ -298,10 +298,17 @@ Typical messages:
   one line; the list, the panel and the conversation refresh on their own.
 
 The dashboard only stores the message and pings the assistant with the application (or
-"general") and message ids, never the text. It shows "Agent is working…" and refreshes when the
+"general") and message ids, never the text. It shows "Applications Assistant is working…" and refreshes when the
 reply arrives. Without an assistant the message waits. The SessionStart hook and `/today`
 report it, and `/ask` answers it in any Claude Code session. Pasted emails are treated as data:
 the agent never sends email, applies or contacts anyone.
+
+A message still waiting has **Cancel** under it, and **Resend** once it has waited 30 seconds
+(at once when the first ping failed; only with an assistant task set). Resend pings the assistant
+again about the same message; when dev3 cannot reach it the page says so ("Couldn't reach the
+Applications Assistant (seq N). Is its task running?"). Cancel keeps the message, greyed and
+marked Cancelled; it leaves every waiting count, and an assistant pinged later skips it. A reply
+already being written still arrives, marked "after cancel".
 
 ### My CV
 
@@ -312,7 +319,7 @@ saved version with its date and a one-line note of what changed, each with **Ope
 (a line diff against the current CV) and **Restore**. Restore keeps the text it replaces as a
 version, so the toast's **Undo** brings it back.
 
-There is no edit box. With the panel open the Agent box reads "About my CV": ask for the change
+There is no edit box. With the panel open the Applications Assistant box reads "About my CV": ask for the change
 ("add Terraform to my skills", "shorten my summary", "copy the summary from
 CV_Globex_FDE_210926_2 into my main CV"). The agent edits a draft and saves it with
 `cv save --note "…"`, which first saves the current text as a version, then replaces `cv.md`
@@ -345,9 +352,9 @@ they arrive:
    stop and start `python -m prep.web`). A message sent from a panel now shows up in that
    task's terminal as `/ask <app> <msg>`.
 
-### Prep agent (Learn)
+### Learn Assistant box
 
-The Learn page's **Prep agent** box is a study partner for the open card: one conversation for all of
+The Learn page's **Learn Assistant** box is a study partner for the open card: one conversation for all of
 Learn, each message tagged with the card that was open (a link back to it). Typical messages:
 
 - A question about the card ("explain this more simply", "give me an example"). The agent answers in
@@ -364,17 +371,19 @@ is saved (`cards add`) only after a "save card" in the box. **Add to notes** app
 card's note (the all-prep notes for a general reply) as a dated "Agent" block, at once and once per
 reply; a reply mentioning pay is refused.
 
-The dashboard stores each message (topic `learn`, with the card id) and pings the prep assistant
+The dashboard stores each message (topic `learn`, with the card id) and pings the Learn Assistant
 with ids only: `/learn-ask <card id> <message id>`. Without one the message waits; the SessionStart
 hook and `/today` report it, and `/learn-ask` answers it in any Claude Code session. Learn messages
-never show in the Applications Agent box.
+never show in the Applications Assistant box.
 
-### Prep assistant (optional)
+Resend and Cancel work here as in the Applications Assistant box.
 
-A second long-running dev3 task, separate from the standing assistant, that answers the Prep agent:
+### Learn Assistant (optional)
 
-1. On the project's dev3 board, create a task, for example titled "Prep assistant", with this
-   description: "Standing prep assistant for Hirey's Learn page. When messaged
+A second long-running dev3 task, separate from the Applications Assistant, that answers the Learn Assistant box:
+
+1. On the project's dev3 board, create a task, for example titled "Learn Assistant", with this
+   description: "Standing Learn Assistant for Hirey's Learn page. When messaged
    `/learn-ask <card> <msg>` or `/learn-ask general <msg>`, run /learn-ask. Between messages, wait.
    Never commit, push, apply to jobs or contact anyone." Start it with Claude Code and leave it
    running.
@@ -383,7 +392,7 @@ A second long-running dev3 task, separate from the standing assistant, that answ
    to both assistants):
 
    ```toml
-   prep_assistant_task = 24             # the prep assistant task's seq
+   prep_assistant_task = 24             # the Learn Assistant task's seq
    ```
 
 4. Restart the dashboard. A message sent from the Learn page now shows up in that task's terminal

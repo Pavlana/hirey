@@ -20,10 +20,10 @@ Keys:
     stale_days      a getjo job not listed for more than this many days reads "may be closed" (default 3)
     brief_auto_min_score  new offers scored at least this get a job brief queued in the background;
                     others when their panel is first opened (default 8, 1-10)
-    assistant_task  optional dev3 task seq of a standing assistant agent: newly queued research
+    assistant_task  optional dev3 task seq of the Applications Assistant (a standing agent): newly queued research
                     and CV fit requests are sent to it with `dev3 message` (unset: no message)
-    prep_assistant_task  optional dev3 task seq of a second standing assistant, for the Learn page's
-                    Prep agent: each new message there is sent to it as `/learn-ask` (unset: no message)
+    prep_assistant_task  optional dev3 task seq of the Learn Assistant (a second standing agent), for the Learn page's
+                    Learn Assistant: each new message there is sent to it as `/learn-ask` (unset: no message)
     assistant_project  optional dev3 project id, passed with --project when set (both assistants)
     dev3_bin        optional absolute path to the dev3 CLI (default: found on PATH)
     pdf_python      optional absolute path to a Python that has WeasyPrint (a venv outside any
@@ -72,7 +72,7 @@ ENV_KEYS = {
     "facts_file": "PREP_FACTS_FILE",
 }
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
-# on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the standing assistants named in the settings file. Path and number
+# on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the Applications and Learn Assistants named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
 CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin")
 
