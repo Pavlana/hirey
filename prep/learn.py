@@ -204,3 +204,26 @@ def set_status(conn: sqlite3.Connection, card_id: int, status: str) -> dict:
 
 def card_count(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
+
+
+def counts(conn: sqlite3.Connection) -> dict:
+    """All cards: done and todo (the Learn page's header and the nav badge)."""
+    total, done = conn.execute("SELECT COUNT(*), COALESCE(SUM(status = 'done'), 0) FROM cards").fetchone()
+    return {"done": done, "todo": total - done}
+
+
+def next_todo(conn: sqlite3.Connection, card_id: int) -> int | None:
+    """The track's next card to do after this one, wrapping to the start; None when no other card in
+    the track is to do."""
+    card = get_card(conn, card_id)
+    ids = [c["id"] for c in list_cards(conn, card["track_id"], "todo") if c["id"] != card_id]
+    order = [c["id"] for c in list_cards(conn, card["track_id"])]
+    after = [i for i in ids if order.index(i) > order.index(card_id)]
+    return (after or ids or [None])[0]
+
+
+def first_card(conn: sqlite3.Connection, track: str | int) -> int | None:
+    """Where a track opens: its first card to do, else its first card; None for an empty track."""
+    cards = list_cards(conn, track)
+    todo = [c for c in cards if c["status"] == "todo"]
+    return (todo or cards or [{"id": None}])[0]["id"]

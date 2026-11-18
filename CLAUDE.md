@@ -3,7 +3,7 @@
 A personal job-search and interview-prep workspace. It tracks applications, tasks and
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
 skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`: Applications,
-with Pipeline and New offers views, at `/`; Dashboard at `/dashboard`).
+with Pipeline and New offers views, at `/`; Dashboard at `/dashboard`; Learn at `/learn`).
 Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,

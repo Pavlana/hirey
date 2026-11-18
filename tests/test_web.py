@@ -5,14 +5,14 @@ from contextlib import closing
 from unittest import mock
 from urllib.parse import quote, urlencode
 
-from prep import db, web
+from prep import db, learn, web
 from prep.config import load_settings
 from prep.seed_example import build_getjo_db, build_prep_db
 from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/?view=offers", "/dashboard")
+PAGES = ("/", "/?view=offers", "/dashboard", "/learn", "/learn?card=1")
 PAY = "PAY-MARKER-31337"
 h = web.h
 
@@ -364,7 +364,7 @@ class OffersViewTest(WebTestCase):
                 self.assertEqual(status, 200)
                 self.assertIn("not available", body)
                 self.assertIn('data-view="offers" aria-current="true">New offers</a>', body)  # no count
-                self.assertNotIn("nav-count", body)
+                self.assertNotIn('title="New offers"', body)
                 status, _, body = self.get("/")
                 self.assertEqual(status, 200)
                 self.assertIn("Wayne Analytics", body)  # the pipeline does not need getjo
@@ -763,7 +763,7 @@ class LandingPageTest(WebTestCase):
     def test_nav_and_switch(self) -> None:
         body = self.get("/")[2]
         nav = body[body.index('<nav aria-label="Pages">'):body.index("</nav>", body.index('<nav aria-label="Pages">'))]
-        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Dashboard"])
+        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Dashboard", "Learn"])
         self.assertIn('<a href="/" aria-current="page">', nav)
         self.assertIn('<span class="nav-count" title="New offers">3</span>', nav)
         self.assertIn("<title>Applications · Hirey</title>", body)
@@ -810,7 +810,8 @@ class LandingPageTest(WebTestCase):
 
     def test_split_is_remembered_by_the_script(self) -> None:
         js = self.get("/static/app.js")[2]
-        self.assertIn('const SPLIT_KEY = "apps-split";', js)
+        self.assertIn("const SPLIT_KEY = split.dataset.splitKey;", js)  # apps-split here, learn-split on Learn
+        self.assertIn('data-split-key="apps-split"', web.SPLIT_HANDLE)
         self.assertIn("localStorage.getItem(SPLIT_KEY)", js)
         self.assertIn("localStorage.removeItem(SPLIT_KEY)", js)  # back to 50/50: the default, not stored
         self.assertIn('container.style.setProperty("--split-l"', js)  # CSSOM, allowed by the CSP
@@ -1184,3 +1185,145 @@ class RequestChecksTest(WebTestCase):
     def test_form_too_large(self) -> None:
         status, _, _ = web.handle(self.settings, "POST", "/applications/message", HOST, b"x" * (web.MAX_BODY + 1))
         self.assertEqual(status, 400)
+
+
+class LearnPageTest(WebTestCase):
+    """The Learn page from the fixture's example track: three cards, two in Basics, one in Trade-offs."""
+
+    def test_tracks_grid(self) -> None:
+        status, _, body = self.get("/learn")
+        self.assertEqual(status, 200)
+        self.assertIn('<a href="/learn" aria-current="page">', body)
+        self.assertIn("0 done · 3 to do · no interview booked", body)
+        self.assertIn('title="Cards to do">3<', body)  # the nav badge
+        self.assertIn("Caching for a toy shop", body)
+        self.assertIn("cover-teal", body)
+        self.assertIn("2 chapters · 3 cards", body)
+        self.assertIn("0 done / 3", body)
+        self.assertIn('href="/learn?track=caching-example"', body)
+        self.assertIn('class="theme-dusty-violet"', body)
+
+    def test_badge_on_every_page_and_gone_when_all_done(self) -> None:
+        self.assertIn('title="Cards to do">3<', self.get("/dashboard")[2])
+        with self.conn() as conn:
+            for card_id in (1, 2, 3):
+                learn.set_status(conn, card_id, "done")
+        self.assertNotIn('title="Cards to do"', self.get("/")[2])
+
+    def test_next_interview(self) -> None:
+        # application 1 (Acme Rockets) is at recruiter_call in the fixture
+        with self.conn() as conn:
+            db.add_interview(conn, 1, "2026-01-10", "recruiter_call")  # past: not shown
+            db.add_interview(conn, 1, "2026-01-23", "technical")  # a stage it is not in: not shown
+            db.add_interview(conn, 1, "2026-01-27", "recruiter_call")
+        self.assertIn("next interview: Acme Rockets · recruiter call · Tue 27 Jan", self.get("/learn")[2])
+        with self.conn() as conn:
+            db.set_interview_date(conn, 1, "recruiter_call", "2026-01-29", TODAY)  # rescheduled
+        self.assertIn("next interview: Acme Rockets · recruiter call · Thu 29 Jan", self.get("/learn")[2])
+        with self.conn() as conn:
+            db.move_application(conn, 1, "rejected", TODAY)
+        self.assertIn("no interview booked", self.get("/learn")[2])
+
+    def test_card_view(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        self.assertIn('class="learn-view"', body)
+        self.assertIn("<h2>Notes</h2>", body)
+        self.assertIn("<h2>Prep agent</h2>", body)
+        self.assertIn('data-split-key="learn-split"', body)
+        self.assertIn("data-learn-expand", body)
+        self.assertIn("What is a cache-aside read?", body)
+        self.assertIn("Card 1 of 3", body)
+        self.assertNotIn("timer", body)  # no timer for now
+        self.assertIn("Show answer", body)
+        self.assertIn("<li>Read the cache first</li>", body)  # the back as Markdown
+        self.assertIn("What happens on a cold start?", body)
+        self.assertIn('<a href="https://example.com/caching-notes" rel="noreferrer noopener" target="_blank">', body)
+        self.assertIn('action="/learn/done"', body)
+        self.assertIn('action="/learn/undo"', body)
+        self.assertIn('href="/learn?card=2" aria-label="Next card"', body)
+
+    def test_card_view_shows_tracks_row_with_current_track(self) -> None:
+        with self.conn() as conn:
+            learn.add_track(conn, "Other track", slug="other")
+        body = self.get("/learn?card=1")[2]
+        self.assertIn('class="tracks tracks-row"', body)
+        self.assertIn('<a class="track is-current" href="/learn?track=caching-example" aria-current="true">', body)
+        self.assertIn('<a class="track" href="/learn?track=other">', body)
+        self.assertLess(body.index("tracks-row"), body.index('class="learn-view"'))
+        self.assertNotIn("is-current", self.get("/learn")[2])  # the grid alone has no current track
+
+    def test_learn_sources_stay_out_of_the_answer_fold(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        fold = body[body.index('<details class="learn-answer"'):body.index("</details>")]
+        self.assertIn("Key points", fold)
+        self.assertIn("Follow-ups", fold)
+        self.assertNotIn("Example caching notes", fold)
+        box = body[body.index('<section class="learn-more"'):]
+        self.assertIn('<h3 id="learn-src">Learn</h3>', box)
+        self.assertIn("Example caching notes", box)
+        self.assertNotIn("Learn more", body)
+        self.assertNotIn("learn-more", self.get("/learn?card=2")[2])  # a card without sources has no box
+
+    def test_track_opens_first_card_to_do(self) -> None:
+        with self.conn() as conn:
+            learn.set_status(conn, 1, "done")
+        self.assertIn("When does a cache stampede happen?", self.get("/learn?track=caching-example")[2])
+
+    def test_unknown_card_or_track_is_404(self) -> None:
+        for path in ("/learn?card=999", "/learn?card=abc", "/learn?track=nope"):
+            with self.subTest(path=path):
+                self.assertEqual(self.get(path)[0], 404)
+
+    def test_done_opens_next_card_to_do(self) -> None:
+        status, headers, _ = self.post("/learn/done", {"card_id": "1"})
+        self.assertEqual((status, headers["Location"]), (303, "/learn?card=2&msg=card_done"))
+        with self.conn() as conn:
+            self.assertEqual(learn.get_card(conn, 1)["status"], "done")
+        self.assertIn("1 done · 2 to do", self.get("/learn")[2])
+        self.assertIn("1 done / 3", self.get("/learn")[2])
+        # after the last card the next to-do card wraps round to the start of the track
+        self.post("/learn/undo", {"card_id": "1"})
+        self.assertEqual(self.post("/learn/done", {"card_id": "3"})[1]["Location"], "/learn?card=1&msg=card_done")
+
+    def test_done_on_last_card_to_do_goes_to_tracks(self) -> None:
+        for card_id in ("1", "2"):
+            self.post("/learn/done", {"card_id": card_id})
+        self.assertEqual(self.post("/learn/done", {"card_id": "3"})[1]["Location"], "/learn?msg=track_done")
+
+    def test_undo_keeps_the_card_open(self) -> None:
+        self.post("/learn/done", {"card_id": "2"})
+        status, headers, _ = self.post("/learn/undo", {"card_id": "2"})
+        self.assertEqual((status, headers["Location"]), (303, "/learn?card=2&msg=card_todo"))
+        with self.conn() as conn:
+            self.assertEqual(learn.get_card(conn, 2)["status"], "todo")
+
+    def test_done_as_json(self) -> None:
+        status, _, body = self.post("/learn/done", {"card_id": "1"}, {**HOST, "Accept": "application/json"})
+        self.assertEqual(status, 200)
+        self.assertEqual(json.loads(body)["redirect"], "/learn?card=2")
+
+    def test_bad_posts(self) -> None:
+        self.assertEqual(self.post("/learn/done", {})[0], 400)
+        self.assertEqual(self.post("/learn/done", {"card_id": "999"})[0], 400)
+        cross = {**HOST, "Origin": "http://evil.example"}
+        self.assertEqual(self.post("/learn/done", {"card_id": "1"}, cross)[0], 403)
+        with self.conn() as conn:
+            self.assertEqual(learn.get_card(conn, 1)["status"], "todo")
+
+    def test_card_values_are_escaped(self) -> None:
+        with self.conn() as conn:
+            learn.add_track(conn, "<b>Track</b>", "<i>sub</i>", slug="evil")
+            card_id = learn.add_card(conn, {
+                "track": "evil", "chapter": "<u>ch</u>", "front": "<script>alert(1)</script>",
+                "back": "- <img src=x onerror=alert(2)>", "tags": ["<em>t</em>"], "follow_ups": ["<s>f</s>"],
+                "sources": [{"kind": "read", "title": "<q>src</q>", "url": "javascript:alert(3)", "why": "<w>"}]})
+        grid = self.get("/learn")[2]
+        self.assertIn("&lt;b&gt;Track&lt;/b&gt;", grid)
+        self.assertNotIn("<b>Track", grid)
+        body = self.get(f"/learn?card={card_id}")[2]
+        for raw, escaped in (("<script>alert", "&lt;script&gt;alert(1)&lt;/script&gt;"), ("<img src=x", "&lt;img src=x"),
+                             ("<em>t</em>", "&lt;em&gt;t&lt;/em&gt;"), ("<s>f</s>", "&lt;s&gt;f&lt;/s&gt;"),
+                             ("<q>src", "&lt;q&gt;src&lt;/q&gt;"), ("<u>ch", "&lt;u&gt;ch&lt;/u&gt;")):
+            self.assertNotIn(raw, body)
+            self.assertIn(escaped, body)
+        self.assertNotIn("javascript:", body)  # an unsafe source URL is text, never a link
