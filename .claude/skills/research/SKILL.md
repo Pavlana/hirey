@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks, tailored CVs and job briefs in Hirey — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Agent box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks, tailored CVs and job briefs in Hirey — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Applications Assistant box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research
@@ -35,7 +35,7 @@ If another session has already claimed the work, leave it alone.
 
 The dashboard queues a brief for every new offer scored at least `brief_auto_min_score` (8), for
 any other offer when its panel is first opened, and when the Write brief / Redo brief button is
-pressed. The standing assistant gets `/research briefs` (a count, no ids).
+pressed. The Applications Assistant gets `/research briefs` (a count, no ids).
 
 1. `python -m prep.cli brief next` claims the oldest waiting brief and prints the job, the format
    and the description from getjo.

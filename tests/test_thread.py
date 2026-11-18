@@ -1,5 +1,5 @@
 """The Agent thread on an application's side panel: storage, dashboard endpoints, the id-only
-ping to the standing assistant and the CLI used by /ask. Made-up text only; dev3 is never
+ping to the Applications Assistant and the CLI used by /ask. Made-up text only; dev3 is never
 called (subprocess is mocked)."""
 
 import io
@@ -102,7 +102,7 @@ class EndpointTest(WebTestCase):
         self.assertIn(f'<a class="msg-about" href="/?app={ACME}">Acme Rockets</a>', box)
         self.assertIn("About:</span><span class=\"muted\">the whole search", box)  # opening a job does not tick it
         self.assertIn('data-filter-chat="sel"', box)
-        self.assertIn('href="#agent" data-ask-agent>Ask the agent</a>', panel)  # phones: from the sheet to the box
+        self.assertIn('href="#agent" data-ask-agent>Ask the assistant</a>', panel)  # phones: from the sheet to the box
         css = self.get("/static/style.css")[2]
         self.assertIn("body.is-asking .panel { display: none; }", css)
         body = self.get("/")[2]  # no panel: about the whole search
@@ -146,7 +146,7 @@ class EndpointTest(WebTestCase):
         self.assertIn("data-pending", reply["html"])
         self.assertIn("&lt;script&gt;alert(1)&lt;/script&gt; &amp; &quot;quotes&quot;", reply["html"])
         self.assertNotIn("<script>", reply["html"])
-        self.assertIn("Waiting for the agent: run /ask", reply["html"], "no assistant configured")
+        self.assertIn("Waiting for the Applications Assistant: run /ask", reply["html"], "no assistant configured")
 
     def test_send_rejects_empty_long_and_unknown(self) -> None:
         json_headers = {**HOST, "Accept": "application/json"}
@@ -202,10 +202,10 @@ class EndpointTest(WebTestCase):
             db.add_message(conn, ACME, "Pending question")
         _, _, body = self.get(f"/?app={ACME}")
         self.assertIn("data-pending", body)
-        self.assertIn("Waiting for the agent: run /ask", body)
+        self.assertIn("Waiting for the Applications Assistant: run /ask", body)
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 42})
         _, _, body = self.get(f"/?app={ACME}")
-        self.assertIn("Agent is working…", body)
+        self.assertIn("Applications Assistant is working…", body)
 
     def test_linkify_escapes_and_keeps_only_http_links(self) -> None:
         html = web._linkify('see https://x.example/a?b=1&c="<img>" and javascript:alert(1), (https://y.example/p).')

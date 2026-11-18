@@ -1,4 +1,4 @@
-"""Ticking jobs for the Agent box: the sel query (chips, limit, Clear all, auto-tick), messages about
+"""Ticking jobs for the Applications Assistant box: the sel query (chips, limit, Clear all, auto-tick), messages about
 several targets (agent_message_targets, comparisons), their migration, the All | Selected filter, the
 id-only ping and `thread show` for a comparison. Made-up data only; dev3 is never called."""
 
@@ -95,7 +95,7 @@ class SelTest(WebTestCase):
     def test_panel_and_my_cv_ticks(self) -> None:
         body = self.get(url(app=str(ACME)))[2]
         panel = body[body.index('<aside class="panel"'):]
-        self.assertIn('data-sel="a:1" aria-label="Ask the agent about Acme Rockets — Platform Engineer"', panel)
+        self.assertIn('data-sel="a:1" aria-label="Ask the assistant about Acme Rockets — Platform Engineer"', panel)
         self.assertIn('<span class="sel-text">Ask about this</span>', panel)
         head = body[body.index('class="page-head-actions"'):]
         self.assertIn('data-sel="cv"', head[:400])

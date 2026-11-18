@@ -9,7 +9,7 @@
   // The Applications page's left column shows the pipeline or New offers (?view=). A bare "/"
   // (the nav link, a bookmark) opens the view last picked with the switch in this browser. Any
   // other URL says what to show (a message's job link, a filter), so it is never redirected.
-  // The jobs ticked for the Agent box are in the URL (?sel=a:3&sel=j:…&sel=cv) and kept here too, so a
+  // The jobs ticked for the Applications Assistant box are in the URL (?sel=a:3&sel=j:…&sel=cv) and kept here too, so a
   // bare "/" brings them back with the view.
   const VIEW_KEY = "apps-view";
   const SEL_KEY = "apps-sel";
@@ -206,7 +206,7 @@
   const box = refocus && document.querySelector('form[data-live-filters] input[name="q"]');
   if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
 
-  // --- Agent box --------------------------------------------------------------------------
+  // --- Applications Assistant box --------------------------------------------------------------------------
   // One conversation under the pipeline list. While a message waits for the agent, or the open
   // panel's application has queued agent work (research, CV fit, tailored CV: data-busy), poll
   // /applications/thread every few seconds (for at most a few minutes). When it is done, refresh
@@ -307,14 +307,14 @@
           poll = null;
           const replied = reply.messages !== before;
           await refreshApps();
-          toast(replied ? "The agent replied." : "The agent's work is in.");
+          toast(replied ? "The Applications Assistant replied." : "The assistant's work is in.");
           return;
         }
       } catch { /* the server restarted or is busy: try again */ }
       if (Date.now() - me.started > POLL_FOR_MS) {
         poll = null;
         const state = document.querySelector("#agent .thread-state");
-        if (state) state.textContent = "Still waiting. The reply shows here when the agent answers; reload to check.";
+        if (state) state.textContent = "Still waiting. The reply shows here when the Applications Assistant answers; reload to check.";
         return;
       }
       me.timer = setTimeout(tick, POLL_MS);
@@ -450,7 +450,7 @@
   });
 
   // --- Learn: the card view ------------------------------------------------------------------
-  // ⤢ Expand on the Prep agent folds Notes away; the choice is kept per browser. Hidden without the
+  // ⤢ Expand on the Learn Assistant folds Notes away; the choice is kept per browser. Hidden without the
   // script.
   const expand = document.querySelector("[data-learn-expand]");
   if (expand) {
@@ -551,7 +551,7 @@
         base = reply.text;
         dirty = true;
         onText();
-        toast("The agent added to this note; its addition is kept at the end.");
+        toast("The assistant added to this note; its addition is kept at the end.");
         again = true;
         return;
       }
@@ -588,7 +588,7 @@
       if (dirty && !conflict && navigator.sendBeacon) navigator.sendBeacon(form.action, new URLSearchParams(new FormData(form)));
     });
     // Back on the page with nothing unsaved, or told so (learn:refresh, after Add to notes or a
-    // prep agent reply): pick up what an agent added meanwhile.
+    // Learn Assistant reply): pick up what an agent added meanwhile.
     async function pickUp() {
       if (dirty || saving || conflict) return;
       try {
@@ -701,8 +701,8 @@
     saveAnswer = () => box.save("auto");
   }
 
-  // --- Learn: the Prep agent --------------------------------------------------------------------
-  // The conversation with the prep assistant (/learn-ask). While a message waits for it, poll
+  // --- Learn: the Learn Assistant --------------------------------------------------------------------
+  // The conversation with the Learn Assistant (/learn-ask). While a message waits for it, poll
   // /learn/thread every few seconds (for at most a few minutes), then swap in the conversation and
   // let the Notes editor pick up anything the agent added. Its forms post with data-ajax="learn".
   let learnPoll = null;
@@ -739,14 +739,14 @@
           learnPoll = null;
           swapLearn(reply.html);
           refreshNotes();
-          toast("The prep agent replied.");
+          toast("The Learn Assistant replied.");
           return;
         }
       } catch { /* the server restarted or is busy: try again */ }
       if (Date.now() - me.started > POLL_FOR_MS) {
         learnPoll = null;
         const state = learnChat()?.querySelector(".thread-state");
-        if (state) state.textContent = "Still waiting. The reply shows here when the prep agent answers; reload to check.";
+        if (state) state.textContent = "Still waiting. The reply shows here when the Learn Assistant answers; reload to check.";
         return;
       }
       me.timer = setTimeout(tick, POLL_MS);
@@ -774,7 +774,7 @@
       rowFor(panel)?.classList.add("is-focus");
     }
 
-    // Fetch `url` and swap in its panel and the Agent box's "About" line (and with `list`, the
+    // Fetch `url` and swap in its panel and the Applications Assistant box's "About" line (and with `list`, the
     // pipeline and the conversation too). The message being typed stays. The fetched HTML is the
     // server's own escaped page; scripts in a DOMParser document never run.
     function swap(doc, selector) {
@@ -913,7 +913,7 @@
       const tick = e.target.closest("a[data-sel], a[data-sel-clear]");
       if (tick) { e.preventDefault(); toggleSel(tick); return; }
       if (e.target.closest("[data-close-panel]")) { e.preventDefault(); document.body.classList.remove("is-asking"); closePanel(); return; }
-      if (e.target.closest("[data-ask-agent]")) { // phones: leave the sheet for the Agent box, About kept
+      if (e.target.closest("[data-ask-agent]")) { // phones: leave the sheet for the Applications Assistant box, About kept
         e.preventDefault();
         document.body.classList.add("is-asking");
         const box = document.getElementById("agent");
@@ -1124,21 +1124,21 @@
         toast(`v${form.elements.version.value} restored as v${reply.version}. The CV it replaced is kept as v${reply.previous}.`,
           reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
       } else if (mode === "mock") {
-        // The panel's Mock interview: the start message joins the Agent box, which waits for the first question.
+        // The panel's Mock interview: the start message joins the Applications Assistant box, which waits for the first question.
         const thread = document.querySelector(".agent [data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
         applyChatFilter();
         watchThread();
         toast(reply.message);
       } else if (mode === "learn") {
-        // The Prep agent: a message, Check my answer, Want a card for this?, or Add to notes.
+        // The Learn Assistant: a message, Check my answer, Want a card for this?, or Add to notes.
         swapLearn(reply.html);
         if (form.elements.body) form.elements.body.value = "";
         if (reply.note) refreshNotes();
         watchLearn();
         toast(reply.message);
       } else if (mode === "thread") {
-        // The Agent box: swap in the server-built, escaped conversation and wait for the reply.
+        // The Applications Assistant box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
         form.elements.body.value = "";

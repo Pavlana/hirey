@@ -1,5 +1,5 @@
-"""The Learn page's Prep agent: Learn messages in agent_messages (kept out of the Applications Agent box),
-the prep assistant's ping, the box and its actions (Check my answer, Want a card for this?, Add to notes),
+"""The Learn page's Learn Assistant: Learn messages in agent_messages (kept out of the Applications Assistant box),
+the Learn Assistant's ping, the box and its actions (Check my answer, Want a card for this?, Add to notes),
 and `cli learn-thread`. Fictional data only."""
 
 import io
@@ -114,7 +114,7 @@ class LearnBoxTest(LearnTestCase):
         self.ping.assert_called_once_with(self.settings, 2, msg["id"])
         self.assertIn("Why &lt;does&gt; a stampede happen?", reply["html"])  # escaped
         self.assertIn("data-pending", reply["html"])
-        self.assertIn("run /learn-ask", reply["html"])  # no prep assistant set
+        self.assertIn("run /learn-ask", reply["html"])  # no Learn Assistant set
         self.assertEqual(reply["redirect"], "/learn?card=2")
 
     def test_plain_form_redirects_back_to_the_card(self) -> None:
@@ -129,7 +129,7 @@ class LearnBoxTest(LearnTestCase):
     def test_working_state_with_a_prep_assistant(self) -> None:
         self.ask(1, "Explain TTL")
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "prep_assistant_task": 51})
-        self.assertIn("Prep agent is working…", self.get("/learn?card=1")[2])
+        self.assertIn("Learn Assistant is working…", self.get("/learn?card=1")[2])
 
     def test_thread_tags_cards_and_reply_actions(self) -> None:
         msg = self.ask(2, "Explain stampede")
@@ -183,7 +183,7 @@ class LearnActionsTest(LearnTestCase):
             cards = conn.execute("SELECT COUNT(*) FROM cards").fetchone()[0]
         self.assertEqual((ask["body"], ask["card_id"]), (db.LEARN_CARD.format(reply=reply), 1))
         self.assertEqual(cards, 3)  # nothing saved until the user says yes to the draft
-        # only a Prep agent reply qualifies: not the user's message, not an Applications message
+        # only a Learn Assistant reply qualifies: not the user's message, not an Applications message
         self.assertEqual(self.post_json("/learn/card", {"reply_id": str(msg)})[0], 400)
         with self.conn() as conn:
             other = db.add_message(conn, None, "q")
@@ -246,8 +246,8 @@ class LearnCliTest(LearnTestCase):
         with mock.patch("sys.stdin", io.StringIO("Covered: the read path.")):
             code, out, _ = self.run_cli("learn-thread", "reply", "--to", str(msg))
         self.assertEqual(code, 0)
-        self.assertIn("Prep agent", out)
-        self.assertIn("No Prep agent messages waiting.", self.run_cli("learn-thread", "pending")[1])
+        self.assertIn("Learn Assistant", out)
+        self.assertIn("No Learn Assistant messages waiting.", self.run_cli("learn-thread", "pending")[1])
         with self.conn() as conn:
             self.assertEqual(db.thread(conn, topic=db.LEARN)[-1]["card_id"], 1)
 
@@ -267,6 +267,6 @@ class LearnCliTest(LearnTestCase):
     def test_queue_and_today_lines(self) -> None:
         self.ask(1, "Quiz me")
         code, out, _ = self.run_cli("queue")
-        self.assertIn("Prep agent (Learn): 1 message waiting. Run /learn-ask to answer.", out)
+        self.assertIn("Learn Assistant: 1 message waiting. Run /learn-ask to answer.", out)
         self.assertNotIn("Agent thread", out)
         self.assertEqual(cli._thread_line([{"application_id": None, "topic": db.LEARN}]), "")

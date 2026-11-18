@@ -461,7 +461,7 @@ main:has(.apps) { max-width: 1880px; }
 /* Layout A (laptop and up): the Applications page is exactly the viewport's height and never
    scrolls. The title stays at the top; below it the left column holds the pipeline (what it
    needs, at most 45%; its rows scroll inside while the stage strip and the column headings stay)
-   and the Agent box (the rest, at least 55%: its messages scroll, its input stays at the bottom); the panel on the right scrolls
+   and the Applications Assistant box (the rest, at least 55%: its messages scroll, its input stays at the bottom); the panel on the right scrolls
    inside. Phones keep everything stacked. */
 @media (min-width: 801px) {
   main:has(.apps) { height: 100vh; padding-top: var(--space-5); padding-bottom: var(--space-4); gap: var(--space-3); }
@@ -545,7 +545,7 @@ main:has(.apps) { max-width: 1880px; }
 .panel-close { flex: none; font-size: 15px; }
 .panel-head-actions { flex: none; display: inline-flex; align-items: center; gap: 6px; }
 /* Phones only: the panel is a full-screen sheet, so "Ask the agent" hides it (body.is-asking) to
-   reach the Agent box under the list, About still ticked for this job; "Back to the job" returns. */
+   reach the Applications Assistant box under the list, About still ticked for this job; "Back to the job" returns. */
 .panel-ask, .agent-back { display: none; }
 .panel-body { display: grid; gap: var(--space-5); padding: var(--space-4) var(--space-5) var(--space-5); font-size: 13px; }
 .panel-body section { display: grid; gap: var(--space-2); }
@@ -648,7 +648,7 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .diff-key { padding: 0 8px; border-radius: var(--radius-sm); }
 .diff-gap { padding: 2px 0; text-align: center; color: var(--text-faint); background: var(--surface-2); border-block: 1px solid var(--border); }
 
-/* The Agent box under the pipeline list: one conversation, newest at the bottom, each message
+/* The Applications Assistant box under the pipeline list: one conversation, newest at the bottom, each message
    tagged with its job (or "all jobs"). The messages scroll inside the box, so the input stays in
    view. Bodies keep their line breaks; a long pasted email scrolls inside its own bubble. */
 .card-agent > .card-body { padding: var(--space-3) var(--space-4) var(--space-4); display: grid; gap: var(--space-3); }
@@ -670,7 +670,7 @@ a.msg-about:hover { color: var(--text); text-decoration: none; border-color: var
 .about-chip a { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; color: var(--accent-text); }
 .about-chip a:hover { background: var(--accent); color: var(--on-accent); text-decoration: none; }
 .about-clear { font-size: 12px; color: var(--text-muted); }
-/* The ☐ that ticks a row (or My CV, or the open panel) for the Agent box: a link, so it works without the script. */
+/* The ☐ that ticks a row (or My CV, or the open panel) for the Applications Assistant box: a link, so it works without the script. */
 .sel-tick { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-size: 12.5px; }
 .sel-tick:hover { text-decoration: none; color: var(--text); }
 .sel-tick .box { flex: none; width: 15px; height: 15px; border-radius: 4px; border: 1.5px solid var(--border-strong); display: grid; place-items: center; }
@@ -710,7 +710,7 @@ form.ask textarea::placeholder { color: var(--text-faint); }
 
 /* --- learn ----------------------------------------------------------------------
    /learn: a grid of tracks (a cover gradient with a progress ring, then title, counts and done / all).
-   A card opens the card view: Notes and the Prep agent on the left, the card on the right, with the
+   A card opens the card view: Notes and the Learn Assistant on the left, the card on the right, with the
    same divider as Applications (app.js, its own key). ⤢ Expand (.is-agent-wide) folds Notes away.
    Phones stack them, the card first. Cover colours are fixed (learn.TRACK_COVERS), not the theme. */
 .tracks { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
@@ -767,7 +767,7 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-current summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
 .ed-current pre { max-height: 220px; overflow: auto; margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
   background: var(--surface-2); border-radius: var(--radius-sm); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.ed-frame { display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(200px, 34vh, 340px); }  /* ~13-15 lines: the Prep agent stays in view */
+.ed-frame { display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(200px, 34vh, 340px); }  /* ~13-15 lines: the Learn Assistant stays in view */
 .ed-frame:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
 .ed-text:focus-visible { box-shadow: none; }
 .ed-gutter, .ed-text { margin: 0; font: 13px/1.6 var(--mono); tab-size: 4; }
@@ -784,7 +784,7 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-vim { padding: 1px 8px; border: 1px solid var(--border); border-radius: var(--radius-full); background: none;
   color: var(--text-muted); font: inherit; cursor: pointer; }
 .ed-vim:hover { color: var(--text); }
-/* The Prep agent: the Learn conversation (the Agent box's message styles), the reply actions under
+/* The Learn Assistant: the Learn conversation (the Applications Assistant box's message styles), the reply actions under
    each agent reply, and Check my answer under Your answer. */
 .learn-chat { display: grid; gap: var(--space-3); }
 .learn-chat .msgs { max-height: min(56vh, 600px); overflow-y: auto; padding-right: 4px; }

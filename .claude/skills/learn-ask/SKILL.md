@@ -1,6 +1,6 @@
 ---
 name: learn-ask
-description: Answer messages in the Prep agent box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English with a one-line "say it in the interview" version (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the prep assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Prep agent messages are waiting.
+description: Answer messages in the Learn Assistant box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English with a one-line "say it in the interview" version (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the Learn Assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Learn Assistant messages are waiting.
 ---
 
 # /learn-ask
@@ -29,7 +29,7 @@ python -m prep.cli learn-thread show MSG --claim
 
 It prints the card in full (front, back as key points, follow-ups, tags, the **Learn** sources
 with their links), the chapters of its track with their card ids, the paths of the private context
-files, the latest 30 messages of the Prep agent conversation, and the commands that answer it.
+files, the latest 30 messages of the Learn Assistant conversation, and the commands that answer it.
 "Nothing claimed" means another session has it: leave it alone.
 
 Read what the message needs, never more:
@@ -124,5 +124,5 @@ REPLY
 Plain text: the box shows it as written (links become clickable), so no Markdown bold, italics or
 headings; short paragraphs, `-` bullets and the plain labels above (`Covered:`, `Say it in the
 interview:`). **Add to notes** copies the reply into the note as it is. The reply
-shows under the message in the Prep agent box, with **Want a card for this?** and **Add to notes**
+shows under the message in the Learn Assistant box, with **Want a card for this?** and **Add to notes**
 under it.

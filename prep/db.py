@@ -82,7 +82,7 @@ RECOGNITION = ("well_known", "niche", "little_known")
 RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
 SIZE_BANDS = ("1-50", "51-250", "251-1000", "1001-5000", "5000+")
 FIT_GAP_SESSION = "cv fit"
-# The Agent conversation: the user writes, the standing assistant (/ask) replies. A user message is
+# The Agent conversation: the user writes, the Applications Assistant (/ask) replies. A user message is
 # about one application or the whole search (application_id NULL). It is pending until an /ask
 # session claims it (claims older than CLAIM_HOURS count as pending again) and answered once a
 # reply names it. Agent replies have no status and inherit the message's application.
@@ -97,9 +97,9 @@ MESSAGE_TOPICS = ("cv",)
 # The topic is set by add_compare only, never taken from a form.
 COMPARE = "compare"
 MAX_TARGETS = 4
-# The Learn page's Prep agent: its messages are topic LEARN (set by add_learn_message only, never from a
-# form) with the open card in card_id (NULL: about prep in general). The Applications Agent box, its
-# pending state and /ask never see them; a separate standing assistant answers them (/learn-ask).
+# The Learn page's Learn Assistant: its messages are topic LEARN (set by add_learn_message only, never from a
+# form) with the open card in card_id (NULL: about prep in general). The Applications Assistant box, its
+# pending state and /ask never see them; the Learn Assistant answers them (/learn-ask).
 LEARN = "learn"
 # Fixed messages built from ids only (the card's answer and the reply stay in their own places).
 LEARN_CHECK = ("Check my answer on this card (Your answer): what I covered, what I missed, "
@@ -431,7 +431,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
     # carries it too. Interested moves these messages to the new application and keeps the id.
     # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
-    # card_id: the Learn card open when a Prep agent message (topic "learn") was sent; the reply carries it.
+    # card_id: the Learn card open when a Learn Assistant message (topic "learn") was sent; the reply carries it.
     "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT", "card_id": "INTEGER"},
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
@@ -496,7 +496,7 @@ def _copy_application_messages(conn: sqlite3.Connection) -> None:
 
 def _backfill_message_targets(conn: sqlite3.Connection) -> None:
     """A message from before agent_message_targets gets one target row from its own columns (an
-    application with its getjo job id, a job, or a topic); general and Prep agent (LEARN) messages get none."""
+    application with its getjo job id, a job, or a topic); general and Learn Assistant (LEARN) messages get none."""
     conn.execute(
         "INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
         "SELECT m.id, m.application_id, COALESCE(m.getjo_job_id, a.getjo_job_id), m.topic "
@@ -2225,7 +2225,7 @@ def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | Non
 
 
 def message_count(conn: sqlite3.Connection, learn: bool = False) -> int:
-    """Messages in the Applications conversation, or with `learn` in the Prep agent's."""
+    """Messages in the Applications conversation, or with `learn` in the Learn Assistant's."""
     op = "=" if learn else "!="
     return conn.execute(f"SELECT COUNT(*) FROM agent_messages WHERE COALESCE(topic, '') {op} ?", (LEARN,)).fetchone()[0]
 
@@ -2308,7 +2308,7 @@ def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
 
 
 def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) -> int:
-    """A user message to the Prep agent (topic LEARN) while card `card_id` is open (None: prep in
+    """A user message to the Learn Assistant (topic LEARN) while card `card_id` is open (None: prep in
     general), pending until /learn-ask answers it. LookupError for an unknown card."""
     body = _message_body(body)
     if card_id is not None and conn.execute("SELECT 1 FROM cards WHERE id = ?", (card_id,)).fetchone() is None:
@@ -2385,7 +2385,7 @@ def _agent_message(conn: sqlite3.Connection, app_id: int | None, body: str, stam
         if cursor.rowcount != 1:
             raise ValueError(f"message {to_id} is already answered")
     card = (conn.execute("SELECT card_id FROM agent_messages WHERE id = ?", (to_id,)).fetchone()[0]
-            if to_id is not None else None)  # a Prep agent reply is about the question's card
+            if to_id is not None else None)  # a Learn Assistant reply is about the question's card
     cursor = conn.execute(
         "INSERT INTO agent_messages (application_id, getjo_job_id, topic, card_id, author, body, reply_to, created_at) "
         "VALUES (?, ?, ?, ?, 'agent', ?, ?, ?)",

@@ -1,6 +1,6 @@
 ---
 name: today
-description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), Prep agent messages waiting (/learn-ask), Learn cards done and to do, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
+description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), Learn Assistant messages waiting (/learn-ask), Learn cards done and to do, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
 ---
 
 # /today
@@ -21,11 +21,11 @@ description: Daily job-search brief from Hirey — applications that moved to No
      without asking the user to type anything, and give its short summary here. It reads
      cv.md and does web searches about the companies; that is expected.
    - **Agent thread** (only if the output has an "Agent thread" line): messages left in the
-     dashboard's Agent box are waiting. Run /ask now and give its one-line
+     dashboard's Applications Assistant box are waiting. Run /ask now and give its one-line
      summary per application.
-   - **Prep agent** (only if the output has a "Prep agent (Learn)" line): messages in the Learn
-     page's Prep agent box are waiting. Mention the count and that /learn-ask answers them (the
-     prep assistant does it when one is set); do not run it here.
+   - **Learn Assistant** (only if the output has a "Learn Assistant:" line): messages in the Learn
+     page's Learn Assistant box are waiting. Mention the count and that /learn-ask answers them (the
+     Learn Assistant task does it when one is set); do not run it here.
    - **Learn** (only if the output has a "Learn:" line): how many cards are done and how many
      are left to do, with the tracks, in one line.
    - **Due now**: tasks due today or overdue, oldest first, with the company when the task

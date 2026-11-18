@@ -461,7 +461,7 @@ class OfferPanelTest(WebTestCase):
         self.assertIn(f'data-job="{WONKA}" data-key="j:{WONKA}" data-company="wonka systems" data-role="senior python engineer" class="is-focus"', body)
         about = body[body.index('class="agent-about"'):]
         self.assertIn("the whole search", about[:400])  # opening only shows it; the row link ticks it
-        self.assertIn(f'data-sel="j:{WONKA}" aria-label="Ask the agent about Wonka Systems — Senior Python Engineer"', head)
+        self.assertIn(f'data-sel="j:{WONKA}" aria-label="Ask the assistant about Wonka Systems — Senior Python Engineer"', head)
         self.assertIn('data-view="offers" aria-current="true"', body)  # the list stays New offers
 
     def test_description_is_escaped_and_missing_ones_say_so(self) -> None:
@@ -968,7 +968,7 @@ class ApplicationsPageTest(WebTestCase):
         comments = panel[panel.index('class="panel-comments"'):panel.index('class="shortcuts"')]
         self.assertIn("Newer note", comments)  # the latest only
         self.assertNotIn("Older note", comments)
-        self.assertIn("1 earlier comment; ask the agent to list them.", comments)
+        self.assertIn("1 earlier comment; ask the assistant to list them.", comments)
         self.assertNotIn("<form", comments)  # read-only
         self.assertIn('href="/?stage=interviewing" aria-label="Close"', panel)
         self.assertIn('name="return" value="/?stage=interviewing&amp;app=3"', panel)
@@ -1228,7 +1228,7 @@ class LearnPageTest(WebTestCase):
         body = self.get("/learn?card=1")[2]
         self.assertIn('class="learn-view"', body)
         self.assertIn("<h2>Notes</h2>", body)
-        self.assertIn("<h2>Prep agent</h2>", body)
+        self.assertIn("<h2>Learn Assistant</h2>", body)
         self.assertIn('data-split-key="learn-split"', body)
         self.assertIn("data-learn-expand", body)
         self.assertIn("What is a cache-aside read?", body)

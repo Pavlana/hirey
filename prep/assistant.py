@@ -1,7 +1,7 @@
 """Tell a standing dev3 assistant agent about new work (optional).
 
 With `assistant_task` set, each application with new research, CV fit or tailored CV requests is sent
-`/research <app id>`, and each new message in the Agent box `/ask <app id> <message id>` (or
+`/research <app id>`, and each new message in the Applications Assistant box `/ask <app id> <message id>` (or
 `/ask job <message id>` for a job offer not yet tracked, `/ask cv <message id>` for the master CV,
 `/ask compare <message id>` for a question about several ticked jobs, `/ask general <message id>`
 for the whole search), and new job briefs `/research briefs`, through `dev3 message`, so that agent starts at once in a pane the user can watch. The
@@ -9,7 +9,7 @@ command is a fixed argument list built from database ids only (no shell, never f
 text). Any failure is logged and ignored: the work stays queued for the next session
 (SessionStart hook, /today).
 
-With `prep_assistant_task` set, each new message to the Learn page's Prep agent is sent to that second
+With `prep_assistant_task` set, each new message to the Learn page's Learn Assistant is sent to that second
 assistant as `/learn-ask <card id> <message id>` (or `/learn-ask general <message id>` with no card).
 """
 
@@ -126,7 +126,7 @@ def notify_message(settings: Settings, app_id: int | None, message_id: int, job:
 
 
 def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3: str) -> list[str]:
-    """The `dev3 message` argument list for a new Prep agent message: ids only, never its text."""
+    """The `dev3 message` argument list for a new Learn Assistant message: ids only, never its text."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
     about = str(int(card_id)) if card_id is not None else "general"
     subject = f"Learn question on card {int(card_id)}" if card_id is not None else "Learn question"
@@ -135,7 +135,7 @@ def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3
 
 
 def notify_learn(settings: Settings, card_id: int | None, message_id: int) -> int:
-    """Send `/learn-ask <card | general> <message id>` to the prep assistant; returns 1 if delivered.
+    """Send `/learn-ask <card | general> <message id>` to the Learn Assistant; returns 1 if delivered.
     Never raises."""
     if not settings.prep_assistant_task:
         return 0
