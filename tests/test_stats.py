@@ -24,13 +24,6 @@ class StatsTest(unittest.TestCase):
     def stage(self, app_id: int) -> dict:
         return next(a for a in stats.application_stages(self.conn) if a["id"] == app_id)
 
-    def test_applied_last_7_days(self) -> None:
-        for day in ("2026-03-04", "2026-03-05", "2026-03-11", "2026-03-12"):
-            self.add("applied", applied=day)
-        self.add("to_apply", applied=None)
-        # 03-05..03-11 inclusive: 03-04 is 7 days ago, 03-12 is in the future.
-        self.assertEqual(stats.applied_last_7_days(self.conn, TODAY), 2)
-
     def test_replied_definition(self) -> None:
         cases = {
             ("applied",): False,
@@ -85,43 +78,20 @@ class StatsTest(unittest.TestCase):
         self.add("applied", "technical")  # skipped recruiter_call: still counts as reached
         self.add("offer")
         self.add("to_apply", applied=None)
-        rows = {stage: (n, share) for stage, n, share in stats.conversion(stats.application_stages(self.conn))}
-        self.assertEqual(rows["applied"], (4, 1.0))
-        self.assertEqual(rows["recruiter_call"], (3, 0.75))
-        self.assertEqual(rows["technical"], (2, 0.5))
-        self.assertEqual(rows["offer"], (1, 0.25))
-        self.assertEqual([s for s, _, _ in stats.conversion([])], list(stats.FUNNEL))
+        self.add("applied", "final")  # final counts as an interview
+        rows = {step: (n, share) for step, n, share in stats.stage_funnel(stats.application_stages(self.conn))}
+        self.assertEqual(rows, {"Applied": (5, 1.0), "Screen": (4, 0.8), "Interview": (3, 0.6), "Offer": (1, 0.2)})
+        self.assertEqual(stats.stage_funnel([]), [("Applied", 0, None), ("Screen", 0, None), ("Interview", 0, None),
+                                                  ("Offer", 0, None)])
 
-    def test_counts_by_status_and_tier(self) -> None:
-        self.add("applied", tier="A")
-        self.add("applied", tier="A")
-        self.add("rejected", tier=None)
-        apps = stats.application_stages(self.conn)
-        self.assertEqual(stats.counts_by_status(apps), [("applied", 2), ("rejected", 1)])
-        self.assertEqual(stats.counts_by_tier(apps), [("A", 2), ("unset", 1)])
-        self.assertEqual(stats.counts_by_tier_status(apps),
-                         [("A", [("applied", 2)]), ("unset", [("rejected", 1)])])
+    def test_an_interview_recorded_counts_as_a_reply(self) -> None:
+        app_id = self.add("applied")
+        self.assertFalse(self.stage(app_id)["replied"])
+        self.conn.execute("INSERT INTO interviews (application_id, date) VALUES (?, '2026-03-05')", (app_id,))
+        self.assertTrue(self.stage(app_id)["replied"])
 
     def test_per_week(self) -> None:
         for day in ("2026-03-09", "2026-03-11", "2026-03-02", "2026-01-01"):
             self.add("applied", applied=day)
         weeks = stats.applications_per_week(self.conn, TODAY, weeks=3)
         self.assertEqual(weeks, [("2026-02-23", 0), ("2026-03-02", 1), ("2026-03-09", 2)])
-
-    def test_practice(self) -> None:
-        self.assertEqual(stats.practice(self.conn),
-                         {"sessions": 0, "mock": 0, "real": 0, "open_gaps": 0, "areas": []})
-        db.record_session(self.conn, "mock", "2026-03-05", scores={"Coding": 2, "design": 3}, gaps=["Big O"])
-        db.record_session(self.conn, "real", "2026-03-09", scores={"coding": 4})
-        db.record_session(self.conn, "mock", "2026-03-01", scores={"coding": 1})  # recorded late, dated first
-        db.add_gap(self.conn, "Kafka", "2026-03-02", "cv fit")
-        p = stats.practice(self.conn)
-        self.assertEqual((p["sessions"], p["mock"], p["real"], p["open_gaps"]), (3, 2, 1, 2))
-        self.assertEqual(p["areas"], [
-            ("coding", [("2026-03-01", 1), ("2026-03-05", 2), ("2026-03-09", 4)]),  # case ignored, date order
-            ("design", [("2026-03-05", 3)]),
-        ])
-
-
-if __name__ == "__main__":
-    unittest.main()

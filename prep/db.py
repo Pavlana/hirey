@@ -416,6 +416,51 @@ CREATE TABLE IF NOT EXISTS card_source_done (
     PRIMARY KEY (card_id, source_key)
 );
 
+-- Claude Code token usage (prep/usage.py), read from transcripts for the Metrics page. Numbers, ids and
+-- the working directory only: message content is never read into these tables.
+-- usage_files: how far each transcript was read (byte offset after the last complete line).
+CREATE TABLE IF NOT EXISTS usage_files (
+    path   TEXT PRIMARY KEY,
+    size   INTEGER NOT NULL,
+    offset INTEGER NOT NULL
+);
+
+-- One row per API response (message.id): a streamed response is written on several lines, so each
+-- token count keeps its largest value. day is the local date of the first line seen.
+CREATE TABLE IF NOT EXISTS usage_messages (
+    message_id  TEXT PRIMARY KEY,
+    ts          TEXT NOT NULL,
+    day         TEXT NOT NULL,
+    session     TEXT,
+    cwd         TEXT NOT NULL DEFAULT '',
+    model       TEXT,
+    input       INTEGER NOT NULL DEFAULT 0,
+    output      INTEGER NOT NULL DEFAULT 0,
+    cache_read  INTEGER NOT NULL DEFAULT 0,
+    cache_write INTEGER NOT NULL DEFAULT 0
+);
+
+-- dev3 projects (`dev3 projects list`): name a session's project from its working directory.
+CREATE TABLE IF NOT EXISTS usage_projects (
+    project_id TEXT PRIMARY KEY,
+    name       TEXT,
+    path       TEXT NOT NULL
+);
+
+-- dev3 tasks seen in usage (from `dev3 tasks list` / `task show`), cached so the page stays fast.
+CREATE TABLE IF NOT EXISTS usage_tasks (
+    task_id    TEXT PRIMARY KEY,   -- the full dev3 task id
+    project_id TEXT,
+    seq        INTEGER,
+    title      TEXT,
+    task_type  TEXT,
+    status     TEXT,
+    pr_merged  INTEGER NOT NULL DEFAULT 0,
+    fetched_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_messages(day);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);

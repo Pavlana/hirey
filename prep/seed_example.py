@@ -25,6 +25,7 @@ from prep.config import REPO_ROOT
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "example.json"
 EXAMPLE_PREP_DB = REPO_ROOT / "data" / "example.db"
 EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
+EXAMPLE_CLAUDE_DIR = REPO_ROOT / "data" / "example-claude-projects"
 
 log = logging.getLogger("prep.seed")
 
@@ -134,15 +135,78 @@ def build_prep_db(path: Path, data: dict) -> None:
         conn.close()
 
 
+def _turn(message_id: str, ts: str, session: str, cwd: str, context: int, cw_share: float) -> list[dict]:
+    """Transcript lines for one made-up turn: the user's line, then the response written twice (as a
+    streamed response is) with the same message id. The content is a placeholder."""
+    cache_write = int(context * cw_share)
+    cache_read = int(context * .97) - cache_write
+    usage = {"input_tokens": context - cache_read - cache_write, "cache_read_input_tokens": cache_read,
+             "cache_creation_input_tokens": cache_write}
+    base = {"timestamp": ts, "cwd": cwd, "sessionId": session}
+    return [
+        {**base, "type": "user", "message": {"role": "user", "content": "example prompt"}},
+        {**base, "type": "assistant", "message": {"id": message_id, "model": "claude-example-1", "role": "assistant",
+                                                   "content": [{"type": "text", "text": "example"}],
+                                                   "usage": {**usage, "output_tokens": 40}}},
+        {**base, "type": "assistant", "message": {"id": message_id, "model": "claude-example-1", "role": "assistant",
+                                                   "content": [{"type": "text", "text": "example reply"}],
+                                                   "usage": {**usage, "output_tokens": 1500}}},
+    ]
+
+
+def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -> None:
+    """Made-up Claude Code transcripts under `root` (replaced) for the 14 days up to `anchor`, and the
+    dev3 projects and tasks they belong to in prep.db at `prep_path`, so no dev3 is needed."""
+    from prep import usage  # here, not at the top: usage imports the assistant module
+    import shutil
+    shutil.rmtree(root, ignore_errors=True)
+    paths = {p["id"]: p["path"] for p in spec["projects"]}
+    sources = [(t, f"{usage.WORKTREES}/{paths[t['project']].strip('/').replace('/', '-')}/{t['id'][:8]}/worktree")
+               for t in spec["tasks"]]
+    sources += [(c, paths[c["project"]]) for c in spec.get("checkouts", [])]
+    first = anchor - timedelta(days=13)
+    for n, (src, cwd) in enumerate(sources):
+        d0, d1 = src["days"]
+        c0, c1 = src["context"]
+        folder = root / ("-" + cwd.strip("/").replace("/", "-").replace("_", "-"))
+        folder.mkdir(parents=True, exist_ok=True)
+        session = f"00000000-0000-4000-8000-{n:012d}"
+        lines = []
+        for day in range(d0, d1 + 1):
+            when = first + timedelta(days=day)
+            turns = src["turns"] // (3 if when.weekday() >= 5 else 1)
+            for k in range(turns):
+                progress = ((day - d0) + k / max(turns, 1)) / max(d1 - d0 + 1, 1)
+                ts = f"{when.isoformat()}T{9 + k * 9 // max(turns, 1):02d}:{(k * 7) % 60:02d}:00Z"
+                lines += _turn(f"msg_example_{n}_{day}_{k}", ts, session, cwd, int(c0 + (c1 - c0) * progress),
+                               src.get("cache_write_share", .04))
+        with (folder / f"{session}.jsonl").open("w", encoding="utf-8") as f:
+            f.writelines(json.dumps(line) + "\n" for line in lines)
+    conn = db.connect(prep_path)
+    try:
+        stamp = "2999-01-01T00:00:00+00:00"  # never stale: example tasks are not looked up in dev3
+        for p in spec["projects"]:
+            conn.execute("INSERT OR REPLACE INTO usage_projects VALUES (?, ?, ?)", (p["id"], p["name"], p["path"]))
+        for t in spec["tasks"]:
+            conn.execute("INSERT OR REPLACE INTO usage_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                         (t["id"], t["project"], t["seq"], t["title"], t["type"], t["status"], int(t["pr_merged"]), stamp))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def main() -> int:
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
     data = load_fixtures()
     data = shift_dates(data, (date.today() - date.fromisoformat(data["_anchor_date"])).days)
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
-    log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
+    build_usage_example(EXAMPLE_CLAUDE_DIR, EXAMPLE_PREP_DB, data["usage"], date.today())
+    log.info("wrote %s, %s and %s/", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT),
+             EXAMPLE_CLAUDE_DIR.relative_to(REPO_ROOT))
     log.info("try: PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
     log.info("or:  PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
+    log.info("Metrics' Usage tab on the example transcripts: see docs/usage.md, \"Example data\"")
     return 0
 
 

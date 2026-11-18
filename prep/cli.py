@@ -79,7 +79,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research
+from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research, usage
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -711,6 +711,15 @@ def _gap_line(g: dict) -> str:
 
 FEEDBACK_FIELDS = ("getjo_job_id", "decision", "reason", "comment", "decided_at", "company", "title",
                    "location", "score", "url", "source")
+
+
+def cmd_usage(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """Read new Claude Code transcript lines into prep.db (token counts only), as the Usage tab does on
+    each load; useful once before the first page load, which reads every transcript."""
+    found = usage.scan(conn, settings.claude_projects_dir)
+    count = conn.execute("SELECT COUNT(*) FROM usage_messages").fetchone()[0]
+    print(f"Read {found['read']} of {found['files']} transcript files; {count} responses stored.")
+    return 0
 
 
 def cmd_feedback(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -2111,6 +2120,11 @@ def build_parser() -> argparse.ArgumentParser:
     f = fsub.add_parser("export", help="write private_dir/feedback/job_decisions.jsonl")
     f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")
     p.set_defaults(func=cmd_feedback)
+
+    p = sub.add_parser("usage", help="Claude Code token usage for the Metrics page")
+    usub = p.add_subparsers(dest="usage_cmd", required=True)
+    usub.add_parser("scan", help="read new transcript lines (counts only) from claude_projects_dir")
+    p.set_defaults(func=cmd_usage)
 
     p = sub.add_parser("queue", help="read-only: open research / CV fit / tailoring requests (counts and ids)")
     p.set_defaults(func=cmd_queue, read_only=True)

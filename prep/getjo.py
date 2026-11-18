@@ -143,6 +143,26 @@ def matches(
     return found[:limit] if limit is not None else found
 
 
+def source_stats(conn: sqlite3.Connection, applied_ids: set[str],
+                 threshold: int = DEFAULT_THRESHOLD) -> list[dict]:
+    """Per job board (getjo's source): jobs seen, average score of the scored ones (None if none),
+    strong matches (score >= threshold) and how many of `applied_ids` (getjo ids of applications
+    sent) came from it. Most strong matches first."""
+    out: dict[str, dict] = {}
+    for row in conn.execute("SELECT id, source, score FROM jobs"):
+        s = out.setdefault(row["source"] or "unknown", {"source": row["source"] or "unknown", "seen": 0,
+                                                        "scored": 0, "score_sum": 0, "strong": 0, "applied": 0})
+        s["seen"] += 1
+        if isinstance(row["score"], int):
+            s["scored"] += 1
+            s["score_sum"] += row["score"]
+            s["strong"] += row["score"] >= threshold
+        s["applied"] += row["id"] in applied_ids
+    rows = [{"source": s["source"], "seen": s["seen"], "avg_score": s["score_sum"] / s["scored"] if s["scored"] else None,
+             "strong": s["strong"], "applied": s["applied"]} for s in out.values()]
+    return sorted(rows, key=lambda r: (-r["strong"], -r["applied"], r["source"]))
+
+
 def now_stamp() -> str:
     """The current UTC time in getjo's stamp format."""
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")

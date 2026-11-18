@@ -27,7 +27,8 @@
 │   agent_message_targets,            │
 │   job_briefs, brief_requests,       │
 │   tracks, chapters, cards           │
-│ prep/stats.py   dashboard numbers   │
+│ prep/stats.py   Metrics numbers     │
+│ prep/usage.py   Claude token usage  │
 │ prep/cli.py     commands            │
 │ prep/web.py     dashboard server    │
 │ prep/research.py results files      │
@@ -647,12 +648,12 @@ are shown verbatim (step 15), so they may contain pay the user pasted. Statuses 
 (`db.STATUS_LABELS`): `to_apply` reads "Interested" in badges, charts and CLI output; the stored
 value and the `--status` choice stay `to_apply`. Two static files are
 served from `prep/static/`: `style.css` (design tokens; one dark grey theme where each page has
-its own muted hue: Applications ochre, Dashboard sage (dark olive to pale lime);
+its own muted hue: Applications ochre, Metrics sage (dark olive to pale lime);
 six more themes (dusty blue, eucalyptus, slate indigo, dusty violet, mauve rose, terracotta) are ready for new pages,
 each as ten shades `s1`–`s10` set by a `theme-*` class on `<body>` and used by badges, charts,
 buttons and meters; installed Helvetica Neue-style fonts only; responsive down to phone
-width) and `app.js`. Charts come from `prep/charts.py`: server-rendered inline SVG (donut,
-treemap, funnel, columns, trend) coloured by shade-step CSS classes, so they need no script and no inline
+width) and `app.js`. Charts come from `prep/charts.py`: server-rendered inline SVG (funnel,
+columns, stacked columns, share bar, trend) coloured by shade-step CSS classes, so they need no script and no inline
 style, and every label is escaped. The site is branded "Hirey" in the page title and sidebar. The
 Content-Security-Policy allows only these same-origin files (`script-src 'self'`, no inline
 script or style), and nothing is fetched from another host (no CDN, fonts or chart libraries).
@@ -706,7 +707,7 @@ that changes nothing until posted, and every form posts normally and redirects.
 
 | Page | Shows | Writes |
 |------|-------|--------|
-| Dashboard `/dashboard` | tiles (applied in the last 7 days vs `weekly_target`, total, reply rate + warning), a donut of applications by status, a treemap of tiers split by status, a stage-conversion funnel, applications per week (columns with a target line), last 8 weeks; then Practice: tiles for sessions (mock · real) and open gaps (CV fit gaps included), and a table of scores by area (`stats.practice`): a 1–5 trend line per area (`charts.trend`), session count, first, latest and change; session file paths are never shown. Apart from Practice it counts applications only, never tasks: tasks are a to-do list on the Applications page. `/progress` redirects here. The nav shows the number of new offers next to Applications on every page | — |
+| Metrics `/metrics` | Two tabs (`tab=usage`, the default, or `applications`; `web.metrics_filters`), pill links next to the title; `/dashboard` and `/progress` redirect here. **Usage** (`web.usage_tab`): `usage.sync` first (reads appended transcript lines, refreshes dev3 task details when needed), then `usage.report` for the filters `project` (a project name or `all`; default this repo's project, `usage.home_project`) and `days` (7, 14 or 30): tiles (tokens, turns, sessions; cache-read share; an API-equivalent cost only with `prices` set; how many assistants are over `context_warn_tokens`), tokens per day (`charts.stacked_columns`, full card width), top tasks by tokens, who uses what (`charts.share_bar` and a table), context size per turn (each day's last turn, `charts.trend`), and Where to save (rules in `usage.report`). **Applications** (`web.applications_tab`): tiles (sent, response rate + warning, interviews, offers), applications per week (12 weeks, target line, full width), the four-step funnel (`stats.stage_funnel`) and job boards (`web.boards_table`: `getjo.source_stats` over the read-only getjo db). Never reads pay; no message content. The nav shows the new offers count next to Applications on every page | — |
 | New offers `/?view=offers` (the old Job Offers page) | the left column's other view on Applications (the panel, Applications Assistant box and layout below are shared). Open getjo jobs (`getjo.matches`, step 19) at or above `score` (1–10, default 7; unscored jobs never pass) that are neither tracked nor decided (`db.excluded_job_ids`; decided jobs live in the pipeline), newest day first (`first_seen`), then highest score (`web.offer_rows`). Filters in the list header, a GET form: `score`, `loc` (repeatable: london, remote, other — from `getjo.location_tags`: word "london"; words remote/anywhere/work from home/wfh; neither or empty is other; a job can be both) and `q` (company or role, case-insensitive substring). `skipped=1` (Show skipped / Hide skipped) lists the skipped jobs instead, at any score, open or closed, latest skip first, with the reason, the comment and Undo skip; a skipped job getjo has dropped shows from its snapshot. Rows: score, company (a link to the offer panel), role with the chips (closed, may be closed, expires in N days) and location; the whole row opens the panel. `job=<getjo id>` opens the offer panel (a tracked job opens its application's panel instead; an unknown id is ignored): company, role, score, location, seen date, the posting link (http(s) only), the chips; Interested · Skip (a skipped job: "Skipped · reason" and Undo skip); the "Ask about this" tick; and the job brief, or while there is none the description from getjo made readable (step 21; `getjo.job_description`, read-only, escaped; a job getjo no longer has says so). Each row starts with its ☐ tick (step 15). The switch's count and the nav count are the open new offers at the score in effect, ignoring location and search (default 7, as `/today`). A message instead of the list if getjo's database is missing or unreadable; the pipeline still works. `/offers` and `/matches` redirect here with their query mapped (`company`/`role` to `q`, `show=skipped` to `skipped=1`, `show=interested\|applied` to the pipeline's `stage`). `GET /offers/skip?job_id=…` is the no-script skip form | POST `/offers/interested`, `/offers/uninterested`, `/offers/skip`, `/offers/unskip`, `/offers/brief` (Write brief / Redo brief, step 21; also on an application's panel), and `/offers/apply` (also the old `/matches/apply`; no button, kept for old forms). Interested and `/offers/apply` redirect to `/?app=ID` (JSON: `redirect`, `app_id`, `created`), built from the application id only; skip and unskip return to the `return` URL |
 | Learn `/learn` | "X done · Y to do" (`learn.counts`) and the next interview on or after today (`db.next_interview`: company, stage, day) as the subtitle; the nav's Learn badge is the cards to do on every page. Without `card`/`track`: a grid of tracks (`learn.list_tracks`): a cover gradient class per `learn.TRACK_COVERS` key, a progress ring (SVG with `pathLength` and `stroke-dasharray` attributes, no inline style), title, subtitle, chapters · cards, "X done / Y". `track=SLUG\|ID` opens the track's first card to do, else its first card (`learn.first_card`); a track with no cards shows the grid with a notice. `card=ID`: the tracks again as a compact row (`.tracks-row`, the card's track `.is-current` with `aria-current`), then the card view (`web._learn_view`): the left column holds Notes and the Learn Assistant card (`web._learn_agent`, below), a divider (`web._split_handle`, the Applications code in `app.js` with `data-split-key="learn-split"`), and the card: track · chapter, "Card N of M" with ← → links, tags, the question (escaped, line breaks kept), Show answer (a `<details>`: the back through `prep/md.py` without links, and the follow-ups), the Learn box outside the fold (`web._learn_sources`, `#learn-sources`: "Learn · N / M done", each source with a tick form (`.tick` button, `role="checkbox"`) posting the state wanted, ticked rows `.is-done`: muted and lightly struck through; links with `_link`: http(s) only, new tab; left out when a card has none), and Done / Not done yet forms. ⤢ Expand toggles `.is-agent-wide` (Notes hidden), kept as `learn-agent-expanded` in `localStorage`. Notes (`web._notes_panel`): tabs "this card" (`card=ID`) and "all prep" (`&notes=all`) as links, and the editor (`web._notes_editor`, a form): a line-number gutter, a no-wrap monospace textarea about 13–15 lines tall (`clamp(200px, 34vh, 340px)`, so the Learn Assistant stays in view) (escaped, with one leading newline the parser drops), the note's stamp, and a status line (mode, `notes/learn/…` file, save time, line,col, the vim keys toggle). `app.js` (`autosaving()`, shared with Your answer) autosaves 1.5 s after the last change, on blur and on Cmd/Ctrl-S, posting as JSON, and sends a last save with `sendBeacon` on `pagehide`; a refused save whose current note starts with the text the editor last had (an agent append) is merged (the addition below the user's text) and saved again, any other change pauses autosave and shows the current note (the next explicit save replaces it). Coming back to the tab with nothing unsaved fetches GET `/learn/notes?card=ID[&note=all]` (text and stamp) and picks up an addition. Vim keys: `static/vim.js` is pure key handling (`HireyVim.step(state, key)` → state, handled, save, changed; tested under node by `tests/vim_test.js` when node is installed), `app.js` feeds it keydowns and shows the normal-mode cursor as a one-character selection; off by default, kept as `learn-vim` in `localStorage`. On the card, between the question and Show answer, Your answer (`web._answer_box`): a plain textarea from six rows that `app.js` grows with its text, saved by the same `autosaving()` (note `answer`) with "saved HH:MM"; no vim keys; left out without `private_dir`. Without `private_dir` Notes says so. An unknown or malformed id is a 404 | POST `/learn/notes` (`card_id`, `note` card, all or answer, `stamp`, `text`: `learnnotes.save`; a stale stamp is a 400 whose JSON adds `html` (the editor or answer box with the user's text under the current note), `stamp` and `text` (the current note); plain form posts redirect to the tab), POST `/learn/done` (`card_id`: marks it done; redirects to the next card to do in the track after it, wrapping round (`learn.next_todo`), or to `/learn` with "Every card in that track is done"), `/learn/undo` (`card_id`: back to do; the card stays open), `/learn/source` (`card_id`, `key`, `done` 1 or 0: ticks or unticks one source, `learn.set_source_done`; an unknown key is a 400; plain posts redirect to the card, JSON adds `html`, the Learn box, which `app.js` swaps in (`data-ajax="source"`) keeping focus on the tick). JSON gives `redirect` |
 | Research file `/research/file?app=ID&kind=research\|cv_fit\|tailor[&v=N]` | the application's company profile, CV fit file or tailored CV (the latest, or version N), read-only: front matter as a table (any pay/salary key left out) and the body as minimal Markdown (headings, lists, paragraphs, all escaped). Only a path recorded in prep.db that resolves inside `private_dir` is read; anything else (no record, no `private_dir`, a path outside it) is a 404. A missing file shows "File missing" | — |
@@ -747,6 +748,30 @@ request line and status only, never request bodies or skip comments.
   (date, then id), areas grouped ignoring case with the first spelling shown. **Open gaps** counts
   every open gap, including those from CV fit checks.
 
+### Token usage (prep/usage.py)
+
+The Metrics page's Usage tab reads Claude Code transcripts (`claude_projects_dir`, every `*.jsonl`
+below it) read only. A line is decoded only when it contains the text `"usage"`; of it only the
+timestamp, `cwd`, `sessionId`, `message.id`, `message.model` and the four token counts are copied out,
+and message content is never stored, logged or shown. `usage_files` keeps each file's byte offset
+after its last complete line, so a page load reads only appended bytes (a file that shrank is read
+again). `usage_messages` has one row per `message.id`: a streamed response spans several lines with
+the same id, and each count keeps its largest value, so lines read twice never count twice. Days are
+local dates.
+
+`usage.place` maps a working directory to (project, 8-char task id): dev3 worktrees
+(`~/.dev3.0/worktrees/<folder>/<id>/…` or `<checkout>/.dev3/worktrees/<id>/…`), else the dev3 project
+whose checkout holds it, else the folder name. `usage.refresh_tasks` fills `usage_projects` and
+`usage_tasks` from `dev3 projects list`, `dev3 tasks list --project P` (only tasks with usage) and
+`dev3 task show` (PR merged, open tasks only), with ids only on the command line, when a task is
+unknown or the cache is older than 10 minutes, and not again within a minute of a failure. Roles:
+`assistant_task` / `prep_assistant_task` / `coordinator_task` seqs in this repo's project (or
+`assistant_project`), dev3 type coordinator, other tasks (build tasks), main checkouts. A turn is one
+API response; context size is input + cache read + cache write. Where to save: an assistant or
+coordinator whose latest turn is over `context_warn_tokens`; an open task whose PR merged; a session
+whose cache writes are at least 25% of its tokens and 1M tokens. The cost estimate sums each model's
+counts times `prices` (longest matching model prefix).
+
 ### launchd
 
 `launchd/uk.inter-prep.dashboard.plist.example` runs `.venv/bin/python -m prep.web` (the main
@@ -754,13 +779,15 @@ checkout's venv, so a Homebrew `python3` update leaves it alone) from the main
 checkout with `RunAtLoad` and `KeepAlive`, so the dashboard starts at login and restarts if it
 exits. Output goes to the main checkout's `data/dashboard.log` (gitignored). launchd starts
 processes without a shell profile, so the server finds `prep_db` and `getjo_db` through
-`~/.config/inter_prep/settings.toml`. `http://localhost:8765/` opens Applications; the Dashboard is at
-`/dashboard`. Install and uninstall steps are in `docs/usage.md`.
+`~/.config/inter_prep/settings.toml`. `http://localhost:8765/` opens Applications; Metrics is at
+`/metrics`. Install and uninstall steps are in `docs/usage.md`.
 
 ## Configuration
 
 One TOML file holds absolute paths: `getjo_db`, `prep_db`, `private_dir`, plus the optional
-keys `dashboard_port` (default 8765), `weekly_target` (applications per week, default 10)
+keys `dashboard_port` (default 8765), `weekly_target` (applications per week, default 10),
+`claude_projects_dir` (default `~/.claude/projects`), `coordinator_task`, `context_warn_tokens`
+(default 300000), `[prices."<model>"]` (the Usage tab, below),
 `no_response_days` (default 14, from 1 to 365), `research_max_age_days` (default 90),
 `stale_days` (default 3, from 1 to 365: a getjo job not listed for longer reads "may be closed"),
 `brief_auto_min_score` (default 8, from 1 to 10: new offers scored at least this get a job brief
