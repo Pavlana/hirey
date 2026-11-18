@@ -97,7 +97,9 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
 | `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
 |            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, done / total and percent done; add a track |
-|            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` | Learn cards: add from JSON (one card or a list, all or none), list, show, mark done or back to do |
+|            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` / `cards delete ID` | Learn cards: add from JSON (one card or a list, all or none), list, show, mark done or back to do, remove |
+|            | `python -m prep.cli cards import FILE [--dry-run]`                   | Add or update tracks and cards from Markdown ([format](learn-format.md)); the same track and front is updated, its done status kept |
+|            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--session ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /mock and /debrief fill and save them with `cards add` after a yes |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).

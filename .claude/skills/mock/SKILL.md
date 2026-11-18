@@ -112,10 +112,19 @@ Reply with `thread reply --to MSG`, short: the question only, then the footer.
    bullets (questions it raised to ask the company, a point to open with; not the scores, which
    the session keeps): `python -m prep.cli notes APP --append <<'NOTES' … NOTES`. Skip it when
    nothing new came up. Never pay.
-7. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
+7. Gap cards: `python -m prep.cli cards gaps --session S` prints a draft per gap of this session that
+   has no Learn card yet (JSON: track, chapter, front, an empty back, `source_gap_id`). For each,
+   write the front as the question to drill ("How does consistent hashing spread keys?") and the
+   back as 3 to 6 short key points on the topic, plus one line on how to answer it from cv.md when
+   cv.md backs that. Never invent the user's experience or numbers. **Save nothing yet.**
+8. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
    two lines on what went well, each gap with its drill task id from the output (`(task #41)`), and
    one line that the transcript is saved privately; say what went into Notes, if anything. No file path, no pay.
+   When step 7 drafted cards, add a "Cards to drill" part, each card as `**<front>** (gap #ID)` then
+   its key points, and put this line just before the end line:
+   `— Gap cards · session #S · reply "save cards" to keep them, or say what to change.`
+   The cards are saved only when the user says so, in a later message (/ask handles it).
 
 ## 4. Finish in this session
 
-One line: "#APP mock (<stage>): N questions, scores …, M gaps, session #S."
+One line: "#APP mock (<stage>): N questions, scores …, M gaps, session #S, K gap cards drafted."

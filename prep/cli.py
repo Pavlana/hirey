@@ -50,7 +50,10 @@
     python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
     python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
     python -m prep.cli cards add [--file PATH]   (a JSON card or list of cards on stdin; all or none)
+    python -m prep.cli cards import FILE [--dry-run]   (Markdown: docs/learn-format.md; same track + front updated)
+    python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--session ID] [--limit N]   (drafts, JSON; read-only)
     python -m prep.cli cards list [--track ID|SLUG] [--todo | --done] | show CARD_ID | done CARD_ID | undo CARD_ID
+    python -m prep.cli cards delete CARD_ID   (removes the card for good)
 
 Every command is non-interactive: the skills ask the questions, then pass flags.
 A status change runs the stage's tasks (db.move_application); --next-action adds a task, and
@@ -1681,11 +1684,29 @@ def cmd_cards(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
             raise ValueError("give a JSON card object or a list of them")
         for card_id in learn.add_cards(conn, cards):
             print(f"Added card {_card_line(learn.get_card(conn, card_id))}")
+    elif args.cards_cmd == "import":
+        counts = learn.import_markdown(conn, Path(args.file).read_text(encoding="utf-8"), args.dry_run)
+        log.info("cards import: %s tracks%s", len(counts), " (dry run)" if args.dry_run else "")  # never card text
+        for c in counts:
+            new = " (new track)" if c["created"] else ""
+            extra = f", {c['not_in_file']} not in the file (left alone)" if c["not_in_file"] else ""
+            print(f"{c['slug']} · {c['title']}{new}: {c['added']} added, {c['updated']} updated, "
+                  f"{c['unchanged']} unchanged{extra}")
+        if args.dry_run:
+            print("Dry run: nothing saved.")
+    elif args.cards_cmd == "gaps":
+        drafts = learn.gap_drafts(conn, args.gap, args.app, args.session, args.limit)
+        print(json.dumps(drafts, indent=2, ensure_ascii=False))
+        if not drafts:
+            print("No open gaps without a card.", file=sys.stderr)
     elif args.cards_cmd == "list":
         status = "todo" if args.todo else ("done" if args.done else None)
         print("\n".join(_card_line(c) for c in learn.list_cards(conn, args.track, status)) or "no cards")
     elif args.cards_cmd == "show":
         _print_card(learn.get_card(conn, args.card_id))
+    elif args.cards_cmd == "delete":
+        card = learn.delete_card(conn, args.card_id)
+        print(f"Deleted card {_card_line(card)}")
     else:  # done / undo
         card = learn.set_status(conn, args.card_id, "done" if args.cards_cmd == "done" else "todo")
         print(f"{'Done' if card['status'] == 'done' else 'Back to do'}: {_card_line(card)}")
@@ -1990,6 +2011,16 @@ def build_parser() -> argparse.ArgumentParser:
     ksub = p.add_subparsers(dest="cards_cmd", required=True)
     t = ksub.add_parser("add", help="add cards from JSON (one object or a list) on stdin or --file; all or none")
     t.add_argument("--file", help="a JSON file (default: stdin)")
+    t = ksub.add_parser("import", help="add or update tracks and cards from a Markdown file "
+                                       "(docs/learn-format.md); same track + front is updated, done status kept")
+    t.add_argument("file")
+    t.add_argument("--dry-run", action="store_true", help="print the counts, save nothing")
+    t = ksub.add_parser("gaps", help="read-only: card drafts (JSON, back left empty) for open gaps with no card yet, "
+                                     "newest first; save them with `cards add` after the user confirms")
+    t.add_argument("--gap", type=int, action="append", help="only this gap id; repeat for more")
+    t.add_argument("--app", type=int, help="only gaps of this application")
+    t.add_argument("--session", type=int, help="only gaps this practice session named")
+    t.add_argument("--limit", type=int, default=10, help="at most this many drafts (default 10)")
     t = ksub.add_parser("list", help="cards in track order")
     t.add_argument("--track", help="track id or slug")
     g = t.add_mutually_exclusive_group()
@@ -1997,7 +2028,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--done", action="store_true", help="only cards done")
     t = ksub.add_parser("show", help="a card: question, key points, follow-ups, sources, status")
     t.add_argument("card_id", type=int)
-    for name, text in (("done", "mark a card done"), ("undo", "put a done card back to do")):
+    for name, text in (("done", "mark a card done"), ("undo", "put a done card back to do"),
+                       ("delete", "remove a card for good (a stale or unwanted one)")):
         t = ksub.add_parser(name, help=text)
         t.add_argument("card_id", type=int)
     p.set_defaults(func=cmd_cards)

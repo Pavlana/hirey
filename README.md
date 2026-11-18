@@ -170,7 +170,7 @@ prep/            db.py (schema, migrations, queue, stage rules) · cli.py (every
                  backed by python -m prep.cli
 .claude/settings.json   SessionStart hook: read-only queue summary (ids only)
 tests/           unittest suite with fixture databases
-docs/            how-it-works.md · usage.md · ROADMAP.md
+docs/            how-it-works.md · usage.md · ROADMAP.md · learn-format.md (Learn import; example: learn.example.md)
 ```
 
 ## How it was built
@@ -197,4 +197,5 @@ pull request and the running dashboard.
   launchd, privacy model
 - [docs/how-it-works.md](docs/how-it-works.md): components and data flow
 - [docs/ROADMAP.md](docs/ROADMAP.md): phases and acceptance criteria
+- [docs/learn-format.md](docs/learn-format.md): the Markdown format `cards import` reads
 - [CLAUDE.md](CLAUDE.md): conventions for the coding agents working in this repo

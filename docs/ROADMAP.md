@@ -82,13 +82,14 @@ Acceptance:
 ## Phase 4 — Learn and weekly plan
 
 Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI; Learn 2/5: the Learn page with
-tracks and the card view, notes and prep agent still placeholders).
+tracks and the card view, notes and prep agent still placeholders; Learn 5/5: Markdown import and gap cards).
 
 - Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
   (question, key points, tags, follow-ups, sources to watch or read, source gap, and a status:
   to do or done). No schedule: progress is cards done out of all.
 - CLI for skills: `cards add|list|show|done|undo`, `tracks add|list` (done / total, percent).
-- Gaps can generate cards.
+- Gaps can generate cards: drafted per open gap (`cards gaps`), saved after confirmation, one card per
+  gap. Tracks and cards load from Markdown (`cards import`, idempotent; `docs/learn-format.md`).
 - `/plan-week`: run at the Friday review; proposes next week's tasks from open applications, upcoming interviews, open
   gaps and cards to do, within a stated time budget; creates the tasks after confirmation.
 - The dashboard gains a Learn page: tracks with cards done and to do, the card with its answer

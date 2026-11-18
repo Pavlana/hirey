@@ -558,6 +558,23 @@
    track's chapters, "done X / Y" and the percent done. `/today` prints "Learn: X done, Y to do"
    with "done/all" per track whenever any card exists. Card content (real answers, stories) stays
    in prep.db; fixtures hold one fictional track with three cards.
+27. Learn import and gap cards. `cli cards import FILE [--dry-run]` reads a Markdown file
+   (`docs/learn-format.md`: `#` track, `##` chapter, `###` card front, the back, then `tags:`,
+   `gap:`, `follow-ups:` and `sources:` lines; ``` fences are back text) with
+   `learn.parse_markdown`, then `learn.import_markdown` adds or updates everything in one
+   transaction. A track is matched by slug and a card by track and front: a match takes the file's
+   back, chapter, tags, follow-ups, sources and gap and keeps its id, position and status, so a
+   second import of the same file changes nothing. Cards missing from the file are kept and counted;
+   `cli cards delete ID` removes one (`learn.delete_card`).
+   `--dry-run` rolls back and prints the same counts. Real import files are private
+   (`private_dir/learn/`, gitignored); `learn.example.md` is a fictional one. Gaps become cards in
+   two steps: `cli cards gaps [--gap ID] [--app ID] [--session ID] [--limit N]` is read-only and
+   prints JSON drafts for open gaps with no card (track `gaps-to-drill`, chapter the application's
+   company, front the gap, an empty back, `source_gap_id`); the agent writes the backs, shows them,
+   and saves with `cards add` only after the user says yes. `learn.add_card` refuses a second card
+   for the same gap and creates the "Gaps to drill" track with its first card. `/debrief` asks in
+   the chat; `/mock` ends with a `— Gap cards · session #S` line and `/ask` saves on the user's
+   "save cards" reply.
 
 ## Dashboard
 
