@@ -9,6 +9,9 @@
     python -m prep.cli comments list APP_ID | amend REF TEXT | remove REF   (REF: c12 or h34)
     python -m prep.cli notes APP_ID [--show | --append [TEXT]]   (the panel's Notes; append text on stdin
                                                        when TEXT is left out; a dated "Agent" block, never pay)
+    python -m prep.cli learn-notes CARD_ID|all [--show | --append [TEXT]]   (the Learn page's Notes: a card's
+                                                       note or the "all prep" notebook; same append rules)
+    python -m prep.cli learn-notes answer CARD_ID [--show]   (the user's own answer on the card: read only)
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
@@ -73,7 +76,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, research
+from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -366,6 +369,43 @@ def cmd_notes(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     notes = db.get_notes(conn, args.app_id)
     print(f"Notes of {_app_line(app)}" + (f" (changed {notes['stamp'][:10]})" if notes["stamp"] else "") + ":")
     print(notes["notes"] or "(none)")
+    return 0
+
+
+def cmd_learn_notes(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """A Learn note (private_dir/notes/learn/): a card's own (CARD_ID), the general notebook (all) or
+    the user's answer on a card (answer CARD_ID, read only). --show prints it; --append adds a dated
+    "Agent" block at the end of a note and never rewrites."""
+    key = args.which.strip().lower()
+    if key == "answer":
+        if not (args.card or "").isdigit():
+            raise ValueError("learn-notes answer takes a card id: learn-notes answer CARD_ID --show")
+        if args.append is not None:
+            raise ValueError("a card's answer is the user's own: read it with --show, never append to it")
+        card = learn.get_card(conn, int(args.card))
+        note = learnnotes.read(settings.private_dir, learnnotes.answer_key(card["id"]))
+        print(f"Answer to card {card['id']} ({card['track_title']}): {card['front']}  [{note['file']}]")
+        print(note["text"].rstrip() or "(none yet)")
+        return 0
+    if args.card is not None:
+        raise ValueError("learn-notes takes one card id or 'all' (or: answer CARD_ID)")
+    if key != learnnotes.ALL:
+        if not key.isdigit():
+            raise ValueError(f"learn-notes takes a card id or 'all'; got {args.which!r}")
+        card = learn.get_card(conn, int(key))  # LookupError for an unknown card
+        title = f"card {card['id']} ({card['track_title']})"
+    else:
+        title = "all prep"
+    if args.append is not None:
+        text = sys.stdin.read() if args.append == "-" else args.append
+        learnnotes.append(settings.private_dir, key, text)
+        log.info("learn note %s appended", learnnotes.label(key))  # never the text
+        print(f"Added to the notes of {title} ({learnnotes.label(key)}):")
+        print(db.notes_block(text, db.today_iso()))
+        return 0
+    note = learnnotes.read(settings.private_dir, key)
+    print(f"Notes of {title} ({note['file']}):")
+    print(note["text"].rstrip() or "(none)")
     return 0
 
 
@@ -1811,6 +1851,16 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--append", nargs="?", const="-", metavar="TEXT",
                    help="add a dated 'Agent' block at the end; without TEXT, read it from stdin")
     p.set_defaults(func=cmd_notes)
+
+    p = sub.add_parser("learn-notes", help="a Learn note (a card's, or 'all' for the all-prep notebook): show, or "
+                                           "append a dated block")
+    p.add_argument("which", metavar="CARD_ID|all|answer")
+    p.add_argument("card", nargs="?", metavar="CARD_ID", help="with answer: the card whose answer to print")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--show", action="store_true", help="print the note (the default)")
+    g.add_argument("--append", nargs="?", const="-", metavar="TEXT",
+                   help="add a dated 'Agent' block at the end; without TEXT, read it from stdin")
+    p.set_defaults(func=cmd_learn_notes)
 
     p = sub.add_parser("skip", help="skip an Interested application (closes it; New offers lists it under Show skipped)")
     p.add_argument("app_id", type=int)

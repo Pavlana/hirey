@@ -473,6 +473,228 @@
     expand.hidden = false;
   }
 
+  // --- Learn: the Notes editor and Your answer --------------------------------------------------
+  // Both are forms posting to /learn/notes (prep/learnnotes.py files), saved by autosaving(): 1.5 s
+  // after the last change, on blur and on Cmd/Ctrl-S (or :w with vim keys). Each save names the stamp
+  // of the text it started from. A refused save (the file changed meanwhile) that is only an addition
+  // at the end (an agent append) is merged: the addition goes below the user's text and the save
+  // runs again. Any other change pauses autosave and shows the text as it is now; the next explicit
+  // save replaces it. The Notes editor adds a line-number gutter and optional vim keys (vim.js, off by
+  // default, the status line toggle remembered per browser); Your answer grows as it is typed.
+  function autosaving(form, { onText = () => {}, savedLabel = "autosaved" } = {}) {
+    const area = form.querySelector("textarea");
+    const savedEl = form.querySelector("[data-ed-saved]");
+    const saveBtn = form.querySelector("[data-ed-save]");
+    const AUTOSAVE_MS = 1500;
+    const trimEnd = (t) => t.replace(/\s+$/, "");
+    let base = area.value; // the text as the server has it
+    let dirty = false;
+    let conflict = Boolean(form.querySelector(".ed-current"));
+    let saving = null;
+    let again = false;
+    let timer = 0;
+    if (saveBtn) saveBtn.hidden = !conflict;
+
+    const hhmm = () => new Date().toTimeString().slice(0, 5);
+    const status = (text) => { savedEl.textContent = text; };
+    const extras = () => form.querySelectorAll(".ed-current, .warning");
+
+    function clearConflict() {
+      extras().forEach((el) => el.remove());
+      conflict = false;
+      if (saveBtn) saveBtn.hidden = true;
+    }
+
+    function showConflict(reply) {
+      const tpl = document.createElement("template");
+      tpl.innerHTML = reply.html; // built and escaped by the server
+      extras().forEach((el) => el.remove());
+      const anchor = form.querySelector("[data-ed-anchor]");
+      tpl.content.querySelectorAll(".warning, .ed-current").forEach((el) => anchor.before(el));
+      form.elements.stamp.value = reply.stamp;
+      base = reply.text;
+      conflict = true;
+      if (saveBtn) saveBtn.hidden = false;
+      status("not saved: compare, then save");
+    }
+
+    async function send(how) {
+      const text = area.value;
+      const res = await fetch(form.action, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      let reply = null;
+      if ((res.headers.get("content-type") || "").includes("application/json")) reply = await res.json();
+      if (!reply) throw new Error(`Not saved (HTTP ${res.status}).`);
+      if (reply.ok) {
+        form.elements.stamp.value = reply.stamp;
+        base = text;
+        dirty = area.value !== text;
+        if (conflict) clearConflict();
+        status(`${how === "auto" ? savedLabel : "saved"} ${hhmm()}`);
+        return;
+      }
+      if (typeof reply.text !== "string") throw new Error(reply.message || "Not saved.");
+      const kept = trimEnd(base);
+      if (reply.text.startsWith(kept) && !conflict) {
+        // Only an addition at the end (an agent append): keep it below the user's text, save again.
+        // From an empty file the file starts with the agent's block: set it off with a blank line.
+        const added = kept ? reply.text.slice(kept.length) : `\n\n${reply.text}`;
+        const mine = trimEnd(area.value);
+        const { selectionStart, selectionEnd } = area;
+        area.value = mine ? mine + added : reply.text;
+        area.setSelectionRange(selectionStart, selectionEnd);
+        form.elements.stamp.value = reply.stamp;
+        base = reply.text;
+        dirty = true;
+        onText();
+        toast("The agent added to this note; its addition is kept at the end.");
+        again = true;
+        return;
+      }
+      showConflict(reply);
+      toast(reply.message || "Not saved.", { error: true });
+    }
+
+    function save(how) {
+      clearTimeout(timer);
+      if (saving) { again = true; return saving; }
+      if (how === "auto" && (!dirty || conflict)) return Promise.resolve();
+      saving = send(how)
+        .catch((err) => { status("not saved"); toast(err.message || "Not saved.", { error: true }); })
+        .finally(() => {
+          saving = null;
+          if (again) { again = false; if (dirty && !conflict) save(how); }
+        });
+      return saving;
+    }
+
+    area.addEventListener("input", () => {
+      dirty = area.value !== base;
+      onText();
+      clearTimeout(timer);
+      if (dirty && !conflict) timer = setTimeout(() => save("auto"), AUTOSAVE_MS);
+    });
+    area.addEventListener("blur", () => { if (dirty) save("auto"); });
+    form.addEventListener("keydown", (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); save("manual"); }
+    });
+    form.addEventListener("submit", (e) => { e.preventDefault(); save("manual"); });
+    // Leaving with unsaved text: one last save that needs no reply (refused if the file changed).
+    window.addEventListener("pagehide", () => {
+      if (dirty && !conflict && navigator.sendBeacon) navigator.sendBeacon(form.action, new URLSearchParams(new FormData(form)));
+    });
+    // Back on the page with nothing unsaved: pick up what an agent added meanwhile.
+    document.addEventListener("visibilitychange", async () => {
+      if (document.visibilityState !== "visible" || dirty || saving || conflict) return;
+      try {
+        const q = new URLSearchParams({ card: form.dataset.card, note: form.dataset.note });
+        const reply = await (await fetch(`/learn/notes?${q}`, { credentials: "same-origin" })).json();
+        if (!reply.ok || reply.stamp === form.elements.stamp.value || dirty) return;
+        area.value = reply.text;
+        base = reply.text;
+        form.elements.stamp.value = reply.stamp;
+        onText();
+        status(`updated ${hhmm()}`);
+      } catch { /* kept as it is */ }
+    });
+    onText();
+    return { save };
+  }
+
+  const editor = document.querySelector("form[data-learn-notes]");
+  if (editor && window.fetch) {
+    const area = editor.querySelector("textarea");
+    const gutter = editor.querySelector(".ed-gutter");
+    const modeEl = editor.querySelector("[data-ed-mode]");
+    const posEl = editor.querySelector("[data-ed-pos]");
+    const vimBtn = editor.querySelector("[data-vim-toggle]");
+    const VIM_KEY = "learn-vim";
+    let vim = null;
+
+    function paintGutter() {
+      const n = area.value.split("\n").length;
+      if (gutter.dataset.lines !== String(n)) {
+        gutter.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
+        gutter.dataset.lines = String(n);
+      }
+      gutter.scrollTop = area.scrollTop;
+    }
+    area.addEventListener("scroll", () => { gutter.scrollTop = area.scrollTop; });
+    function paintPos() {
+      if (!vim) return;
+      const { line, col } = HireyVim.position(area.value, area.selectionStart);
+      posEl.textContent = `${line},${col}`;
+    }
+    const { save } = autosaving(editor, { onText: () => { paintGutter(); paintPos(); } });
+
+    // vim keys
+    function paintMode() {
+      if (!vim) return;
+      modeEl.textContent = vim.mode === "command" ? `:${vim.cmd}` : vim.mode.toUpperCase();
+      modeEl.dataset.mode = vim.mode;
+      modeEl.title = vim.mode === "insert" ? "Esc: normal mode" : ":w saves · i inserts";
+      paintPos();
+    }
+    function paintCursor() {
+      const p = vim.pos;
+      const block = vim.mode !== "insert" && p < area.value.length && area.value[p] !== "\n";
+      area.setSelectionRange(p, block ? p + 1 : p);
+    }
+    function setVim(on) {
+      vim = on ? HireyVim.create(area.value, area.selectionStart) : null;
+      vimBtn.setAttribute("aria-pressed", String(on));
+      vimBtn.textContent = on ? "vim keys on" : "vim keys off";
+      modeEl.hidden = !on;
+      posEl.hidden = !on;
+      editor.classList.toggle("is-vim", on);
+      if (on) { paintMode(); if (document.activeElement === area) paintCursor(); }
+    }
+    area.addEventListener("keydown", (e) => {
+      if (!vim || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const r = HireyVim.step({ ...vim, text: area.value, pos: area.selectionStart }, e.key);
+      vim = r.state;
+      if (!r.handled) return;
+      e.preventDefault();
+      if (r.changed) {
+        area.value = vim.text;
+        area.dispatchEvent(new Event("input"));
+      }
+      paintCursor();
+      paintMode();
+      if (r.save) save("manual");
+    });
+    ["keyup", "click"].forEach((type) => area.addEventListener(type, paintPos));
+    area.addEventListener("focus", () => { if (vim) paintCursor(); });
+    if (typeof HireyVim !== "undefined") {
+      try { setVim(localStorage.getItem(VIM_KEY) === "1"); } catch { setVim(false); }
+      vimBtn.addEventListener("click", () => {
+        const on = !vim;
+        setVim(on);
+        try {
+          if (on) localStorage.setItem(VIM_KEY, "1");
+          else localStorage.removeItem(VIM_KEY);
+        } catch { /* not remembered */ }
+        area.focus();
+      });
+      vimBtn.hidden = false;
+    }
+  }
+
+  // Your answer: a plain textarea (no vim keys) that grows with the text, from its six rows.
+  const answer = document.querySelector("form[data-learn-answer]");
+  if (answer && window.fetch) {
+    const area = answer.querySelector("textarea");
+    const grow = () => {
+      area.style.height = "auto"; // CSSOM, not an inline style attribute: allowed by the CSP
+      area.style.height = `${area.scrollHeight + 2}px`;
+    };
+    autosaving(answer, { onText: grow, savedLabel: "saved" });
+  }
+
   // --- Applications ---------------------------------------------------------------------
   // The server renders every state from the query string (?view=, ?app=ID or ?job=ID side panel,
   // the filters), so this only adds: a panel opens without a reload, Esc closes it, and after any
