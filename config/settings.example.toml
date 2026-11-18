@@ -6,7 +6,7 @@
 # a per-checkout override), then ~/.config/inter_prep/settings.toml.
 # Each key can also be set with an environment variable, which wins over the file:
 #   PREP_GETJO_DB, PREP_DB, PREP_PRIVATE_DIR, PREP_DASHBOARD_PORT, PREP_WEEKLY_TARGET,
-#   PREP_NO_RESPONSE_DAYS, PREP_RESEARCH_MAX_AGE_DAYS, PREP_ASSISTANT_TASK,
+#   PREP_NO_RESPONSE_DAYS, PREP_RESEARCH_MAX_AGE_DAYS, PREP_LEARN_NEW_PER_DAY, PREP_ASSISTANT_TASK,
 #   PREP_ASSISTANT_PROJECT, PREP_DEV3_BIN, PREP_PDF_PYTHON, PREP_FACTS_FILE
 #
 # Use absolute paths. The code runs from dev3 worktrees, so relative paths such as
@@ -44,6 +44,10 @@ private_dir = "/absolute/path/to/inter_prep"
 # Optional. New offers scored at least this get a job brief queued for the agent in the
 # background; any other offer gets one queued when its panel is first opened.
 # brief_auto_min_score = 8
+
+# Optional. At most this many new Learn cards start per day, across all tracks, so a large
+# import spreads over several days (0: none). Reviews of started cards are never capped.
+# learn_new_per_day = 10
 
 # Optional. The seq number of a long-running dev3 task acting as a standing assistant. When set,
 # newly queued research / CV fit requests (Interested, or the card's buttons) are also sent to it

@@ -149,8 +149,27 @@ class LearnDbTest(unittest.TestCase):
         self.assertEqual((empty["cards"], empty["due"], empty["progress"]), (0, 0, 0))
         self.assertEqual(learn.due_by_track(self.conn, TODAY), [("Toy track", 2)])
         self.assertEqual(learn.due_by_track(self.conn, "2026-01-21"), [("Toy track", 4)])
-        self.assertEqual([c["id"] for c in learn.list_cards(self.conn, due=True, today=TODAY)], ids[2:])
+        self.assertEqual([c["id"] for c in learn.due_cards(self.conn, TODAY)], ids[2:])
         self.assertEqual(len(learn.list_cards(self.conn, track="toy")), 4)
+
+    def test_new_cards_capped_per_day(self) -> None:
+        learn.add_track(self.conn, "Second", slug="second")
+        ids = learn.add_cards(self.conn, [card() for _ in range(5)] + [card(track="second") for _ in range(3)], TODAY)
+        due = learn.due_cards(self.conn, TODAY, new_per_day=3)
+        self.assertEqual([c["id"] for c in due], ids[:3])  # new cards in track order
+        self.assertEqual(learn.new_waiting(self.conn, TODAY, 3), 5)
+        self.assertEqual(len(learn.due_cards(self.conn, TODAY)), 8)  # None: no cap
+        learn.rate_card(self.conn, ids[0], "again", TODAY)  # started today: due tomorrow, uses a slot
+        learn.rate_card(self.conn, ids[1], "good", TODAY)
+        self.assertEqual([c["id"] for c in learn.due_cards(self.conn, TODAY, 3)], [ids[2]])
+        self.assertEqual(learn.due_by_track(self.conn, TODAY, 3), [("Toy track", 1)])
+        self.assertEqual(learn.due_cards(self.conn, TODAY, 3, track="second"), [])
+        self.assertEqual(learn.due_cards(self.conn, TODAY, 0), [])
+        tomorrow = "2026-01-21"  # both reviews due, plus a fresh 3 new
+        due = [c["id"] for c in learn.due_cards(self.conn, tomorrow, 3)]
+        self.assertEqual(due, [ids[0], ids[1], ids[2], ids[3], ids[4]])
+        self.assertEqual(learn.get_card(self.conn, ids[0])["introduced_on"], TODAY)
+        self.assertEqual(learn.due_by_track(self.conn, tomorrow, 3), [("Toy track", 5)])
 
 
 class LearnCliTest(IsolatedTestCase):
@@ -191,6 +210,20 @@ class LearnCliTest(IsolatedTestCase):
         self.run_cli("cards", "rate", "2", "good")
         _, out, _ = self.run_cli("today")
         self.assertIn("Cards due today: 0\n", out)
+
+    def test_cap_in_today_and_due_list(self) -> None:
+        self.run_cli("tracks", "add", "Toy track")
+        self.add([card(track="toy-track") for _ in range(4)])
+        with mock.patch.dict("os.environ", {"PREP_LEARN_NEW_PER_DAY": "2"}):
+            _, out, _ = self.run_cli("today")
+            self.assertIn("Cards due today: 2 (Toy track 2) · 2 new held for later days (learn_new_per_day 2)", out)
+            _, out, _ = self.run_cli("cards", "list", "--due")
+            self.assertEqual(out.count("(new)"), 2)
+            self.assertIn("2 new held for later days", out)
+            _, out, _ = self.run_cli("tracks", "list")
+            self.assertIn("2 due today", out)
+        _, out, _ = self.run_cli("today")  # default cap 10
+        self.assertIn("Cards due today: 4 (Toy track 4)\n", out)
 
 
 if __name__ == "__main__":

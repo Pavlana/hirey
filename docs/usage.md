@@ -46,7 +46,7 @@ The per-user file is the normal place: every checkout and git worktree, a launch
 the Claude app all find it without environment variables. Single keys can be overridden with
 `PREP_GETJO_DB`, `PREP_DB`, `PREP_PRIVATE_DIR`, `PREP_DASHBOARD_PORT`,
 `PREP_WEEKLY_TARGET`, `PREP_NO_RESPONSE_DAYS`, `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`,
-`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
+`PREP_BRIEF_AUTO_MIN_SCORE`, `PREP_LEARN_NEW_PER_DAY`, `PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN`,
 `PREP_PDF_PYTHON` and `PREP_FACTS_FILE`. Use absolute paths, with `prep_db`
 outside any worktree: relative paths resolve differently in each worktree. An empty
 `PREP_ASSISTANT_TASK=` (or `PREP_ASSISTANT_PROJECT=`, `PREP_DEV3_BIN=`) clears that key, so a run
@@ -187,7 +187,8 @@ field (`applications.pay`) is never shown. Each request opens the database afres
 made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
 (applications per week, default 10) and `no_response_days` (default 14: an application
 still in Applied with no stage change for that long moves to No response; checked on every
-dashboard request and by `/today`).
+dashboard request and by `/today`). `learn_new_per_day` (default 10) caps the new Learn cards
+started per day across all tracks; reviews of started cards are never capped.
 
 ### Company research and CV fit
 

@@ -20,6 +20,7 @@ Keys:
     stale_days      a getjo job not listed for more than this many days reads "may be closed" (default 3)
     brief_auto_min_score  new offers scored at least this get a job brief queued in the background;
                     others when their panel is first opened (default 8, 1-10)
+    learn_new_per_day  new Learn cards started per day at most, across all tracks (default 10, 0-1000)
     assistant_task  optional dev3 task seq of a standing assistant agent: newly queued research
                     and CV fit requests are sent to it with `dev3 message` (unset: no message)
     assistant_project  optional dev3 project id, passed with --project when set
@@ -49,6 +50,7 @@ DEFAULT_NO_RESPONSE_DAYS = 14
 DEFAULT_RESEARCH_MAX_AGE_DAYS = 90
 DEFAULT_STALE_DAYS = 3
 DEFAULT_BRIEF_AUTO_MIN_SCORE = 8
+DEFAULT_LEARN_NEW_PER_DAY = 10
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -62,6 +64,7 @@ ENV_KEYS = {
     "research_max_age_days": "PREP_RESEARCH_MAX_AGE_DAYS",
     "stale_days": "PREP_STALE_DAYS",
     "brief_auto_min_score": "PREP_BRIEF_AUTO_MIN_SCORE",
+    "learn_new_per_day": "PREP_LEARN_NEW_PER_DAY",
     "assistant_task": "PREP_ASSISTANT_TASK",
     "assistant_project": "PREP_ASSISTANT_PROJECT",
     "dev3_bin": "PREP_DEV3_BIN",
@@ -89,6 +92,7 @@ class Settings:
     research_max_age_days: int = DEFAULT_RESEARCH_MAX_AGE_DAYS
     stale_days: int = DEFAULT_STALE_DAYS
     brief_auto_min_score: int = DEFAULT_BRIEF_AUTO_MIN_SCORE
+    learn_new_per_day: int = DEFAULT_LEARN_NEW_PER_DAY
     assistant_task: int | None = None
     assistant_project: str | None = None
     dev3_bin: Path | None = None
@@ -159,6 +163,7 @@ def load_settings(path: Path | None = None) -> Settings:
         research_max_age_days=_int(data, "research_max_age_days", DEFAULT_RESEARCH_MAX_AGE_DAYS, 1, 3650),
         stale_days=_int(data, "stale_days", DEFAULT_STALE_DAYS, 1, 365),
         brief_auto_min_score=_int(data, "brief_auto_min_score", DEFAULT_BRIEF_AUTO_MIN_SCORE, 1, 10),
+        learn_new_per_day=_int(data, "learn_new_per_day", DEFAULT_LEARN_NEW_PER_DAY, 0, 1000),
         assistant_task=_int(data, "assistant_task", 0, 1, 10**9) if data.get("assistant_task") else None,
         assistant_project=_project(data.get("assistant_project")),
         dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,

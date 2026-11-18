@@ -63,22 +63,24 @@ def _chapter_id(conn: sqlite3.Connection, track_id: int, title: str) -> int:
                         (track_id, title, position)).lastrowid
 
 
-def list_tracks(conn: sqlite3.Connection, today: str | None = None) -> list[dict]:
-    """Every track in order with chapters, cards, due (due today or earlier) and progress: the
+def list_tracks(conn: sqlite3.Connection, today: str | None = None, new_per_day: int | None = None) -> list[dict]:
+    """Every track in order with chapters, cards, due (as `due_cards` counts them) and progress: the
     percentage of its cards answered right since their last lapse (reps > 0)."""
-    today = today or db.today_iso()
     rows = conn.execute(
         """
         SELECT t.*,
                (SELECT COUNT(*) FROM chapters h WHERE h.track_id = t.id) AS chapters,
                COUNT(c.id) AS cards,
-               COALESCE(SUM(c.due_date <= ?), 0) AS due,
                COALESCE(SUM(c.reps > 0), 0) AS learned
         FROM tracks t LEFT JOIN cards c ON c.track_id = t.id
         GROUP BY t.id ORDER BY t.position, t.id
-        """, (today,))
+        """)
     tracks = [dict(r) for r in rows]
+    due: dict[int, int] = {}
+    for c in due_cards(conn, today, new_per_day):
+        due[c["track_id"]] = due.get(c["track_id"], 0) + 1
     for t in tracks:
+        t["due"] = due.get(t["id"], 0)
         t["progress"] = round(100 * t["learned"] / t["cards"]) if t["cards"] else 0
     return tracks
 
@@ -180,20 +182,50 @@ def get_card(conn: sqlite3.Connection, card_id: int) -> dict:
     return _card(row)
 
 
-def list_cards(conn: sqlite3.Connection, track: str | int | None = None, due: bool = False,
-               today: str | None = None) -> list[dict]:
-    """Cards in track and chapter order; `due`: only those due today or earlier, most overdue first."""
-    where, params = [], []
+def list_cards(conn: sqlite3.Connection, track: str | int | None = None) -> list[dict]:
+    """Every card (or one track's) in track, chapter and card order."""
+    where, params = "", ()
     if track is not None:
-        where.append("c.track_id = ?")
-        params.append(get_track(conn, track)["id"])
-    if due:
-        where.append("c.due_date <= ?")
-        params.append(today or db.today_iso())
-    order = "c.due_date, " if due else ""
-    sql = _CARD_SELECT + (" WHERE " + " AND ".join(where) if where else "") + \
-        f" ORDER BY {order}t.position, t.id, COALESCE(h.position, 0), c.position, c.id"
+        where, params = " WHERE c.track_id = ?", (get_track(conn, track)["id"],)
+    sql = _CARD_SELECT + where + _ORDER
     return [_card(r) for r in conn.execute(sql, params)]
+
+
+_ORDER = " ORDER BY t.position, t.id, COALESCE(h.position, 0), c.position, c.id"
+
+
+def new_introduced(conn: sqlite3.Connection, today: str) -> int:
+    """New cards first reviewed on `today`."""
+    return conn.execute("SELECT COUNT(*) FROM cards WHERE introduced_on = ?", (today,)).fetchone()[0]
+
+
+def due_cards(conn: sqlite3.Connection, today: str | None = None, new_per_day: int | None = None,
+              track: str | int | None = None) -> list[dict]:
+    """Cards to review today: every reviewed card due today or earlier (most overdue first), then
+    new cards in track order, at most `new_per_day` a day counting those already started today
+    (None: no cap). The cap is across all tracks; `track` then keeps one track's share."""
+    today = today or db.today_iso()
+    reviews = [_card(r) for r in conn.execute(
+        _CARD_SELECT + " WHERE c.introduced_on IS NOT NULL AND c.due_date <= ? ORDER BY c.due_date, c.id", (today,))]
+    sql = _CARD_SELECT + " WHERE c.introduced_on IS NULL AND c.due_date <= ?" + _ORDER
+    params: tuple = (today,)
+    if new_per_day is not None:
+        sql += " LIMIT ?"
+        params += (max(0, new_per_day - new_introduced(conn, today)),)
+    cards = reviews + [_card(r) for r in conn.execute(sql, params)]
+    if track is not None:
+        track_id = get_track(conn, track)["id"]
+        cards = [c for c in cards if c["track_id"] == track_id]
+    return cards
+
+
+def new_waiting(conn: sqlite3.Connection, today: str | None = None, new_per_day: int | None = None) -> int:
+    """New cards held back by the daily cap."""
+    today = today or db.today_iso()
+    total = conn.execute("SELECT COUNT(*) FROM cards WHERE introduced_on IS NULL AND due_date <= ?",
+                         (today,)).fetchone()[0]
+    shown = sum(1 for c in due_cards(conn, today, new_per_day) if c["introduced_on"] is None)
+    return total - shown
 
 
 def card_state(card: dict) -> srs.CardState:
@@ -207,8 +239,13 @@ def rate_card(conn: sqlite3.Connection, card_id: int, rating: str, today: str | 
     before = card_state(card)
     after = srs.next_state(before, rating)
     conn.execute(
-        "UPDATE cards SET ease = ?, interval_days = ?, due_date = ?, reps = ?, lapses = ? WHERE id = ?",
-        (after.ease, after.interval_days, srs.due_date(today, after.interval_days), after.reps, after.lapses, card_id))
+        """
+        UPDATE cards SET ease = ?, interval_days = ?, due_date = ?, reps = ?, lapses = ?,
+                         introduced_on = COALESCE(introduced_on, ?)
+        WHERE id = ?
+        """,
+        (after.ease, after.interval_days, srs.due_date(today, after.interval_days), after.reps, after.lapses, today,
+         card_id))
     conn.execute(
         """
         INSERT INTO card_reviews (card_id, rating, reviewed_at, interval_before, interval_after, ease_after)
@@ -223,9 +260,10 @@ def card_reviews(conn: sqlite3.Connection, card_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def due_by_track(conn: sqlite3.Connection, today: str | None = None) -> list[tuple[str, int]]:
-    """(track title, cards due today or earlier) for each track with any due, in track order."""
-    return [(t["title"], t["due"]) for t in list_tracks(conn, today) if t["due"]]
+def due_by_track(conn: sqlite3.Connection, today: str | None = None,
+                 new_per_day: int | None = None) -> list[tuple[str, int]]:
+    """(track title, cards due) for each track with any due, in track order."""
+    return [(t["title"], t["due"]) for t in list_tracks(conn, today, new_per_day) if t["due"]]
 
 
 def card_count(conn: sqlite3.Connection) -> int:

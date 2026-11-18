@@ -87,7 +87,8 @@ Status: in progress (Learn 1/5: cards, tracks and spaced repetition, data and CL
   (question, key points, tags, follow-ups, sources to watch or read, source gap, and the
   schedule: ease, interval, due date, reps, lapses), with a `card_reviews` history.
 - Rating with four buttons, Again / Hard / Good / Easy, scheduled SM-2-style; each button
-  previews its next review ("Good → next review in 6 days").
+  previews its next review ("Good → next review in 6 days"). At most `learn_new_per_day`
+  (default 10) new cards start per day, so a large import does not flood one evening.
 - CLI for skills: `cards add|list|show|rate`, `tracks add|list` (due counts, progress).
 - Gaps can generate cards.
 - `/plan-week`: run at the Friday review; proposes next week's tasks from open applications, upcoming interviews, open

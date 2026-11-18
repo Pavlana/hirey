@@ -392,6 +392,7 @@ CREATE TABLE IF NOT EXISTS cards (
     ease          REAL NOT NULL DEFAULT 2.5,
     interval_days INTEGER NOT NULL DEFAULT 0,
     due_date      TEXT NOT NULL,          -- a new card is due the day it is added
+    introduced_on TEXT,                   -- local date of its first review; NULL: still a new card
     reps          INTEGER NOT NULL DEFAULT 0,
     lapses        INTEGER NOT NULL DEFAULT 0,
     created_at    TEXT NOT NULL
