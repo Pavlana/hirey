@@ -246,6 +246,13 @@ class ReportTest(ExampleUsage):
         r = self.report(coordinator_task=41)  # a seq named in the settings is a coordinator too
         self.assertIn("seq:41", [c["ref"] for c in r["context"] if c["role"] == "Coordinator"])
 
+    def test_standing_tasks_are_not_asked_to_complete(self) -> None:
+        # seq:41 has a merged PR and is still open; as a standing task it stays open by design.
+        for setting in ("assistant_task", "prep_assistant_task", "coordinator_task"):
+            with self.subTest(setting=setting):
+                save = "\n".join(self.report(**{setting: 41})["save"])
+                self.assertNotIn("still open after its PR merged", save)
+
     def test_cost_estimate(self) -> None:
         r = self.report(prices=(("claude-example", (1.0, 2.0, 0.5, 1.5)),))
         t = r["totals"]
