@@ -25,7 +25,8 @@
 │   tailored_cv_checks,               │
 │   agent_messages, cv_versions,      │
 │   agent_message_targets,            │
-│   job_briefs, brief_requests        │
+│   job_briefs, brief_requests,       │
+│   tracks, chapters, cards           │
 │ prep/stats.py   dashboard numbers   │
 │ prep/cli.py     commands            │
 │ prep/web.py     dashboard server    │
@@ -35,6 +36,7 @@
 │ prep/cvcheck.py tailored CV check   │
 │ prep/cveval.py  AI check of a CV    │
 │ prep/assistant.py  dev3 message     │
+│ prep/learn.py   Learn cards, tracks │
 └───────▲──────────────────▲──────────┘
         │                  │
  Claude Code skills    browser → http://localhost:8765
@@ -541,6 +543,21 @@
    when the notes have none (`cli.has_questions_section`). `thread show` and `research next` print
    the notes as context. `cli update --notes` still replaces them (and moves the stamp). Notes text
    is never logged.
+26. Learn cards (data and CLI; the Learn page comes later). `tracks` hold flashcards in order,
+   each with a slug, title, subtitle and a cover colour key (`learn.TRACK_COVERS`); `chapters`
+   split a track; `cards` hold the question (`front`), key points in Markdown (`back`), tags and
+   likely follow-ups (JSON lists of strings), sources (a JSON list of `{kind, title, url, minutes,
+   why}`, kind `watch`, `read` or `notes`), an optional `source_gap_id`, and a status: `todo` or
+   `done` (`learn.CARD_STATUSES`) with `done_at`. There is no schedule and no due date: progress is
+   cards done out of all. Allowed values are checked in `prep/learn.py`. `cli tracks add` adds a
+   track; `cli cards add` takes a JSON card or a list of them on stdin (or `--file`), names the
+   track by id or slug and the chapter by title (added when new), and adds all or none
+   (`learn.add_cards`); a new card is to do. `cli cards done ID` marks it done and `cards undo ID`
+   puts it back to do (`learn.set_status`). `cli cards list [--track T] [--todo | --done]` lists
+   cards in track, chapter and card order; `cards show ID` prints one. `cli tracks list` gives each
+   track's chapters, "done X / Y" and the percent done. `/today` prints "Learn: X done, Y to do"
+   with "done/all" per track whenever any card exists. Card content (real answers, stories) stays
+   in prep.db; fixtures hold one fictional track with three cards.
 
 ## Dashboard
 

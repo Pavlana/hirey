@@ -79,22 +79,24 @@ Acceptance:
 - Session files are written only under `private_dir`; nothing new is tracked by git.
 - Tests cover session/gap/task creation with fixture data.
 
-## Phase 4 — Cards and weekly plan
+## Phase 4 — Learn and weekly plan
 
-Status: not started.
+Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI).
 
-- New `cards` table: spaced-repetition flashcards (front, back, topic, ease, interval, due
-  date, source gap).
-- `/cards`: review due cards in the terminal session; grade 0–5; scheduling follows SM-2.
+- Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
+  (question, key points, tags, follow-ups, sources to watch or read, source gap, and a status:
+  to do or done). No schedule: progress is cards done out of all.
+- CLI for skills: `cards add|list|show|done|undo`, `tracks add|list` (done / total, percent).
 - Gaps can generate cards.
 - `/plan-week`: run at the Friday review; proposes next week's tasks from open applications, upcoming interviews, open
-  gaps and due cards, within a stated time budget; creates the tasks after confirmation.
-- The dashboard gains a Cards page (due count, review history).
+  gaps and cards to do, within a stated time budget; creates the tasks after confirmation.
+- The dashboard gains a Learn page: tracks with cards done and to do, the card with its answer
+  hidden until asked and a Done button, notes, and a prep agent.
 
 Acceptance:
-- SM-2 scheduling is unit-tested against known sequences.
+- Marking a card done and back to do updates the track's done / total, unit-tested.
 - `/plan-week` never creates tasks without confirmation and never exceeds the time budget.
-- Cards due today appear in `/today`.
+- Cards done and to do appear in `/today`.
 
 ## Built outside the phases
 

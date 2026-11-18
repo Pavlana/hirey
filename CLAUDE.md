@@ -79,6 +79,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
              assistant.py (optional dev3 message to a standing agent),
+             learn.py (Learn tracks, chapters, cards: done or to do),
              static/style.css + app.js, seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
@@ -112,6 +113,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
   `PREP_ASSISTANT_TASK=` keeps it from messaging the real standing assistant)
+- Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
+  `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`

@@ -357,6 +357,45 @@ CREATE TABLE IF NOT EXISTS cv_versions (
     created_at TEXT NOT NULL
 );
 
+-- Learn: tracks of flashcards, split into chapters (prep/learn.py).
+CREATE TABLE IF NOT EXISTS tracks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    slug       TEXT NOT NULL UNIQUE,      -- stable name for skills and JSON (rag-in-production)
+    title      TEXT NOT NULL,
+    subtitle   TEXT,
+    cover      TEXT NOT NULL,             -- colour key (learn.TRACK_COVERS)
+    position   INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS chapters (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id INTEGER NOT NULL REFERENCES tracks(id),
+    title    TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    UNIQUE (track_id, title)
+);
+
+-- tags, follow_ups: JSON lists of strings; sources: JSON list of {kind, title, url, minutes, why}.
+-- Card content is private: it lives here and in private files only.
+CREATE TABLE IF NOT EXISTS cards (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    track_id      INTEGER NOT NULL REFERENCES tracks(id),
+    chapter_id    INTEGER REFERENCES chapters(id),
+    position      INTEGER NOT NULL,
+    front         TEXT NOT NULL,          -- the question
+    back          TEXT NOT NULL,          -- key points, Markdown
+    tags          TEXT NOT NULL DEFAULT '[]',
+    follow_ups    TEXT NOT NULL DEFAULT '[]',
+    sources       TEXT NOT NULL DEFAULT '[]',
+    source_gap_id INTEGER REFERENCES gaps(id),
+    status        TEXT NOT NULL DEFAULT 'todo',  -- todo / done (learn.CARD_STATUSES)
+    done_at       TEXT,                          -- when it was last marked done; NULL while todo
+    created_at    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cards_track ON cards(track_id);
+
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
