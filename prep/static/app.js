@@ -450,46 +450,8 @@
   });
 
   // --- Learn: the card view ------------------------------------------------------------------
-  // The "say it out loud" timer counts down from data-timer seconds (Start / Pause, Reset); at zero
-  // it stops and says "Time". ⤢ Expand on the Prep agent folds Notes away; the choice is kept per
-  // browser. Both stay hidden without the script.
-  const timer = document.querySelector(".timer[data-timer]");
-  if (timer) {
-    const total = Number(timer.dataset.timer) || 120;
-    const shown = timer.querySelector(".timer-time");
-    const toggle = timer.querySelector("[data-timer-toggle]");
-    let left = total;
-    let tick = 0;
-    const paintTimer = () => {
-      shown.textContent = left > 0 ? `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Time";
-      timer.classList.toggle("is-over", left <= 0);
-    };
-    const pause = () => {
-      clearInterval(tick);
-      tick = 0;
-      timer.classList.remove("is-running");
-      toggle.textContent = left > 0 && left < total ? "Resume" : "Start";
-    };
-    toggle.addEventListener("click", () => {
-      if (tick) { pause(); return; }
-      if (left <= 0) left = total;
-      timer.classList.add("is-running");
-      toggle.textContent = "Pause";
-      tick = setInterval(() => {
-        left -= 1;
-        paintTimer();
-        if (left <= 0) pause();
-      }, 1000);
-      paintTimer();
-    });
-    timer.querySelector("[data-timer-reset]").addEventListener("click", () => {
-      left = total;
-      pause();
-      paintTimer();
-    });
-    timer.hidden = false;
-  }
-
+  // ⤢ Expand on the Prep agent folds Notes away; the choice is kept per browser. Hidden without the
+  // script.
   const expand = document.querySelector("[data-learn-expand]");
   if (expand) {
     const EXPAND_KEY = "learn-agent-expanded";

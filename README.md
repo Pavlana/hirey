@@ -26,7 +26,7 @@ WeasyPrint, renders the tailored CV PDF), 601 unit tests.
 |---|---|---|
 | ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Agent box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
 
-| Learn: a card with the timer |
+| Learn: a card and its tracks |
 |---|
 | ![Learn card view with Notes and Prep agent placeholders](docs/screenshots/learn.png) |
 

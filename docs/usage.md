@@ -129,7 +129,7 @@ charts are server-rendered SVG):
   left (placeholders for now), the card on the right, with the same divider as Applications (its
   width kept per browser on its own). **⤢ Expand** on the Prep agent folds Notes away, remembered
   per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
-  question, a 2-minute **Say it out loud** timer (Start / Pause, Reset), **Show answer** (the key
+  question, **Show answer** (the key
   points and likely follow-ups), the **Learn** box under it, always in view (the sources to watch or
   read, the preparation material; links open in a new tab), and **Done** /
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the

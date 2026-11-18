@@ -790,7 +790,6 @@ def practice_section(conn: sqlite3.Connection) -> str:
 # /learn: the tracks grid. /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
 # Notes and the Prep agent on the left (placeholders for now), a divider, and the card on the right.
 
-TIMER_SECONDS = 120  # "say it out loud": two minutes per answer
 EXPAND_ICON = "⤢"
 
 
@@ -894,10 +893,6 @@ def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
     head = (f'<header class="learn-card-head"><div><p class="learn-where"><a href="/learn">All tracks</a> · {where}</p>'
             f'<p class="learn-sub">Card {i + 1} of {len(ids)} {status}</p></div><nav class="learn-nav" '
             f'aria-label="Cards">{nav}</nav></header>')
-    timer = (f'<div class="timer" data-timer="{TIMER_SECONDS}" hidden><span class="timer-label">Say it out loud</span>'
-             f'<span class="timer-time" role="timer" aria-live="off">{TIMER_SECONDS // 60}:{TIMER_SECONDS % 60:02d}</span>'
-             '<button type="button" class="btn btn-secondary btn-sm" data-timer-toggle>Start</button>'
-             '<button type="button" class="btn btn-ghost btn-sm" data-timer-reset>Reset</button></div>')
     follow = "".join(f"<li>{h(f)}</li>" for f in card["follow_ups"])
     sources = "".join(
         f'<li>{_badge(s["kind"], "s6")} {_link(s.get("url"), s["title"])}'
@@ -917,7 +912,7 @@ def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
         for path, label, variant in (("/learn/done", "Done", "primary"), ("/learn/undo", "Not done yet", "secondary")))
     return (f'<section class="learn-card" id="learn-card" aria-labelledby="learn-q">{head}<div class="learn-card-body">'
             + (f'<div class="chips">{tags}</div>' if tags else "")
-            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{timer}{answer}{learn_box}'
+            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{answer}{learn_box}'
             f'<div class="learn-actions">{buttons}</div></div></section>')
 
 

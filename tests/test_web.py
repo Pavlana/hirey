@@ -1233,7 +1233,7 @@ class LearnPageTest(WebTestCase):
         self.assertIn("data-learn-expand", body)
         self.assertIn("What is a cache-aside read?", body)
         self.assertIn("Card 1 of 3", body)
-        self.assertIn('data-timer="120"', body)
+        self.assertNotIn("timer", body)  # no timer for now
         self.assertIn("Show answer", body)
         self.assertIn("<li>Read the cache first</li>", body)  # the back as Markdown
         self.assertIn("What happens on a cold start?", body)
