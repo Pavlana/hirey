@@ -89,6 +89,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli task edit ID [--title T] [--due D \| --no-due]` / `task delete ID` | Change or delete a task |
 |            | `python -m prep.cli comments list APP` / `comments amend REF "text"` / `comments remove REF` | An application's comments with their refs (`c12`, `h34`); a removed stage comment keeps its move |
 | `/ask`, `/research` | `python -m prep.cli notes APP [--show \| --append [TEXT]]` | The panel's Notes: print them, or add a dated "Agent · 17 Nov" block at the end (TEXT, or stdin when left out); never rewrites the user's text, refuses pay |
+| Prep agent | `python -m prep.cli learn-notes CARD_ID\|all [--show \| --append [TEXT]]` | The Learn page's Notes: a card's note or the "all prep" notebook; print it, or add a dated "Agent" block at the end; never rewrites, refuses pay |
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
@@ -137,6 +138,15 @@ charts are server-rendered SVG):
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
   last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
   date or rating. Phones stack the card above Notes and the Prep agent.
+  **Notes** has two tabs: **this card** (a note per card) and **all prep** (one general notebook),
+  saved as private Markdown files under `private_dir/notes/learn/`. The editor has line numbers and
+  a monospace font; it autosaves 1.5 s after the last change, when it loses focus, and on Cmd/Ctrl-S,
+  with "autosaved HH:MM" on its status line. A save over a note that changed meanwhile (an agent
+  added to it) never overwrites it: an addition at the end is kept below the text being edited and
+  saved again; any other change pauses autosave and shows the note as it is now, and the next Save
+  replaces it. **vim keys** on the status line (off by default, remembered per browser) turns on
+  normal and insert modes: h j k l, w b, 0 $, i a o O, x dd yy p, u, `:w` saves, Esc back to
+  normal, with INSERT/NORMAL and line,col on the status line.
 - **New offers** (`/?view=offers`; the old Job Offers page, `/offers` and `/matches` redirect
   here with their filters): open getjo jobs not yet tracked or skipped, newest day first, then
   highest score. Rows: score, company, role, location, with chips "may be closed" (getjo has not

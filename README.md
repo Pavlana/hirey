@@ -17,7 +17,7 @@ Internal names keep the project's original name: the Python package is `prep`, s
 `~/.config/inter_prep/` and the launchd label is `uk.inter-prep.dashboard`.
 
 Python 3.11+, standard library by default (no frameworks, no build step; one pinned library,
-WeasyPrint, renders the tailored CV PDF), 601 unit tests.
+WeasyPrint, renders the tailored CV PDF), 620 unit tests.
 
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
 ![New offers with the agent's job brief, and the Agent box](docs/screenshots/new-offers.png)
@@ -26,9 +26,9 @@ WeasyPrint, renders the tailored CV PDF), 601 unit tests.
 |---|---|---|
 | ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Agent box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Dashboard charts](docs/screenshots/dashboard.png) |
 
-| Learn: a card and its tracks |
+| Learn: a card, its notes (vim keys on) and its tracks |
 |---|
-| ![Learn card view with Notes and Prep agent placeholders](docs/screenshots/learn.png) |
+| ![Learn card view with the Notes editor and a Prep agent placeholder](docs/screenshots/learn.png) |
 
 ## What it does
 
