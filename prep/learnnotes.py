@@ -1,6 +1,7 @@
-"""Learn notes: private Markdown files under private_dir/notes/learn/, one per card (`card-<id>.md`)
-and one general notebook (`all-prep.md`). The Learn page's Notes editor saves them; agents append
-(`cli learn-notes ... --append`), never rewrite.
+"""Learn notes: private Markdown files under private_dir/notes/learn/, one per card (`card-<id>.md`),
+one general notebook (`all-prep.md`), and the user's own answer to each card (`answer-<id>.md`, the
+card's Your answer box). The Learn page saves them; agents append to notes (`cli learn-notes ...
+--append`), never rewrite, and only read answers.
 
 A save names the stamp of the text it started from (a hash of the file, "" being the empty file); a
 file that changed meanwhile (an agent append) is not overwritten: NotesChanged. Saves and appends hold
@@ -22,17 +23,29 @@ from prep.db import NotesChanged
 FOLDER = Path("notes") / "learn"
 ALL = "all"
 MAX_CHARS = 60_000  # fits MAX_BODY (256 KB) once URL-encoded
-_KEY = re.compile(r"^(?:all|[1-9][0-9]{0,9})$")
+_KEY = re.compile(r"^(?:all|(?:answer-)?[1-9][0-9]{0,9})$")
 
-__all__ = ["ALL", "MAX_CHARS", "NotesChanged", "append", "label", "read", "save"]
+__all__ = ["ALL", "MAX_CHARS", "NotesChanged", "answer_key", "append", "is_answer", "label", "read", "save"]
+
+
+def answer_key(card_id: int) -> str:
+    """The key of a card's own answer (the Your answer box)."""
+    return f"answer-{int(card_id)}"
+
+
+def is_answer(key: str) -> bool:
+    return str(key).startswith("answer-")
 
 
 def _name(key: str) -> str:
-    """The file name for `key`: "all" or a card id. ValueError otherwise (no path from raw input)."""
+    """The file name for `key`: "all", a card id (its note) or "answer-<card id>". ValueError
+    otherwise (no path is ever built from raw input)."""
     key = str(key).strip()
     if not _KEY.match(key):
-        raise ValueError(f"notes must be 'all' or a card id; got {key!r}")
-    return "all-prep.md" if key == ALL else f"card-{key}.md"
+        raise ValueError(f"notes must be 'all', a card id or answer-<card id>; got {key!r}")
+    if key == ALL:
+        return "all-prep.md"
+    return f"{key}.md" if is_answer(key) else f"card-{key}.md"
 
 
 def label(key: str) -> str:
@@ -116,6 +129,8 @@ def save(private_dir: Path | None, key: str, text: str, stamp: str) -> str:
 def append(private_dir: Path | None, key: str, text: str, day: str | None = None, author: str = "Agent") -> str:
     """Add a dated block ("**Agent · 18 Nov**", then the text) at the end; what is there stays as it is.
     Return the new stamp. The agent's text never mentions pay."""
+    if is_answer(key):
+        raise ValueError("a card's answer is the user's own: agents read it (--show), never add to it")
     if not text.strip():
         raise ValueError("nothing to append")
     db.check_no_pay(text, "notes from the agent")

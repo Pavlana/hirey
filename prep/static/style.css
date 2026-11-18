@@ -767,7 +767,7 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-current summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
 .ed-current pre { max-height: 220px; overflow: auto; margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
   background: var(--surface-2); border-radius: var(--radius-sm); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.ed-frame { display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(320px, 56vh, 760px); }
+.ed-frame { display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(200px, 34vh, 340px); }  /* ~13-15 lines: the Prep agent stays in view */
 .ed-frame:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
 .ed-text:focus-visible { box-shadow: none; }
 .ed-gutter, .ed-text { margin: 0; font: 13px/1.6 var(--mono); tab-size: 4; }
@@ -784,6 +784,16 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-vim { padding: 1px 8px; border: 1px solid var(--border); border-radius: var(--radius-full); background: none;
   color: var(--text-muted); font: inherit; cursor: pointer; }
 .ed-vim:hover { color: var(--text); }
+/* Your answer on the card: a plain textarea from six rows, growing as it is typed (app.js). */
+.answer-box { display: grid; gap: var(--space-2); margin: 0; }
+.answer-box > .warning, .answer-box > .ed-current { margin: 0; }
+.answer-label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.answer-text { width: 100%; min-height: calc(6 * 1.55em + 2 * var(--space-3)); padding: var(--space-3); resize: vertical; overflow: hidden;
+  background: var(--surface-2); color: var(--text); border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  font: 15px/1.55 var(--font); }
+.answer-text::placeholder { color: var(--text-faint); }
+.answer-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); margin: 0; min-height: 18px;
+  color: var(--text-muted); font: 12px/1.5 var(--mono); }
 .ed-vim[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
 @media (min-width: 801px) {
   .learn-view { column-gap: 0; align-items: stretch;

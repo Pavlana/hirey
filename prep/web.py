@@ -692,19 +692,21 @@ def card_undo(settings: Settings, conn: sqlite3.Connection, form: dict[str, str]
 
 def _notes_key(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int, str]:
     """(card id, note key) from a Learn notes form: the card is the one open, the note "card" (its
-    own) or "all" (the general notebook). An unknown card is a LookupError."""
+    own), "all" (the general notebook) or "answer" (the card's Your answer). An unknown card is a
+    LookupError."""
     card_id = _card_id(form)
     learn.get_card(conn, card_id)
     which = form.get("note") or "card"
-    if which not in ("card", learnnotes.ALL):
-        raise BadRequest("note must be card or all.")
-    return card_id, str(card_id) if which == "card" else learnnotes.ALL
+    keys = {"card": str(card_id), learnnotes.ALL: learnnotes.ALL, "answer": learnnotes.answer_key(card_id)}
+    if which not in keys:
+        raise BadRequest("note must be card, all or answer.")
+    return card_id, keys[which]
 
 
 def save_learn_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The Learn Notes editor's save (autosave, :w, Cmd-S, or Save without the script): replace the
-    note unless it changed since the editor loaded it (its `stamp`); then the editor comes back with
-    the user's text and the current note beside it."""
+    """The Learn Notes editor's or Your answer's save (autosave, :w, Cmd-S, or Save without the
+    script): replace the text unless it changed since the page loaded it (its `stamp`); then the box
+    comes back with the user's text and the current text beside it."""
     card_id, key = _notes_key(conn, form)
     text = form.get("text", "")
     try:
@@ -712,7 +714,8 @@ def save_learn_notes(settings: Settings, conn: sqlite3.Connection, form: dict[st
     except learnnotes.NotesChanged as e:
         current = learnnotes.read(settings.private_dir, key)
         log.info("learn note %s save refused: it changed meanwhile", learnnotes.label(key))  # never the text
-        raise NotesStale(str(e), _notes_editor(card_id, key, current, draft=text, alert=str(e)), current["stamp"],
+        box = _answer_box if learnnotes.is_answer(key) else _notes_editor
+        raise NotesStale(str(e), box(card_id, key, current, draft=text, alert=str(e)), current["stamp"],
                          {"text": current["text"]}) from e
     log.info("learn note %s saved from the dashboard", learnnotes.label(key))
     return {"redirect": _notes_url(card_id, key), "stamp": stamp}
@@ -924,7 +927,11 @@ def _learn_view(settings: Settings, conn: sqlite3.Connection, card: dict, key: s
                     action=expand, cls="learn-agent")
             + "</div>")
     handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and agent,card")
-    return f'<div class="learn-view" id="learn-view">{side}{handle}{_learn_card(conn, card)}</div>'
+    answer = ""
+    if settings.private_dir is not None:
+        key = learnnotes.answer_key(card["id"])
+        answer = _answer_box(card["id"], key, learnnotes.read(settings.private_dir, key))
+    return f'<div class="learn-view" id="learn-view">{side}{handle}{_learn_card(conn, card, answer)}</div>'
 
 
 def _notes_url(card_id: int, key: str) -> str:
@@ -954,17 +961,14 @@ def _notes_editor(card_id: int, key: str, note: dict, draft: str | None = None, 
     lines = len(text.replace("\r\n", "\n").split("\n"))
     gutter = "\n".join(str(n) for n in range(1, lines + 1))
     which = "all" if key == learnnotes.ALL else "card"
-    current = ""
-    if draft is not None:
-        current = (_banner(alert, "warning") + '<details class="ed-current" open><summary>The note as it is now</summary>'
-                   f'<pre>{h(note["text"]) or "(empty)"}</pre></details>')
+    current = _current_text(note, alert) if draft is not None else ""
     label = "Notes for all prep" if key == learnnotes.ALL else "Notes for this card"
     # A textarea drops one leading newline, so one is always written first.
     return (f'<form method="post" action="/learn/notes" class="ed" id="learn-editor" data-learn-notes '
             f'data-card="{h(card_id)}" data-note="{which}">{current}'
             f'<input type="hidden" name="card_id" value="{h(card_id)}"><input type="hidden" name="note" value="{which}">'
             f'<input type="hidden" name="stamp" value="{h(note["stamp"])}">'
-            f'<div class="ed-frame"><pre class="ed-gutter" aria-hidden="true">{gutter}</pre>'
+            f'<div class="ed-frame" data-ed-anchor><pre class="ed-gutter" aria-hidden="true">{gutter}</pre>'
             f'<textarea name="text" class="ed-text" wrap="off" spellcheck="false" autocomplete="off" '
             f'maxlength="{learnnotes.MAX_CHARS}" aria-label="{label}">\n{h(text)}</textarea></div>'
             '<div class="ed-status"><span class="ed-mode" data-ed-mode hidden></span>'
@@ -974,7 +978,31 @@ def _notes_editor(card_id: int, key: str, note: dict, draft: str | None = None, 
             '<button class="btn btn-secondary btn-sm" data-ed-save>Save</button></div></form>')
 
 
-def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
+def _current_text(note: dict, alert: str) -> str:
+    """After a refused save: the warning and the text as it is now (above the user's own text)."""
+    return (_banner(alert, "warning") + '<details class="ed-current" open><summary>As it is now</summary>'
+            f'<pre>{h(note["text"]) or "(empty)"}</pre></details>')
+
+
+def _answer_box(card_id: int, key: str, note: dict, draft: str | None = None, alert: str = "") -> str:
+    """Your answer: a plain textarea (six rows, growing as it is typed; no vim keys) for the user's
+    own answer, typed or dictated before Show answer, saved like the notes (app.js autosaving()) to
+    notes/learn/answer-<id>.md. `draft`: a refused save, as in _notes_editor."""
+    text = note["text"] if draft is None else draft
+    current = _current_text(note, alert) if draft is not None else ""
+    return (f'<form method="post" action="/learn/notes" class="answer-box" id="learn-answer" data-learn-answer '
+            f'data-card="{h(card_id)}" data-note="answer">'
+            '<label class="answer-label" for="answer-text">Your answer</label>'
+            f'<input type="hidden" name="card_id" value="{h(card_id)}"><input type="hidden" name="note" value="answer">'
+            f'<input type="hidden" name="stamp" value="{h(note["stamp"])}">{current}'
+            f'<textarea id="answer-text" name="text" rows="6" class="answer-text" data-ed-anchor '
+            f'maxlength="{learnnotes.MAX_CHARS}" placeholder="Say it, then type or dictate it here before Show answer.">'
+            f'\n{h(text)}</textarea>'
+            '<p class="answer-foot"><span class="ed-saved" data-ed-saved role="status"></span>'
+            '<button class="btn btn-secondary btn-sm" data-ed-save>Save</button></p></form>')
+
+
+def _learn_card(conn: sqlite3.Connection, card: dict, answer_box: str = "") -> str:
     cards = learn.list_cards(conn, card["track_id"])
     ids = [c["id"] for c in cards]
     i = ids.index(card["id"])
@@ -1008,7 +1036,7 @@ def _learn_card(conn: sqlite3.Connection, card: dict) -> str:
         for path, label, variant in (("/learn/done", "Done", "primary"), ("/learn/undo", "Not done yet", "secondary")))
     return (f'<section class="learn-card" id="learn-card" aria-labelledby="learn-q">{head}<div class="learn-card-body">'
             + (f'<div class="chips">{tags}</div>' if tags else "")
-            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{answer}{learn_box}'
+            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{answer_box}{answer}{learn_box}'
             f'<div class="learn-actions">{buttons}</div></div></section>')
 
 

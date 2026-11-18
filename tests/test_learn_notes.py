@@ -190,3 +190,62 @@ class LearnNotesCliTest(WebTestCase):
         self.assertNotEqual(self.run_cli("learn-notes", "../x")[0], 0)
         self.assertNotEqual(self.run_cli("learn-notes", "1", "--append", "salary chat")[0], 0)
         self.assertEqual(learnnotes.read(self.settings.private_dir, "1")["text"], "")
+
+
+class AnswerBoxTest(WebTestCase):
+    """Your answer on the card: notes/learn/answer-<id>.md, saved like the notes, read only for agents."""
+
+    def post_json(self, form: dict) -> tuple[int, dict]:
+        status, _, body = self.post("/learn/notes", form, JSON)
+        return status, json.loads(body)
+
+    def test_box_sits_between_the_question_and_show_answer(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        q, box, fold = (body.index('id="learn-q"'), body.index('id="learn-answer"'),
+                        body.index('<details class="learn-answer"'))
+        self.assertLess(q, box)
+        self.assertLess(box, fold)
+        self.assertIn('<label class="answer-label" for="answer-text">Your answer</label>', body)
+        self.assertIn('<input type="hidden" name="note" value="answer">', body)
+        self.assertIn('rows="6"', body)
+        box_html = body[box:fold]
+        self.assertNotIn("data-vim-toggle", box_html)  # a plain textarea
+
+    def test_save_escape_and_stale_guard(self) -> None:
+        body = self.get("/learn?card=2")[2]
+        stamp = re.search(r'data-note="answer">.*?name="stamp" value="([^"]*)"', body, re.S).group(1)
+        status, reply = self.post_json({"card_id": "2", "note": "answer", "stamp": stamp, "text": "Many <b>misses</b> at once"})
+        self.assertEqual(status, 200)
+        path = self.settings.private_dir / "notes" / "learn" / "answer-2.md"
+        self.assertEqual(path.read_text(), "Many <b>misses</b> at once\n")
+        self.assertIn("Many &lt;b&gt;misses&lt;/b&gt; at once\n</textarea>", self.get("/learn?card=2")[2])
+        self.assertFalse((self.settings.private_dir / "notes" / "learn" / "card-2.md").exists())  # not the note
+        status, reply = self.post_json({"card_id": "2", "note": "answer", "stamp": stamp, "text": "older tab"})
+        self.assertEqual(status, 400)
+        self.assertIn('id="learn-answer"', reply["html"])  # the answer box again, not the notes editor
+        self.assertIn(">\nolder tab</textarea>", reply["html"])
+        self.assertEqual(reply["text"], "Many <b>misses</b> at once\n")
+        self.assertEqual(path.read_text(), "Many <b>misses</b> at once\n")
+
+    def test_plain_form_save_returns_to_the_card(self) -> None:
+        status, headers, _ = self.post("/learn/notes", {"card_id": "3", "note": "answer", "stamp": learnnotes.stamp_of(""),
+                                                        "text": "x"}, {**HOST, "Origin": "http://localhost:8765"})
+        self.assertEqual((status, headers["Location"]), (303, "/learn?card=3&msg=learn_notes_saved"))
+
+    def test_agents_read_answers_but_never_add_to_them(self) -> None:
+        learnnotes.save(self.settings.private_dir, "answer-1", "Read the cache, then the db.", learnnotes.stamp_of(""))
+        code, out, _ = self.run_cli("learn-notes", "answer", "1", "--show")
+        self.assertEqual(code, 0)
+        self.assertIn("Read the cache, then the db.", out)
+        self.assertIn("What is a cache-aside read?", out)
+        self.assertIn("notes/learn/answer-1.md", out)
+        self.assertIn("(none yet)", self.run_cli("learn-notes", "answer", "2")[1])
+        self.assertNotEqual(self.run_cli("learn-notes", "answer", "1", "--append", "x")[0], 0)
+        self.assertNotEqual(self.run_cli("learn-notes", "answer")[0], 0)
+        self.assertNotEqual(self.run_cli("learn-notes", "answer", "99")[0], 0)
+        self.assertNotEqual(self.run_cli("learn-notes", "1", "2")[0], 0)
+        with self.assertRaises(ValueError):
+            learnnotes.append(self.settings.private_dir, "answer-1", "x")
+        with self.assertRaises(ValueError):
+            learnnotes.read(self.settings.private_dir, "answer-0")
+        self.assertEqual(learnnotes.read(self.settings.private_dir, "answer-1")["text"], "Read the cache, then the db.\n")

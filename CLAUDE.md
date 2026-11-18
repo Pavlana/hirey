@@ -118,7 +118,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
   `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
   after the user confirms), `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`, `cards delete ID`;
-  `learn-notes CARD_ID|all [--show | --append [TEXT]]` (the Learn page's Notes, private_dir/notes/learn/)
+  `learn-notes CARD_ID|all [--show | --append [TEXT]]` (the Learn page's Notes, private_dir/notes/learn/),
+  `learn-notes answer CARD_ID --show` (the card's Your answer, read only)
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`

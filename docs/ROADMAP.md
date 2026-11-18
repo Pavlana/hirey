@@ -82,8 +82,8 @@ Acceptance:
 ## Phase 4 — Learn and weekly plan
 
 Status: in progress (Learn 1/5: tracks and cards, done or to do, data and CLI; Learn 2/5: the Learn page with
-tracks and the card view; Learn 3/5: the Notes editor, per card and "all prep", autosave, optional vim keys;
-Learn 5/5: Markdown import and gap cards; the prep agent is still a placeholder).
+tracks and the card view; Learn 3/5: the Notes editor, per card and "all prep", autosave, optional vim keys, and
+Your answer on the card; Learn 5/5: Markdown import and gap cards; the prep agent is still a placeholder).
 
 - Learn data: `tracks` (title, subtitle, cover, order) split into `chapters`, and `cards`
   (question, key points, tags, follow-ups, sources to watch or read, source gap, and a status:
