@@ -8,6 +8,9 @@ for the whole search), and new job briefs `/research briefs`, through `dev3 mess
 command is a fixed argument list built from database ids only (no shell, never form or message
 text). Any failure is logged and ignored: the work stays queued for the next session
 (SessionStart hook, /today).
+
+With `prep_assistant_task` set, each new message to the Learn page's Prep agent is sent to that second
+assistant as `/learn-ask <card id> <message id>` (or `/learn-ask general <message id>` with no card).
 """
 
 import logging
@@ -120,6 +123,36 @@ def notify_message(settings: Settings, app_id: int | None, message_id: int, job:
         log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
         return 0
     return _send([ask_command(settings, app_id, message_id, dev3, job, topic)])
+
+
+def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3: str) -> list[str]:
+    """The `dev3 message` argument list for a new Prep agent message: ids only, never its text."""
+    project = ["--project", settings.assistant_project] if settings.assistant_project else []
+    about = str(int(card_id)) if card_id is not None else "general"
+    subject = f"Learn question on card {int(card_id)}" if card_id is not None else "Learn question"
+    return [dev3, "message", "--task", f"seq:{int(settings.prep_assistant_task)}", *project,
+            "--subject", subject, f"/learn-ask {about} {int(message_id)}"]
+
+
+def notify_learn(settings: Settings, card_id: int | None, message_id: int) -> int:
+    """Send `/learn-ask <card | general> <message id>` to the prep assistant; returns 1 if delivered.
+    Never raises."""
+    if not settings.prep_assistant_task:
+        return 0
+    dev3 = dev3_path(settings)
+    if dev3 is None:
+        log.warning("prep_assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
+        return 0
+    return _send([learn_command(settings, card_id, message_id, dev3)])
+
+
+def notify_learn_in_background(settings: Settings, card_id: int | None, message_id: int) -> threading.Thread | None:
+    """notify_learn() in a daemon thread, so the Send button never waits for dev3."""
+    if not settings.prep_assistant_task:
+        return None
+    thread = threading.Thread(target=notify_learn, args=(settings, card_id, message_id), daemon=True)
+    thread.start()
+    return thread
 
 
 def _send(argvs: list[list[str]]) -> int:

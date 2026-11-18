@@ -22,7 +22,9 @@ Keys:
                     others when their panel is first opened (default 8, 1-10)
     assistant_task  optional dev3 task seq of a standing assistant agent: newly queued research
                     and CV fit requests are sent to it with `dev3 message` (unset: no message)
-    assistant_project  optional dev3 project id, passed with --project when set
+    prep_assistant_task  optional dev3 task seq of a second standing assistant, for the Learn page's
+                    Prep agent: each new message there is sent to it as `/learn-ask` (unset: no message)
+    assistant_project  optional dev3 project id, passed with --project when set (both assistants)
     dev3_bin        optional absolute path to the dev3 CLI (default: found on PATH)
     pdf_python      optional absolute path to a Python that has WeasyPrint (a venv outside any
                     worktree), used for tailored CV PDFs when the running Python lacks it
@@ -63,15 +65,16 @@ ENV_KEYS = {
     "stale_days": "PREP_STALE_DAYS",
     "brief_auto_min_score": "PREP_BRIEF_AUTO_MIN_SCORE",
     "assistant_task": "PREP_ASSISTANT_TASK",
+    "prep_assistant_task": "PREP_PREP_ASSISTANT_TASK",
     "assistant_project": "PREP_ASSISTANT_PROJECT",
     "dev3_bin": "PREP_DEV3_BIN",
     "pdf_python": "PREP_PDF_PYTHON",
     "facts_file": "PREP_FACTS_FILE",
 }
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
-# on example data) never pings the standing assistant named in the settings file. Path and number
+# on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the standing assistants named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
-CLEARABLE = ("assistant_task", "assistant_project", "dev3_bin")
+CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin")
 
 
 class ConfigError(Exception):
@@ -90,6 +93,7 @@ class Settings:
     stale_days: int = DEFAULT_STALE_DAYS
     brief_auto_min_score: int = DEFAULT_BRIEF_AUTO_MIN_SCORE
     assistant_task: int | None = None
+    prep_assistant_task: int | None = None
     assistant_project: str | None = None
     dev3_bin: Path | None = None
     pdf_python: Path | None = None
@@ -160,6 +164,8 @@ def load_settings(path: Path | None = None) -> Settings:
         stale_days=_int(data, "stale_days", DEFAULT_STALE_DAYS, 1, 365),
         brief_auto_min_score=_int(data, "brief_auto_min_score", DEFAULT_BRIEF_AUTO_MIN_SCORE, 1, 10),
         assistant_task=_int(data, "assistant_task", 0, 1, 10**9) if data.get("assistant_task") else None,
+        prep_assistant_task=(_int(data, "prep_assistant_task", 0, 1, 10**9)
+                             if data.get("prep_assistant_task") else None),
         assistant_project=_project(data.get("assistant_project")),
         dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,
         pdf_python=Path(data["pdf_python"]).expanduser() if data.get("pdf_python") else None,

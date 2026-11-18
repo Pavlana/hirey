@@ -56,6 +56,10 @@ private_dir = "/absolute/path/to/inter_prep"
 # assistant_project = "00000000-0000-0000-0000-000000000000"
 # Optional. Absolute path to the dev3 CLI. Default: dev3 on PATH, else ~/.dev3.0/bin/dev3.
 # dev3_bin = "/absolute/path/to/dev3"
+# Optional. The seq number of a second long-running dev3 task, the prep assistant: each new message
+# in the Learn page's Prep agent box is sent to it as "/learn-ask <card id> <message id>". Unset:
+# messages wait for /learn-ask in any Claude session. assistant_project and dev3_bin apply to it too.
+# prep_assistant_task = 43
 
 # Optional. Absolute path to a Python that has WeasyPrint (requirements.txt), for the PDF of each
 # tailored CV. Needed when the skills run a Python without it, e.g. from a dev3 worktree: point it

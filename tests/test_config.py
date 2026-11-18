@@ -64,7 +64,21 @@ class LoadSettingsTest(unittest.TestCase):
             s = load_settings(path)
         self.assertEqual((s.prep_db, s.getjo_db, s.dashboard_port), (Path("/data/prep.db"), Path("/data/jobs.db"), 9000),
                          "an empty path or number override is ignored")
-        self.assertEqual(config.CLEARABLE, ("assistant_task", "assistant_project", "dev3_bin"))
+        self.assertEqual(config.CLEARABLE, ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin"))
+
+    def test_prep_assistant_task(self) -> None:
+        # The Learn page's Prep agent has its own standing assistant; an empty env var clears it.
+        path = self.write("assistant_task = 42\nprep_assistant_task = 51\n")
+        s = load_settings(path)
+        self.assertEqual((s.assistant_task, s.prep_assistant_task), (42, 51))
+        with mock.patch.dict(os.environ, {"PREP_PREP_ASSISTANT_TASK": "9"}):
+            self.assertEqual(load_settings(path).prep_assistant_task, 9)
+        with mock.patch.dict(os.environ, {"PREP_PREP_ASSISTANT_TASK": ""}):
+            s = load_settings(path)
+        self.assertEqual((s.assistant_task, s.prep_assistant_task), (42, None))
+        self.assertIsNone(load_settings(self.write("")).prep_assistant_task)
+        with self.assertRaises(ConfigError):
+            load_settings(self.write('prep_assistant_task = "x; rm"\n'))
 
     def test_bad_assistant_keys_rejected(self) -> None:
         for text in ('assistant_task = "abc"\n', "assistant_task = -1\n", 'assistant_project = "a b; rm"\n',

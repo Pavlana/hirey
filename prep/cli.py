@@ -12,6 +12,9 @@
     python -m prep.cli learn-notes CARD_ID|all [--show | --append [TEXT]]   (the Learn page's Notes: a card's
                                                        note or the "all prep" notebook; same append rules)
     python -m prep.cli learn-notes answer CARD_ID [--show]   (the user's own answer on the card: read only)
+    python -m prep.cli learn-thread show MSG [--claim]   (a Prep agent message: its card, context files, the
+                                                       Learn conversation; used by /learn-ask)
+    python -m prep.cli learn-thread pending | reply --to MSG   (Prep agent messages waiting; the reply on stdin)
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
@@ -152,6 +155,9 @@ def cmd_today(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     if line:
         print(line + "\n")
     line = _thread_line(db.pending_messages(conn))
+    if line:
+        print(line + "\n")
+    line = _learn_line(db.pending_messages(conn, topic=db.LEARN))
     if line:
         print(line + "\n")
     line = _brief_line(db.open_briefs(conn))
@@ -767,6 +773,7 @@ def _thread_line(messages: list[dict]) -> str:
     """One line: thread messages waiting for the agent, with application ids only (never text): a
     message about a job offer not yet tracked counts as "job", one about the whole search as
     "general"."""
+    messages = [m for m in messages if m.get("topic") != db.LEARN]  # the Prep agent's: _learn_line
     if not messages:
         return ""
     ids = {m["application_id"] for m in messages if m["application_id"] is not None}
@@ -780,6 +787,15 @@ def _thread_line(messages: list[dict]) -> str:
     busy = f"; {claimed} already being answered by another session" if claimed else ""
     noun = "message" if len(messages) == 1 else "messages"
     return f"Agent thread: {len(messages)} {noun} waiting (applications {apps}){busy}. Run /ask to answer."
+
+
+def _learn_line(messages: list[dict]) -> str:
+    """One line: Prep agent messages (the Learn page) waiting for /learn-ask, a count only."""
+    messages = [m for m in messages if m.get("topic") == db.LEARN]
+    if not messages:
+        return ""
+    noun = "message" if len(messages) == 1 else "messages"
+    return f"Prep agent (Learn): {len(messages)} {noun} waiting. Run /learn-ask to answer."
 
 
 def _brief_line(requests: list[dict]) -> str:
@@ -819,6 +835,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
                 ("SELECT application_id, kind, status, claimed_at FROM agent_requests "
                  "WHERE status IN ('pending', 'claimed') ORDER BY id", _queue_line),
                 (_messages_query(conn), _thread_line),
+                (_messages_query(conn), _learn_line),
                 ("SELECT NULL, 'brief', status, claimed_at FROM brief_requests "
                  "WHERE status IN ('pending', 'claimed') ORDER BY requested_at", _brief_line),
             ):
@@ -1344,6 +1361,8 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
             raise ValueError("give an application, --job, --cv or --message, not more than one")
         if db.message_topic(conn, args.message) == db.COMPARE:
             return _compare_show(args, settings, conn)
+        if db.message_topic(conn, args.message) == db.LEARN:
+            return _learn_show(args, settings, conn)
         args.app_id, job_id = db.message_subject(conn, args.message)
         if args.app_id is None and job_id:
             args.job = job_id
@@ -1623,7 +1642,9 @@ def _print_messages(messages: list[dict], title: str, conn: sqlite3.Connection |
                  else f"job {m['getjo_job_id']}" if m.get("getjo_job_id")
                  else "my CV" if m.get("topic") == "cv"
                  else "comparing " + " · ".join(_target_name(t) for t in compared.get(m["id"], []))
-                 if m.get("topic") == db.COMPARE else "whole search")
+                 if m.get("topic") == db.COMPARE
+                 else (f"Learn card {m['card_id']}" if m.get("card_id") is not None else "Learn, general")
+                 if m.get("topic") == db.LEARN else "whole search")
         print(f"\n  [message {m['id']} · {who} · {about} · {m['created_at'][:16].replace('T', ' ')} UTC]")
         print("\n".join(f"    {line}" for line in m["body"].splitlines()))
     if not messages:
@@ -1657,8 +1678,109 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     topic = db.message_topic(conn, args.to)
     about = (f"about #{app_id}" if app_id is not None else f"about job offer {job}" if job
              else "about the master CV" if topic == "cv" else "comparing several jobs" if topic == db.COMPARE
-             else "about the whole search")
-    print(f"Reply {reply_id} saved {about}; message {args.to} answered. The dashboard's Agent box shows it.")
+             else "to the Prep agent (Learn page)" if topic == db.LEARN else "about the whole search")
+    box = "the Learn page's Prep agent" if topic == db.LEARN else "the dashboard's Agent box"
+    print(f"Reply {reply_id} saved {about}; message {args.to} answered. {box[0].upper() + box[1:]} shows it.")
+    return 0
+
+
+LEARN_CONTEXT = 30  # Prep agent messages shown with a Learn question (a quiz runs across cards)
+LEARN_CONTEXT_FILES = (("stories", "stories.md"), ("interview coaching", "notes/interview-coaching.md"))
+
+
+def cmd_learn_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """The Learn page's Prep agent (used by /learn-ask): `show MSG` prints what answering it needs,
+    `pending` the messages waiting, `reply --to MSG` stores the answer (as `thread reply`)."""
+    if args.learn_cmd == "pending":
+        waiting = db.pending_messages(conn, topic=db.LEARN)
+        for m in waiting:
+            busy = ", being answered by another session" if m["claimed"] else ""
+            about = f"card {m['card_id']}" if m["card_id"] is not None else "general"
+            print(f"message {m['id']} on {about} (/learn-ask {about.replace('card ', '')} {m['id']}; "
+                  f"sent {m['created_at'][:16].replace('T', ' ')} UTC{busy})")
+        if not waiting:
+            print("No Prep agent messages waiting.")
+        return 0
+    if db.message_topic(conn, args.message) != db.LEARN:
+        raise LookupError(f"message {args.message} is not a Prep agent (Learn) message; use thread show")
+    if args.learn_cmd == "reply":
+        args.to, args.app_id = args.message, None
+        return _thread_reply(args, conn)
+    return _learn_show(args, settings, conn)
+
+
+def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """A Prep agent message: the open card in full (front, key points, follow-ups, Learn sources with
+    links), its track's chapters, the private context files to read, the latest of the Learn
+    conversation, and the commands that answer it. --claim takes this one message."""
+    claimed = [args.message] if args.claim and db.claim_message(conn, args.message) else []
+    msg = db.get_message(conn, args.message)
+    try:
+        card = learn.get_card(conn, msg["card_id"]) if msg["card_id"] is not None else None
+    except LookupError:  # deleted since (cards delete): answer it as a general message
+        card = None
+        print(f"Card {msg['card_id']} was deleted since this message was sent; answer it as a general one.")
+    if card is None:
+        print(f"Message {msg['id']} to the Prep agent, about prep in general (no card open).")
+    else:
+        where = card["track_title"] + (f" · {card['chapter_title']}" if card["chapter_title"] else "")
+        print(f"Message {msg['id']} to the Prep agent, sent with card {card['id']} open ({where}; {card['status']}).")
+        print(f"\nCard {card['id']}")
+        print(f"  front: {card['front']}")
+        print("  back (key points):")
+        print("\n".join(f"    {line}" for line in card["back"].splitlines()) or "    (none)")
+        if card["follow_ups"]:
+            print("  follow-ups:")
+            print("\n".join(f"    - {f}" for f in card["follow_ups"]))
+        if card["tags"]:
+            print(f"  tags: {', '.join(card['tags'])}")
+        print("  Learn sources (open the links when the question needs them):" if card["sources"] else "  Learn sources: none")
+        for src in card["sources"]:
+            extra = "".join(f" · {x}" for x in (f"{src['minutes']} min" if src.get("minutes") is not None else "",
+                                                 src.get("why") or "") if x)
+            print(f"    - [{src['kind']}] {src['title']}" + (f" <{src['url']}>" if src.get("url") else "") + extra)
+        print(f"\nChapters of {card['track_title']} (for \"quiz me on chapter N\"):")
+        chapters: dict[str, list[int]] = {}
+        for c in learn.list_cards(conn, card["track_id"]):
+            chapters.setdefault(c["chapter_title"] or "(no chapter)", []).append(c["id"])
+        for n, (title, ids) in enumerate(chapters.items(), 1):
+            print(f"  {n}. {title}: cards {', '.join(map(str, ids))} (cards show ID)")
+
+    print("\nContext files (private; read what the message needs):")
+    private_dir = settings.private_dir
+    if private_dir:
+        for label, rel in LEARN_CONTEXT_FILES:
+            path = private_dir / rel
+            print(f"  {label}: {path} ({'exists' if path.is_file() else 'missing'})")
+        facts = config.facts_path(settings)
+        print(f"  facts bank: {facts} ({'exists' if facts and facts.is_file() else 'missing'})")
+        keys = ([(str(card["id"]), "this card's notes"), (learnnotes.answer_key(card["id"]), "the user's answer (read only)")]
+                if card else []) + [(learnnotes.ALL, "all-prep notes")]
+        for key, label in keys:
+            path = private_dir / learnnotes.label(key)
+            print(f"  {label}: {path} ({'exists' if path.is_file() else 'missing'})")
+        print(f"  all Learn notes: {private_dir / learnnotes.FOLDER}")
+    else:
+        print("  private_dir is not set: no stories, facts or notes")
+    if msg["body"] == db.LEARN_CHECK and card is not None:
+        print(f"\nCheck my answer: read it with python -m prep.cli learn-notes answer {card['id']} --show, then reply "
+              "with what was covered, what was missed and one better phrasing.")
+
+    _print_messages(db.thread(conn, topic=db.LEARN, limit=LEARN_CONTEXT),
+                    f"The Prep agent conversation (latest {LEARN_CONTEXT})", conn)
+    print()
+    if args.claim:
+        if claimed:
+            print(f"Claimed for this session: message {args.message}.")
+        elif msg["status"] == "answered":
+            print("Nothing claimed: this message is already answered.")
+        else:
+            print("Nothing claimed: another session is already answering it. Leave it alone.")
+    if claimed or (not args.claim and msg["status"] != "answered"):
+        print(f"To answer it: python -m prep.cli learn-thread reply --to {args.message} with the text on stdin")
+        if card is not None:
+            print(f"Add to this card's notes (only when the user asks): python -m prep.cli learn-notes {card['id']} --append")
+            print("Save a card (only after the user confirms the draft): python -m prep.cli cards add, JSON on stdin")
     return 0
 
 
@@ -2032,6 +2154,17 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--file", help="a file holding the reply (default: stdin)")
     hsub.add_parser("pending", help="user messages waiting for the agent")
     p.set_defaults(func=cmd_thread)
+
+    p = sub.add_parser("learn-thread", help="the Learn page's Prep agent (used by /learn-ask)")
+    lsub = p.add_subparsers(dest="learn_cmd", required=True)
+    t = lsub.add_parser("show", help="a Prep agent message: its card, context files and the conversation")
+    t.add_argument("message", type=int, help="the message id from /learn-ask")
+    t.add_argument("--claim", action="store_true", help="take this message for this session first")
+    t = lsub.add_parser("reply", help="answer a Prep agent message (text from --file or stdin)")
+    t.add_argument("--to", dest="message", type=int, required=True, help="the user message id being answered")
+    t.add_argument("--file", help="a file holding the reply (default: stdin)")
+    lsub.add_parser("pending", help="Prep agent messages waiting")
+    p.set_defaults(func=cmd_learn_thread)
 
     p = sub.add_parser("brief", help="job briefs: the agent's short summary of a job description, shown in the panel")
     bsub = p.add_subparsers(dest="brief_cmd", required=True)

@@ -78,10 +78,10 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
-             assistant.py (optional dev3 message to a standing agent),
+             assistant.py (optional dev3 message to a standing agent: /ask, /research, /learn-ask),
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
              static/style.css + app.js + vim.js (Learn editor's vim keys), seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, stage/, task/, research/, ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/, learn-ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
@@ -111,15 +111,18 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   (transcript file under `private_dir/sessions/`), then `session add --kind mock ... --file PATH`
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
 - Example data: `python -m prep.seed_example`, then
-  `PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
+  `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
-  `PREP_ASSISTANT_TASK=` keeps it from messaging the real standing assistant)
+  `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep it from messaging the real standing assistants)
 - Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
   `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
   `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
   after the user confirms), `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`, `cards delete ID`;
   `learn-notes CARD_ID|all [--show | --append [TEXT]]` (the Learn page's Notes, private_dir/notes/learn/),
   `learn-notes answer CARD_ID --show` (the card's Your answer, read only)
+- Prep agent (used by /learn-ask; the Learn page's Prep agent box, pinged to `prep_assistant_task`):
+  `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
+  `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Agent box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`

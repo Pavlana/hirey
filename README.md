@@ -28,7 +28,7 @@ WeasyPrint, renders the tailored CV PDF), 632 unit tests.
 
 | Learn: a card with Your answer, the notes (vim keys on) and the tracks |
 |---|
-| ![Learn card view with Your answer, the Notes editor and a Prep agent placeholder](docs/screenshots/learn.png) |
+| ![Learn card view with Your answer, the Notes editor and the Prep agent](docs/screenshots/learn.png) |
 
 ## What it does
 
@@ -145,13 +145,13 @@ Example databases are built from made-up fixtures (fictional companies only).
 git clone <this repo> inter_prep && cd inter_prep
 python -m unittest                      # no network, no private files needed
 python -m prep.seed_example             # data/example.db + data/example-getjo.db
-PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
+PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
   python -m prep.web --port 8766        # then open http://localhost:8766
-PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
+PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db \
   python -m prep.cli today
 ```
 
-The empty `PREP_ASSISTANT_TASK=` keeps the example run from messaging a real assistant. The PDF
+The empty `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep the example run from messaging a real assistant. The PDF
 step needs WeasyPrint in a virtual environment (`.venv`, from `requirements.txt`); without it, the
 two PDF render tests are skipped and everything else works. The
 agent features run in Claude Code from this directory: open a session and type `/today`,
