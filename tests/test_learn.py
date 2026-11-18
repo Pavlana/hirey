@@ -4,6 +4,7 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
@@ -79,6 +80,31 @@ class LearnDbTest(unittest.TestCase):
             learn.set_status(self.conn, card_id, "skipped")
         with self.assertRaises(LookupError):
             learn.set_status(self.conn, 999, "done")
+
+    def test_tick_and_untick_sources(self) -> None:
+        card_id = learn.add_card(self.conn, card(sources=[
+            {"kind": "watch", "title": "Widget talk", "url": "https://example.com/w"},
+            {"kind": "read", "title": "  Widget notes  "}]))
+        c = learn.get_card(self.conn, card_id)
+        self.assertEqual(learn.source_progress(self.conn, c), ([False, False], 0))
+        learn.set_source_done(self.conn, card_id, "read:Widget notes", True)
+        learn.set_source_done(self.conn, card_id, "read:Widget notes", True)  # twice is fine
+        self.assertEqual(learn.source_progress(self.conn, c), ([False, True], 1))
+        self.assertEqual(learn.get_card(self.conn, card_id)["status"], "todo")
+        self.assertNotIn("done", learn.get_card(self.conn, card_id)["sources"][1])  # sources stay as given
+        learn.set_source_done(self.conn, card_id, "read:Widget notes", False)
+        learn.set_source_done(self.conn, card_id, "read:Widget notes", False)
+        self.assertEqual(learn.source_progress(self.conn, c), ([False, False], 0))
+        with self.assertRaises(ValueError):
+            learn.set_source_done(self.conn, card_id, "https://example.com/other", True)
+        with self.assertRaises(LookupError):
+            learn.set_source_done(self.conn, 999, "read:Widget notes", True)
+
+    def test_delete_card_removes_its_ticks(self) -> None:
+        card_id = learn.add_card(self.conn, card(sources=[{"kind": "read", "title": "Widget notes"}]))
+        learn.set_source_done(self.conn, card_id, "read:Widget notes", True)
+        learn.delete_card(self.conn, card_id)
+        self.assertEqual(self.conn.execute("SELECT COUNT(*) FROM card_source_done").fetchone()[0], 0)
 
     def test_tracks_done_and_progress(self) -> None:
         learn.add_track(self.conn, "Empty track")
@@ -194,6 +220,27 @@ class LearnImportTest(unittest.TestCase):
         self.assertEqual((fewer["toy"]["unchanged"], fewer["toy"]["not_in_file"]), (1, 1))
         self.assertEqual(learn.card_count(self.conn), 3)  # never deleted
 
+    def test_source_ticks_survive_reimport(self) -> None:
+        self.counts()
+        widget = learn.list_cards(self.conn, "toy")[0]
+        video, script = widget["sources"]
+        self.assertEqual((learn.source_key(video), learn.source_key(script)),
+                         ("https://example.com/v", "notes:Two-minute script"))
+        learn.set_source_done(self.conn, widget["id"], learn.source_key(video), True)
+        learn.set_source_done(self.conn, widget["id"], learn.source_key(script), True)
+        # reordered, the video's title and minutes edited, and a new source added: both ticks kept
+        edited = IMPORT.replace(
+            "- watch | Widget video | https://example.com/v | 7 min | warm-up\n- notes | Two-minute script",
+            "- read | New article\n- notes | Two-minute script\n- watch | Widget video, longer | https://example.com/v | 9 min")
+        self.assertEqual(self.counts(edited)["toy"]["updated"], 1)
+        after = learn.get_card(self.conn, widget["id"])
+        self.assertEqual(learn.source_progress(self.conn, after), ([False, True, True], 2))
+        self.assertEqual(after["status"], "todo")  # ticks never mark the card done
+        # a ticked source dropped from the file is no longer counted
+        fewer = self.counts(edited.replace("- notes | Two-minute script\n", ""))
+        self.assertEqual(fewer["toy"]["updated"], 1)
+        self.assertEqual(learn.source_progress(self.conn, learn.get_card(self.conn, widget["id"])), ([False, True], 1))
+
     def test_import_all_or_none(self) -> None:
         bad = IMPORT + "\n# Third\ncover: neon\n### x\n- y\n"
         with self.assertRaises(ValueError):
@@ -268,6 +315,8 @@ class LearnCliTest(IsolatedTestCase):
 
         _, out, _ = self.run_cli("cards", "show", "1")
         self.assertIn("Q: What is a widget?", out)
+        self.assertNotIn("Learn more", out)  # no sources
+        self.assertIn("· to do", out)
         self.assertIn("· to do", out)
         _, out, _ = self.run_cli("cards", "done", "1")
         self.assertIn("Done: #1", out)
@@ -290,6 +339,16 @@ class LearnCliTest(IsolatedTestCase):
         self.assertIn("done 0 / 1", out)
         code, _, _ = self.run_cli("cards", "list", "--todo", "--done")
         self.assertEqual(code, 2)
+
+    def test_show_ticks_sources(self) -> None:
+        self.run_cli("tracks", "add", "Toy track")
+        self.add(card(track="toy-track", front="Who sells widgets?", sources=[
+            {"kind": "watch", "title": "Widget talk", "url": "https://example.com/w", "minutes": 5},
+            {"kind": "notes", "title": "Script"}]))
+        with closing(db.connect(self.prep_db)) as conn:
+            learn.set_source_done(conn, 1, "https://example.com/w", True)
+        _, out, _ = self.run_cli("cards", "show", "1")
+        self.assertIn("Learn more (1 / 2 done):\n[x] watch: Widget talk · 5 min · https://example.com/w\n[ ] notes: Script", out)
 
     def test_today_shows_done_and_todo(self) -> None:
         _, out, _ = self.run_cli("today")

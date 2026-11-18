@@ -62,6 +62,12 @@
      "back": "- Many misses on one hot key at once\n- Fix: request coalescing or early refresh", "tags": ["round 1"]},
     {"track": "caching-example", "chapter": "Trade-offs", "front": "Write-through or write-back for the toy shop cart?",
      "back": "- Write-through: simpler and safe\n- Write-back: faster writes, risk of loss",
-     "follow_ups": ["How would it be tested?"], "sources": [{"kind": "notes", "title": "Caching notes"}]}
+     "follow_ups": ["How would it be tested?"], "sources": [
+       {"kind": "watch", "title": "Example talk: caching a toy shop cart", "url": "https://example.com/cart-caching-talk", "minutes": 18},
+       {"kind": "read", "title": "Example write-back walkthrough", "url": "https://example.com/write-back", "minutes": 8, "why": "lost writes on a crash"},
+       {"kind": "notes", "title": "Caching notes"}]}
+  ],
+  "source_ticks": [
+    {"card": 3, "key": "https://example.com/cart-caching-talk"}
   ]
 }

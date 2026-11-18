@@ -1880,7 +1880,8 @@ def cmd_cards(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
         status = "todo" if args.todo else ("done" if args.done else None)
         print("\n".join(_card_line(c) for c in learn.list_cards(conn, args.track, status)) or "no cards")
     elif args.cards_cmd == "show":
-        _print_card(learn.get_card(conn, args.card_id))
+        card = learn.get_card(conn, args.card_id)
+        _print_card(card, learn.source_progress(conn, card)[0])
     elif args.cards_cmd == "delete":
         card = learn.delete_card(conn, args.card_id)
         print(f"Deleted card {_card_line(card)}")
@@ -1890,7 +1891,7 @@ def cmd_cards(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     return 0
 
 
-def _print_card(card: dict) -> None:
+def _print_card(card: dict, done: list[bool] | None = None) -> None:
     chapter = f" / {card['chapter_title']}" if card["chapter_title"] else ""
     status = f"done {card['done_at'][:10]}" if card["status"] == "done" else "to do"
     print(f"Card #{card['id']} · {card['track_title']}{chapter} · {status}")
@@ -1902,11 +1903,12 @@ def _print_card(card: dict) -> None:
     if card["follow_ups"]:
         print("\nLikely follow-ups:\n" + "\n".join(f"- {f}" for f in card["follow_ups"]))
     if card["sources"]:
-        print("\nLearn more:")
-        for s in card["sources"]:
+        done = done or [False] * len(card["sources"])
+        print(f"\nLearn more ({sum(done)} / {len(done)} done):")
+        for s, ticked in zip(card["sources"], done):
             extra = "".join(f" · {v}" for v in (f"{s['minutes']} min" if s.get("minutes") is not None else None,
                                                  s.get("url"), s.get("why")) if v)
-            print(f"- {s['kind']}: {s['title']}{extra}")
+            print(f"{'[x]' if ticked else '[ ]'} {s['kind']}: {s['title']}{extra}")
 
 
 def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:

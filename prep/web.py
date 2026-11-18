@@ -108,6 +108,8 @@ MESSAGES = {
     "card_done": "Card done. Here is the next one to do.",
     "card_todo": "Kept as to do.",
     "track_done": "Every card in that track is done.",
+    "source_done": "Source ticked done.",
+    "source_todo": "Source unticked.",
     "learn_notes_saved": "Note saved.",
     "learn_sent": "Sent to the Learn Assistant. Its reply shows here.",
     "learn_check_sent": "Your answer went to the Learn Assistant. Its feedback shows in the Learn Assistant box.",
@@ -735,6 +737,17 @@ def card_undo(settings: Settings, conn: sqlite3.Connection, form: dict[str, str]
     return {"redirect": f"/learn?card={card_id}"}
 
 
+def tick_source(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """A Learn source's tick: done=1 ticks it, done=0 unticks it (the state wanted, so a second click
+    or a stale page does no harm). The card's own Done / Not done yet is not touched."""
+    card_id = _card_id(form)
+    done = form.get("done") == "1"
+    card = learn.set_source_done(conn, card_id, form.get("key", ""), done)
+    log.info("learn card %s: a source %s from the dashboard", card_id, "ticked" if done else "unticked")
+    return {"redirect": f"/learn?card={card_id}", "html": _learn_sources(conn, card),
+            "msg": "source_done" if done else "source_todo"}
+
+
 def _notes_key(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int, str]:
     """(card id, note key) from a Learn notes form: the card is the one open, the note "card" (its
     own), "all" (the general notebook) or "answer" (the card's Your answer). An unknown card is a
@@ -913,6 +926,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/tasks/reopen": (reopen_task, "/", "task_reopened"),
     "/learn/done": (card_done, "/learn", "card_done"),
     "/learn/undo": (card_undo, "/learn", "card_todo"),
+    "/learn/source": (tick_source, "/learn", "source_done"),
     "/learn/notes": (save_learn_notes, "/learn", "learn_notes_saved"),
     "/learn/message": (send_learn_message, "/learn", "learn_sent"),
     "/learn/check": (check_answer, "/learn", "learn_check_sent"),
@@ -1233,6 +1247,33 @@ def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | N
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
 
 
+def _learn_sources(conn: sqlite3.Connection, card: dict) -> str:
+    """The card's Learn box: its sources, each with a tick (a form posting the state wanted, so it works
+    without JS); a ticked one is greyed and struck through. The header counts the ticked ones."""
+    # The sources are the preparation material, so they stay in view; only the answer is folded.
+    if not card["sources"]:
+        return ""
+    flags, done = learn.source_progress(conn, card)
+    rows = []
+    for s, ticked in zip(card["sources"], flags):
+        label = ("Mark not done: " if ticked else "Mark done: ") + s["title"]
+        tick = ('<form method="post" action="/learn/source" class="inline" data-ajax="source">'
+                f'<input type="hidden" name="card_id" value="{h(card["id"])}">'
+                f'<input type="hidden" name="key" value="{h(learn.source_key(s))}">'
+                f'<input type="hidden" name="done" value="{"0" if ticked else "1"}">'
+                f'<button class="tick" role="checkbox" aria-checked="{"true" if ticked else "false"}" '
+                f'aria-label="{h(label)}" title="{"Mark not done" if ticked else "Mark done"}">'
+                f'{"☑" if ticked else "☐"}</button></form>')
+        rows.append(
+            ('<li class="is-done">' if ticked else "<li>") + f'{tick}<span class="learn-src-text">'
+            f'{_badge(s["kind"], "s6")} <span class="learn-src-title">{_link(s.get("url"), s["title"])}</span>'
+            + (f' <span class="muted">· {h(s["minutes"])} min</span>' if s.get("minutes") is not None else "")
+            + (f' <span class="muted">· {h(s["why"])}</span>' if s.get("why") else "") + "</span></li>")
+    return (f'<section class="learn-more" id="learn-sources" aria-labelledby="learn-src"><h3 id="learn-src">Learn'
+            f' <span class="learn-src-count">· {done} / {len(flags)} done</span></h3>'
+            f'<ul class="learn-sources">{"".join(rows)}</ul></section>')
+
+
 def _learn_card(conn: sqlite3.Connection, card: dict, answer_box: str = "") -> str:
     cards = learn.list_cards(conn, card["track_id"])
     ids = [c["id"] for c in cards]
@@ -1249,18 +1290,11 @@ def _learn_card(conn: sqlite3.Connection, card: dict, answer_box: str = "") -> s
             f'<p class="learn-sub">Card {i + 1} of {len(ids)} {status}</p></div><nav class="learn-nav" '
             f'aria-label="Cards">{nav}</nav></header>')
     follow = "".join(f"<li>{h(f)}</li>" for f in card["follow_ups"])
-    sources = "".join(
-        f'<li>{_badge(s["kind"], "s6")} {_link(s.get("url"), s["title"])}'
-        + (f' <span class="muted">· {h(s["minutes"])} min</span>' if s.get("minutes") is not None else "")
-        + (f' <span class="muted">· {h(s["why"])}</span>' if s.get("why") else "") + "</li>"
-        for s in card["sources"])
     answer = ('<details class="learn-answer"><summary class="btn btn-secondary">Show answer</summary>'
               f'<section><h3>Key points</h3><div class="doc">{render_markdown(card["back"])}</div></section>'
               + (f'<section><h3>Follow-ups</h3><ul>{follow}</ul></section>' if follow else "")
               + "</details>")
-    # The sources are the preparation material, so they stay in view; only the answer is folded.
-    learn_box = (f'<section class="learn-more" aria-labelledby="learn-src"><h3 id="learn-src">Learn</h3>'
-                 f'<ul class="learn-sources">{sources}</ul></section>' if sources else "")
+    learn_box = _learn_sources(conn, card)
     buttons = "".join(
         f'<form method="post" action="{path}"><input type="hidden" name="card_id" value="{h(card["id"])}">'
         + _button(label, variant) + "</form>"

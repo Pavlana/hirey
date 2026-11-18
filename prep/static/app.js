@@ -1148,6 +1148,17 @@
         applyChatFilter();
         watchThread();
         toast(reply.message);
+      } else if (mode === "source") {
+        // A Learn source's tick: swap in the server-built, escaped Learn box (ticks and count), keep focus.
+        const box = form.closest("#learn-sources");
+        const i = box ? [...box.querySelectorAll("form[data-ajax='source']")].indexOf(form) : -1;
+        if (box && reply.html) {
+          const tpl = document.createElement("template");
+          tpl.innerHTML = reply.html;
+          const fresh = tpl.content.firstElementChild;
+          box.replaceWith(fresh);
+          fresh.querySelectorAll("form[data-ajax='source'] button")[i]?.focus();
+        }
       } else if (mode === "learn") {
         // The Learn Assistant: a message, Check my answer, Want a card for this?, or Add to notes.
         swapLearn(reply.html);

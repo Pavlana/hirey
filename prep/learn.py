@@ -226,7 +226,43 @@ def set_status(conn: sqlite3.Connection, card_id: int, status: str) -> dict:
 def delete_card(conn: sqlite3.Connection, card_id: int) -> dict:
     """Remove a card for good (its chapter and track stay); returns the card as it was."""
     card = get_card(conn, card_id)
+    conn.execute("DELETE FROM card_source_done WHERE card_id = ?", (card_id,))
     conn.execute("DELETE FROM cards WHERE id = ?", (card_id,))
+    conn.commit()
+    return card
+
+
+# --- sources ticked done ---------------------------------------------------------
+
+def source_key(source: dict) -> str:
+    """What a tick is stored under: the source's URL, else "kind:title"."""
+    url = str(source.get("url") or "").strip()
+    return url or f"{source['kind']}:{str(source['title']).strip()}"
+
+
+def done_sources(conn: sqlite3.Connection, card_id: int) -> set[str]:
+    """The keys of this card's sources ticked done (stale keys of removed sources included)."""
+    return {r[0] for r in conn.execute("SELECT source_key FROM card_source_done WHERE card_id = ?", (card_id,))}
+
+
+def source_progress(conn: sqlite3.Connection, card: dict) -> tuple[list[bool], int]:
+    """(done flag per current source, in order; how many are done)."""
+    keys = done_sources(conn, card["id"])
+    flags = [source_key(s) in keys for s in card["sources"]]
+    return flags, sum(flags)
+
+
+def set_source_done(conn: sqlite3.Connection, card_id: int, key: str, done: bool) -> dict:
+    """Tick (done) or untick one of the card's current sources; the card's own status is not touched.
+    Returns the card."""
+    card = get_card(conn, card_id)
+    if key not in {source_key(s) for s in card["sources"]}:
+        raise ValueError(f"card {card_id} has no such source")
+    if done:
+        conn.execute("INSERT OR IGNORE INTO card_source_done (card_id, source_key, done_at) VALUES (?, ?, ?)",
+                     (card_id, key, db.now_iso()))
+    else:
+        conn.execute("DELETE FROM card_source_done WHERE card_id = ? AND source_key = ?", (card_id, key))
     conn.commit()
     return card
 
