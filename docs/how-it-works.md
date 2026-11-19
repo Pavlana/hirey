@@ -646,7 +646,26 @@
    Do nothing" and stop, and the /ask and /learn-ask skills do nothing. Both refuse a message that is
    answered, cancelled, or in the other box's conversation. A reply to a cancelled message is still
    stored (the status stays cancelled); the box flags the message "Cancelled" (greyed) and the reply
-   "after cancel" (`web._msg_flags`).
+   "after cancel" (`web._msg_flags`). Cancel on a message answered or cancelled since the page was
+   drawn is not an error: it answers 200 with "It was no longer waiting" and the fresh conversation.
+31. Stop, in the Applications Assistant box. The box's waiting line (`web._thread`, a `div.thread-state`)
+   shows while any Applications message waits ("Applications Assistant is working… (N waiting)") or the
+   open panel has queued work ("Working on CV fit · Job brief…", `web._panel_work`: its application's
+   open `agent_requests` and its job's open `brief_requests`), with a Stop button at its end. POST
+   `/applications/stop` (`web.stop_waiting`, through `ACTIONS`) cancels every waiting Applications
+   message (`db.cancel_waiting_messages`, which calls `db.cancel_message` for each; Learn messages are
+   never touched; one answered meanwhile is skipped) and, for the open panel (`panel_app` or `panel_job`,
+   which `app.js` adds to every `data-ajax="thread"` post from `#panel`), its open agent requests
+   (`db.cancel_requests`) and job brief (`db.cancel_brief`). Those rows are kept with status
+   `cancelled` (`db.REQUEST_STATUSES`; a brief row is re-opened by Write brief / Redo, and an agent
+   request queued again is a new row). The script then swaps in the conversation, stops the poll and
+   refreshes the list and panel. Nothing is sent to the assistant or its terminal. A claimed message
+   never expires on its own (a stale claim only counts as pending again), so one the assistant answered
+   past keeps the box waiting until Stop or Cancel: the box flags a waiting message "no reply yet" when
+   a newer user message on the same subject (application, job offer, topic; not comparisons) was
+   answered, and `thread reply --to MSG` prints "Also waiting, no reply: message N" for each
+   (`db.unreplied_before`), with `thread close N` (marks it cancelled, kept) as the way out when the
+   reply covered it. Nothing is closed automatically.
 
 ## Dashboard
 
@@ -690,7 +709,8 @@ shortcut button scrolls to its result card. It sends the Applications Assistant 
 (Cmd/Ctrl+Enter also sends), swaps in the returned conversation, filters it to the ticked jobs when Selected is chosen, and
 while a message is pending, or the open panel's application has open agent requests (research,
 CV fit, tailored CV) or its job has a brief being written (the panel's `data-busy`), polls
-`GET /applications/thread[?app=ID | ?job=ID]` every 4 seconds for at most 5 minutes (one poll;
+`GET /applications/thread[?app=ID | ?job=ID]` every 4 seconds for 5 minutes, then every 30 seconds
+until it is done or Stop is pressed (the waiting line then says so, keeping Stop; one poll;
 opening or closing a panel restarts it); when nothing is pending any more it refreshes
 everything ("The agent replied." when the message count changed, else "The agent's work is
 in."). It makes the New offers filters live (listeners on the document, since the list is swapped

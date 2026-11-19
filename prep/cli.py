@@ -52,6 +52,7 @@
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
     python -m prep.cli review [--all]                  (read-only: the top 3 open tasks in review order)
     python -m prep.cli thread pending
+    python -m prep.cli thread close MSG_ID             (a waiting message left without a reply: marked cancelled, kept)
     python -m prep.cli brief next | queue (--job ID | APP_ID) [--redo]   (job briefs for the panel)
     python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
     python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
@@ -1365,6 +1366,10 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         return 0
     if args.thread_cmd == "reply":
         return _thread_reply(args, conn)
+    if args.thread_cmd == "close":
+        db.cancel_message(conn, args.message)
+        print(f"Message {args.message} closed without a reply (shown as Cancelled in the dashboard's box).")
+        return 0
     if args.message is not None:  # /ask job MSG: whatever the message is about
         if args.app_id is not None or args.job or args.cv:
             raise ValueError("give an application, --job, --cv or --message, not more than one")
@@ -1694,6 +1699,9 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     late = db.get_message(conn, args.to)["status"] == "cancelled"
     done = "was cancelled; the reply shows as after cancel" if late else "answered"
     print(f"Reply {reply_id} saved {about}; message {args.to} {done}. {box[0].upper() + box[1:]} shows it.")
+    for old in db.unreplied_before(conn, args.to):
+        print(f"Also waiting, no reply: message {old} (older, same subject). Answer it with thread reply --to {old}, "
+              f"or, if this reply covered it, close it: python -m prep.cli thread close {old}")
     return 0
 
 
@@ -2190,6 +2198,8 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--to", type=int, required=True, help="the user message id being answered")
     t.add_argument("--file", help="a file holding the reply (default: stdin)")
     hsub.add_parser("pending", help="user messages waiting for the agent")
+    t = hsub.add_parser("close", help="close a waiting message without a reply (marked cancelled, kept)")
+    t.add_argument("message", type=int, help="the user message id")
     p.set_defaults(func=cmd_thread)
 
     p = sub.add_parser("learn-thread", help="the Learn page's Learn Assistant box (used by /learn-ask)")

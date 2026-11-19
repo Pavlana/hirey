@@ -76,7 +76,8 @@ REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": 
 # The two kinds entering Interested queues and the Research / CV fit buttons handle; tailor is asked for on its own.
 RESEARCH_KINDS = ("research", "cv_fit")
 # claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
-REQUEST_STATUSES = ("pending", "claimed", "done")
+# cancelled: the user pressed Stop in the Applications Assistant box (kept; queueing it again adds a new row).
+REQUEST_STATUSES = ("pending", "claimed", "done", "cancelled")
 CLAIM_HOURS = 6
 RECOGNITION = ("well_known", "niche", "little_known")
 RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
@@ -1841,10 +1842,19 @@ def last_request_id(conn: sqlite3.Connection) -> int:
 def requests_since(conn: sqlite3.Connection, after_id: int) -> list[dict]:
     """Requests queued after `after_id` that are still open, oldest first: id, application_id, kind."""
     rows = conn.execute(
-        "SELECT id, application_id, kind FROM agent_requests WHERE id > ? AND status != 'done' ORDER BY id",
+        "SELECT id, application_id, kind FROM agent_requests WHERE id > ? AND status IN ('pending', 'claimed') "
+        "ORDER BY id",
         (after_id,),
     )
     return [dict(r) for r in rows]
+
+
+def cancel_requests(conn: sqlite3.Connection, app_id: int) -> int:
+    """Stop: the application's open agent requests (pending or claimed, however old) are marked
+    cancelled and kept; Research, CV fit or Tailor queues a new one. Returns how many."""
+    with conn:
+        return conn.execute("UPDATE agent_requests SET status = 'cancelled' WHERE application_id = ? "
+                            "AND status IN ('pending', 'claimed')", (app_id,)).rowcount
 
 
 def open_requests(conn: sqlite3.Connection, app_id: int | None = None) -> list[dict]:
@@ -2394,6 +2404,34 @@ def cancel_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -
         raise ValueError(f"message {msg_id} was answered meanwhile")
 
 
+def cancel_waiting_messages(conn: sqlite3.Connection) -> list[int]:
+    """Stop in the Applications Assistant box: every Applications message still waiting (pending or
+    claimed, never a Learn one) is cancelled with cancel_message. One answered meanwhile is skipped.
+    Returns the ids cancelled."""
+    done = []
+    for m in pending_messages(conn):
+        try:
+            cancel_message(conn, m["id"])
+        except ValueError:
+            continue  # answered between the read and the update
+        done.append(m["id"])
+    return done
+
+
+def unreplied_before(conn: sqlite3.Connection, msg_id: int) -> list[int]:
+    """User messages older than `msg_id`, on the same subject (application, job offer and topic), still
+    waiting with no reply: a duplicate or earlier question the assistant answered past. Ids, oldest first.
+    Empty for a comparison or a Learn message."""
+    msg = get_message(conn, msg_id)
+    if msg is None or msg["author"] != "user" or msg["topic"] in (COMPARE, LEARN):
+        return []  # comparisons differ by their targets; Learn has its own box
+    rows = conn.execute(
+        "SELECT id FROM agent_messages WHERE author = 'user' AND id < ? AND status IN ('pending', 'claimed') "
+        "AND application_id IS ? AND getjo_job_id IS ? AND topic IS ? ORDER BY id",
+        (msg_id, msg["application_id"], msg["getjo_job_id"], msg["topic"]))
+    return [r[0] for r in rows]
+
+
 def reopen_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -> dict:
     """Resend: a message still waiting goes back to pending (a claim is dropped, so the assistant
     pinged again can take it). Returns the message. Errors as waiting_message."""
@@ -2533,7 +2571,8 @@ def all_tailored_versions(conn: sqlite3.Connection) -> list[dict]:
 # --- job briefs -----------------------------------------------------------------------
 # A short structured brief per getjo job, written by the agent (/research) from the description.
 # The page shows it at the top of the panel instead of the raw description. Requests live in
-# brief_requests (one row per job); claims older than CLAIM_HOURS count as pending again.
+# brief_requests (one row per job); claims older than CLAIM_HOURS count as pending again. Stop in the
+# Applications Assistant box marks an open one cancelled; Write brief / Redo opens it again.
 
 def check_no_pay(text: str, what: str) -> None:
     """ValueError if `text` mentions pay (a currency sign, "80k", salary, bonus…): agent-written text never does."""
@@ -2588,7 +2627,8 @@ def queue_brief(conn: sqlite3.Connection, job_id: str, force: bool = False) -> b
             "INSERT INTO brief_requests (getjo_job_id, status, force, requested_at) VALUES (?, 'pending', ?, ?) "
             "ON CONFLICT(getjo_job_id) DO UPDATE SET status = 'pending', force = excluded.force, "
             "requested_at = excluded.requested_at, claimed_at = NULL, done_at = NULL "
-            "WHERE brief_requests.status = 'done' OR (brief_requests.status = 'claimed' AND brief_requests.claimed_at < ?)",
+            "WHERE brief_requests.status IN ('done', 'cancelled') "
+            "OR (brief_requests.status = 'claimed' AND brief_requests.claimed_at < ?)",
             (job_id, int(force), stamp, _claim_cutoff()))
     return cursor.rowcount == 1
 
@@ -2603,6 +2643,13 @@ def queue_missing_briefs(conn: sqlite3.Connection, job_ids: list[str]) -> list[s
         conn.executemany("INSERT OR IGNORE INTO brief_requests (getjo_job_id, requested_at) VALUES (?, ?)",
                          [(j, stamp) for j in added])
     return added
+
+
+def cancel_brief(conn: sqlite3.Connection, job_id: str) -> int:
+    """Stop: an open brief request for `job_id` (pending or claimed) is marked cancelled, kept. Returns 0 or 1."""
+    with conn:
+        return conn.execute("UPDATE brief_requests SET status = 'cancelled' WHERE getjo_job_id = ? "
+                            "AND status IN ('pending', 'claimed')", (job_id,)).rowcount
 
 
 def open_briefs(conn: sqlite3.Connection, job_id: str | None = None) -> list[dict]:
