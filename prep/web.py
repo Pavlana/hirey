@@ -855,15 +855,22 @@ def draft_card(settings: Settings, conn: sqlite3.Connection, form: dict[str, str
             "msg": "learn_card_asked"}
 
 
+NO_SUMMARY = ('This reply has no short summary to add. Ask the Learn Assistant to '
+              '"summarise this as Understand / Say it".')
+
+
 def add_reply_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Add to notes: the essence of the reply, its closing Understand: / Say it: block, appended to its
+    """Add to notes: the essence of the reply (`learnnotes.essence`: its closing Understand: / Say it:
+    block, or an older reply's Better phrasing and Say it in the interview lines), appended to its
     card's note under the card's question and the day (the all-prep notes for a general reply, under
-    "Agent" and the day). A reply without that block (an older one) is added whole. Once per reply;
-    never pay."""
+    "Agent" and the day). Never the whole reply: one with neither is refused (NO_SUMMARY). Once per
+    reply; never pay."""
     reply = _learn_reply(conn, form)
     _, back = _learn_back(conn, form)
     key = str(reply["card_id"]) if reply["card_id"] is not None else learnnotes.ALL
-    text = learnnotes.essence(reply["body"]) or reply["body"]
+    text = learnnotes.essence(reply["body"])
+    if text is None:
+        raise BadRequest(NO_SUMMARY)
     if text.strip() in learnnotes.read(settings.private_dir, key)["text"]:
         raise BadRequest("That reply is already in the notes.")
     heading = "Agent"

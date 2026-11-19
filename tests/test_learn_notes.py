@@ -273,7 +273,9 @@ class EssenceTest(unittest.TestCase):
         self.assertEqual(learnnotes.essence(footer), 'Understand: a.\nSay it: "b."')
 
     def test_missing_block_is_none(self) -> None:
-        self.assertIsNone(learnnotes.essence("Just an answer.\nSay it in the interview: x"))
+        self.assertIsNone(learnnotes.essence("Just an answer, with no labels at all."))
+        self.assertIsNone(learnnotes.essence("Covered: a.\nMissed: b."))
+        self.assertIsNone(learnnotes.essence("Better phrasing:\n\nSay it in the interview:"))
         self.assertIsNone(learnnotes.essence("Understand: only half."))
         self.assertIsNone(learnnotes.essence("Understand:\nSay it:"))
         self.assertIsNone(learnnotes.essence(""))
@@ -285,6 +287,26 @@ class EssenceTest(unittest.TestCase):
         self.assertEqual(learnnotes.essence(reply), 'Understand: the real one.\nSay it: "The real line."')
         trailing = "Understand: real.\nSay it: \"yes.\"\n\nUnderstand: a stray label with no Say it"
         self.assertEqual(learnnotes.essence(trailing), 'Understand: real.\nSay it: "yes."')
+
+    def test_old_reply_better_phrasing_and_say_it(self) -> None:
+        reply = ("Covered: a.\nMissed: b.\nBetter phrasing: I use a cache\nfor hot reads.\n\n"
+                 "> Say it in the interview: Cache the hot reads.")
+        self.assertEqual(learnnotes.essence(reply),
+                         "Understand: I use a cache\nfor hot reads.\nSay it: Cache the hot reads.")
+
+    def test_old_reply_either_part_alone(self) -> None:
+        self.assertEqual(learnnotes.essence("Text.\nSay it in the interview: Just this."), "Say it: Just this.")
+        self.assertEqual(learnnotes.essence("Better phrasing:\nOn the next line.\nMissed: x"),
+                         "Understand: On the next line.")
+
+    def test_old_reply_takes_the_last_label_and_stops_at_the_next(self) -> None:
+        reply = ("Better phrasing: first.\nSay it in the interview: first.\n\n"
+                 "Better phrasing: second.\nSay it in the interview: second.\n— Quiz · chapter 1 · finished")
+        self.assertEqual(learnnotes.essence(reply), "Understand: second.\nSay it: second.")
+
+    def test_new_block_wins_over_old_labels(self) -> None:
+        reply = "Better phrasing: old.\n\nUnderstand: new.\nSay it: \"new.\""
+        self.assertEqual(learnnotes.essence(reply), 'Understand: new.\nSay it: "new."')
 
     def test_windows_line_ends(self) -> None:
         self.assertEqual(learnnotes.essence("Understand: a\r\nSay it: b\r\n"), "Understand: a\nSay it: b")

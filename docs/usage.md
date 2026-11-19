@@ -398,7 +398,10 @@ Under each agent reply, **Want a card for this?** asks the agent to draft a card
 is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends only the reply's
 closing Understand / Say it lines to the card's note, under a heading with the card's question and the
 day (the all-prep notes for a general reply, under "Agent" and the day); an older reply without those
-lines is appended whole. At once and once per reply; a reply mentioning pay is refused.
+lines keeps its "Better phrasing" text as Understand and its "Say it in the interview" line as Say it
+(either alone is enough). A reply with none of these adds nothing; a line under the buttons says so
+and suggests asking the Learn Assistant to "summarise this as Understand / Say it". The whole reply
+is never added. At once and once per reply; a reply mentioning pay is refused.
 
 The dashboard stores each message (topic `learn`, with the card id) and pings the Learn Assistant
 with ids only: `/learn-ask <card id> <message id>`. Without one the message waits; the SessionStart
