@@ -81,16 +81,17 @@ With a tiny snippet (a bug fix):
 
 ```
 Understand:
-- Removing from a list while looping over it shifts the items, so the loop skips some.
+- If an error happens before close(), the file stays open.
 
 Fix:
-DON'T remove inside the loop:
-    for x in items:
-        if x < 0: items.remove(x)
+DON'T open it and read without closing:
+    f = open(path)
+    data = f.read()
 INSTEAD:
-    items = [x for x in items if x >= 0]
+    with open(path) as f:
+        data = f.read()
 
-Say it: "I never change a list while looping over it; I build a new one with a comprehension."
+Say it: "I open files with a with block, so they close even when an error happens."
 ```
 
 **Add to notes** saves exactly this block (under the card's question and the day), so it must stand
