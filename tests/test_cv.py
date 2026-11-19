@@ -56,6 +56,14 @@ class RenderTest(IsolatedTestCase):
         self.assertIn("<li><strong>x:</strong> &lt;script&gt;alert(1)&lt;/script&gt;</li>", out)
         self.assertNotIn("<script>", out)
         self.assertEqual(web.render_markdown("2 * 3 * 4"), "<p>2 * 3 * 4</p>")  # spaced stars stay
+
+    def test_markdown_code(self) -> None:
+        out = web.render_markdown("Before\n```python\n# a comment, not a heading\n    x = **y** < 2\n- not a list\n```\n"
+                                  "Use `a_b * c` and **bold**")
+        self.assertEqual(out, "<p>Before</p><pre><code># a comment, not a heading\n    x = **y** &lt; 2\n"
+                              "- not a list</code></pre><p>Use <code>a_b * c</code> and <strong>bold</strong></p>")
+        self.assertEqual(web.render_markdown("```\nopen <b>"), "<pre><code>open &lt;b&gt;</code></pre>")
+        self.assertEqual(web.render_markdown("`<i>` and `**x**`"), "<p><code>&lt;i&gt;</code> and <code>**x**</code></p>")
         self.assertEqual(web.render_markdown('**"><img src=x>**'), "<p><strong>&quot;&gt;&lt;img src=x&gt;</strong></p>")
 
 

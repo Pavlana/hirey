@@ -1262,6 +1262,16 @@ class LearnPageTest(WebTestCase):
         self.assertIn('action="/learn/undo"', body)
         self.assertIn('href="/learn?card=2" aria-label="Next card"', body)
 
+    def test_card_prompt_shows_above_the_answer(self) -> None:
+        with self.conn() as conn:
+            card_id = learn.add_card(conn, {"track": "caching-example", "front": "What does it print?",
+                                            "prompt": "```python\nprint(1 < 2)\n```", "back": "**True**"})
+        body = self.get(f"/learn?card={card_id}")[2]
+        prompt = body.index('<div class="learn-prompt doc"><pre><code>print(1 &lt; 2)</code></pre></div>')
+        self.assertLess(body.index('id="learn-q"'), prompt)
+        self.assertLess(prompt, body.index("Show answer"))
+        self.assertNotIn("learn-prompt", self.get("/learn?card=1")[2])  # no prompt: nothing extra
+
     def test_card_view_shows_tracks_row_with_current_track(self) -> None:
         with self.conn() as conn:
             learn.add_track(conn, "Other track", slug="other")

@@ -1400,7 +1400,9 @@ def _learn_card(conn: sqlite3.Connection, card: dict, answer_box: str = "") -> s
         for path, label, variant in (("/learn/done", "Done", "primary"), ("/learn/undo", "Not done yet", "secondary")))
     return (f'<section class="learn-card" id="learn-card" aria-labelledby="learn-q">{head}<div class="learn-card-body">'
             + (f'<div class="chips">{tags}</div>' if tags else "")
-            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>{answer_box}{answer}{learn_box}'
+            + f'<h2 class="learn-q" id="learn-q">{h(card["front"])}</h2>'
+            + (f'<div class="learn-prompt doc">{render_markdown(card["prompt"], empty="")}</div>' if card["prompt"] else "")
+            + f'{answer_box}{answer}{learn_box}'
             f'<div class="learn-actions">{buttons}</div></div></section>')
 
 

@@ -11,7 +11,7 @@ from prep import db
 
 TRACK_COVERS = ("matcha", "teal", "amber", "rose", "violet", "slate")
 SOURCE_KINDS = ("watch", "read", "notes")
-CARD_FIELDS = ("track", "chapter", "front", "back", "tags", "follow_ups", "sources", "source_gap_id")
+CARD_FIELDS = ("track", "chapter", "front", "prompt", "back", "tags", "follow_ups", "sources", "source_gap_id")
 SOURCE_FIELDS = ("kind", "title", "url", "minutes", "why")
 CARD_STATUSES = ("todo", "done")
 # (slug, title, subtitle) of the track that cards drafted from gaps go to; added with its first card.
@@ -117,8 +117,8 @@ def _sources(value: object) -> list[dict]:
 
 
 def add_card(conn: sqlite3.Connection, card: dict, commit: bool = True) -> int:
-    """Add one card from a dict with CARD_FIELDS (track: id or slug; chapter: a title, added when new).
-    It starts as to do, at the end of its track."""
+    """Add one card from a dict with CARD_FIELDS (track: id or slug; chapter: a title, added when new;
+    prompt: optional Markdown shown under the question). It starts as to do, at the end of its track."""
     unknown = set(card) - set(CARD_FIELDS)
     if unknown:
         raise ValueError(f"unknown card field(s): {', '.join(sorted(unknown))}")
@@ -127,6 +127,7 @@ def add_card(conn: sqlite3.Connection, card: dict, commit: bool = True) -> int:
         raise ValueError("a card needs a front (the question) and a back (key points)")
     if card.get("track") is None:
         raise ValueError("a card needs a track (id or slug)")
+    prompt = _prompt(card.get("prompt"))
     gap_id = _check_gap(conn, card.get("source_gap_id"))
     if gap_id is not None and str(card["track"]) == GAPS_TRACK[0] and not _track_exists(conn, GAPS_TRACK[0]):
         add_track(conn, GAPS_TRACK[1], GAPS_TRACK[2], slug=GAPS_TRACK[0], commit=False)
@@ -138,11 +139,11 @@ def add_card(conn: sqlite3.Connection, card: dict, commit: bool = True) -> int:
     position = conn.execute("SELECT COUNT(*) FROM cards WHERE track_id = ?", (track["id"],)).fetchone()[0] + 1
     cursor = conn.execute(
         """
-        INSERT INTO cards (track_id, chapter_id, position, front, back, tags, follow_ups, sources, source_gap_id,
-                           created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO cards (track_id, chapter_id, position, front, prompt, back, tags, follow_ups, sources,
+                           source_gap_id, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (track["id"], chapter_id, position, front, back, json.dumps(tags), json.dumps(follow_ups),
+        (track["id"], chapter_id, position, front, prompt, back, json.dumps(tags), json.dumps(follow_ups),
          json.dumps(sources), gap_id, db.now_iso()))
     if commit:
         conn.commit()
@@ -158,6 +159,15 @@ def add_cards(conn: sqlite3.Connection, cards: list[dict]) -> list[int]:
         raise
     conn.commit()
     return ids
+
+
+def _prompt(value: object) -> str | None:
+    """The card's prompt: stripped Markdown, or None when there is none."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("prompt must be a string")
+    return value.strip() or None
 
 
 def _track_exists(conn: sqlite3.Connection, slug: str) -> bool:
@@ -324,7 +334,9 @@ def _source_line(text: str, where: str) -> dict:
 def parse_markdown(text: str) -> list[dict]:
     """Tracks from the import format: `# Track` (then `slug:`, `subtitle:`, `cover:` lines), `## Chapter`,
     `### Card front`, its back as Markdown, and `tags:`, `gap:`, `follow-ups:` and `sources:` lines.
-    Anything before the first `# ` heading is ignored; lines inside ``` fences are back text.
+    Text above a card's first `---` line (outside a ``` fence) is its prompt, shown under the question;
+    the rest is the back. Anything before the first `# ` heading is ignored; lines inside ``` fences are
+    card text.
     Returns [{"title", "slug", "subtitle", "cover", "cards": [card dicts with CARD_FIELDS but track]}]."""
     tracks: list[dict] = []
     track = card = None
@@ -334,6 +346,8 @@ def parse_markdown(text: str) -> list[dict]:
     def finish() -> None:
         if card is not None:
             card["back"] = "\n".join(card.pop("_back")).strip()
+            prompt = card.pop("_prompt")
+            card["prompt"] = "\n".join(prompt).strip() or None if prompt is not None else None
             if not card["back"]:
                 raise ValueError(f"card {card['front']!r} has no back (key points)")
 
@@ -362,7 +376,7 @@ def parse_markdown(text: str) -> list[dict]:
                 chapter = title
             else:
                 card = {"front": title, "chapter": chapter, "tags": [], "follow_ups": [], "sources": [],
-                        "source_gap_id": None, "_back": []}
+                        "source_gap_id": None, "_back": [], "_prompt": None}
                 track["cards"].append(card)
             continue
         if track is None:
@@ -390,7 +404,10 @@ def parse_markdown(text: str) -> list[dict]:
                 mode = name
             continue
         if mode == "back":
-            card["_back"].append(line)
+            if line.strip() == "---" and card["_prompt"] is None:
+                card["_prompt"], card["_back"] = card["_back"], []  # all above the first --- is the prompt
+            else:
+                card["_back"].append(line)
         elif line.strip():
             if not line.startswith("- "):
                 raise ValueError(f"{where}: under {mode}: every line is a `- ` item")
@@ -433,12 +450,14 @@ def _import_track(conn: sqlite3.Connection, t: dict) -> dict:
         tags, follow_ups, sources = _strings("tags", c["tags"]), _strings("follow_ups", c["follow_ups"]), \
             _sources(c["sources"])
         chapter_id = _chapter_id(conn, track["id"], c["chapter"]) if c["chapter"] else None
-        new = (chapter_id, c["back"], json.dumps(tags), json.dumps(follow_ups), json.dumps(sources), c["source_gap_id"])
-        old = (row["chapter_id"], row["back"], row["tags"], row["follow_ups"], row["sources"], row["source_gap_id"])
+        new = (chapter_id, _prompt(c.get("prompt")), c["back"], json.dumps(tags), json.dumps(follow_ups),
+               json.dumps(sources), c["source_gap_id"])
+        old = (row["chapter_id"], row["prompt"], row["back"], row["tags"], row["follow_ups"], row["sources"],
+               row["source_gap_id"])
         if new == old:
             counts["unchanged"] += 1
         else:
-            conn.execute("UPDATE cards SET chapter_id = ?, back = ?, tags = ?, follow_ups = ?, sources = ?, "
+            conn.execute("UPDATE cards SET chapter_id = ?, prompt = ?, back = ?, tags = ?, follow_ups = ?, sources = ?, "
                          "source_gap_id = ? WHERE id = ?", (*new, row["id"]))
             counts["updated"] += 1
     counts["not_in_file"] = conn.execute("SELECT COUNT(*) FROM cards WHERE track_id = ?",
@@ -448,7 +467,7 @@ def _import_track(conn: sqlite3.Connection, t: dict) -> dict:
 
 def import_markdown(conn: sqlite3.Connection, text: str, dry_run: bool = False) -> list[dict]:
     """Add or update the tracks and cards in an import file, all or none. A card is matched by its track
-    and front: a match gets the file's back, chapter, tags, follow-ups, sources and gap, and keeps its id,
+    and front: a match gets the file's prompt, back, chapter, tags, follow-ups, sources and gap, and keeps its id,
     position and done status. Cards missing from the file are left alone (counted as not_in_file).
     With dry_run nothing is saved. Returns per-track counts: added, updated, unchanged, not_in_file."""
     tracks = parse_markdown(text)
