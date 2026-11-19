@@ -299,6 +299,11 @@ links clickable). Markdown is not rendered. The dashboard picks the reply up wit
 If the reply command says the message is already answered, another session got there first. Do
 not reply again.
 
+If it prints `Also waiting, no reply: message N`, an older message on the same subject is still
+open (often the same question sent twice). Never leave it open: it keeps the box's "working"
+line on. Answer it with `thread reply --to N` when it asks something else, or close it with
+`python -m prep.cli thread close N` when this reply already covers it.
+
 ## 5. Finish
 
 In this session, say in one line per message what was done ("#7 Globex: answered the

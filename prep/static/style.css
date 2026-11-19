@@ -689,6 +689,7 @@ a.msg-about:hover { color: var(--text); text-decoration: none; border-color: var
 .msg-body { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
 .msg-meta { flex-wrap: wrap; }
 .thread-state { display: flex; align-items: center; gap: 8px; color: var(--accent-text); font-weight: 500; }
+.thread-state .thread-stop { margin-left: auto; flex: none; }  /* Stop, at the end of the waiting line */
 .thread-empty { font-size: 12.5px; }
 .spinner { flex: none; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--accent); border-right-color: transparent;
   animation: spin .9s linear infinite; }
@@ -795,6 +796,7 @@ main:has(.learn-view) { max-width: 1880px; }
 .msg.is-cancelled .msg-body { opacity: .55; text-decoration: line-through; text-decoration-thickness: 1px; }
 .msg-flag { padding: 0 6px; border-radius: var(--radius-full); border: 1px dashed var(--border-strong);
   color: var(--text-muted); font-size: 11px; }
+.msg-flag-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
 .answer-check { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2);
   margin: calc(-1 * var(--space-4)) 0 0; font-size: 12.5px; }  /* close under Your answer */
 /* Your answer on the card: a plain textarea from six rows, growing as it is typed (app.js). */

@@ -209,11 +209,13 @@
   // --- Applications Assistant box --------------------------------------------------------------------------
   // One conversation under the pipeline list. While a message waits for the agent, or the open
   // panel's application has queued agent work (research, CV fit, tailored CV: data-busy), poll
-  // /applications/thread every few seconds (for at most a few minutes). When it is done, refresh
-  // the list, the panel and the conversation: the agent may have moved the stage, added tasks or
-  // comments. Only one poll runs; opening another panel or closing it restarts it.
+  // /applications/thread every few seconds, then (after a few minutes) every half minute until it is
+  // done or Stop is pressed: a slow reply still shows. When it is done, refresh the list, the panel
+  // and the conversation: the agent may have moved the stage, added tasks or comments. Only one poll
+  // runs; opening another panel or closing it restarts it.
   const POLL_MS = 4000;
   const POLL_FOR_MS = 5 * 60 * 1000;
+  const SLOW_POLL_MS = 30 * 1000;
   const CHAT_KEY = "agent-filter";
   let poll = null;
   let refreshApps = () => location.reload(); // the Applications block below swaps the parts instead
@@ -312,13 +314,13 @@
           return;
         }
       } catch { /* the server restarted or is busy: try again */ }
-      if (Date.now() - me.started > POLL_FOR_MS) {
-        poll = null;
-        const state = document.querySelector("#agent .thread-state");
-        if (state) state.textContent = "Still waiting. The reply shows here when the Applications Assistant answers; reload to check.";
-        return;
+      const slow = Date.now() - me.started > POLL_FOR_MS;
+      if (slow && !me.slow) {
+        me.slow = true; // the text only: Stop stays on the line
+        const text = document.querySelector("#agent .thread-state > span:not(.spinner)");
+        if (text) text.textContent = "Still waiting. The reply shows here when it comes (checked every 30 s); Stop cancels it.";
       }
-      me.timer = setTimeout(tick, POLL_MS);
+      me.timer = setTimeout(tick, slow ? SLOW_POLL_MS : POLL_MS);
     };
     me.timer = setTimeout(tick, POLL_MS);
   }
@@ -1129,7 +1131,14 @@
     const mode = form.dataset.ajax;
     try {
       if (form.hasAttribute("data-save-answer")) await saveAnswer(); // Check my answer: the latest text
-      const reply = await post(form.action, new URLSearchParams(new FormData(form)));
+      const data = new URLSearchParams(new FormData(form));
+      if (mode === "thread") { // the panel open now (Stop clears its queued work; replies keep its waiting line)
+        const panel = document.getElementById("panel");
+        data.delete("panel_app"); data.delete("panel_job");
+        if (panel?.dataset.app) data.set("panel_app", panel.dataset.app);
+        else if (panel?.dataset.job) data.set("panel_job", panel.dataset.job);
+      }
+      const reply = await post(form.action, data);
       if (mode === "interested") {
         // An offer's Interested: its application panel opens in the pipeline (Interested).
         const back = location.pathname + location.search;
@@ -1194,9 +1203,10 @@
         // The Applications Assistant box: swap in the server-built, escaped conversation and wait for the reply.
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
-        if (form.elements.body) form.elements.body.value = ""; // Resend and Cancel have no text
+        if (form.elements.body) form.elements.body.value = ""; // Resend, Cancel and Stop have no text
         applyChatFilter();
         watchThread();
+        if (form.action.endsWith("/applications/stop")) await refreshApps(); // the panel's spinners clear too
         toast(reply.message);
       }
     } catch (err) {

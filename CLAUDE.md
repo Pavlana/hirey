@@ -127,7 +127,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
-  `thread reply --to MSG`, `thread pending`, `review [--all]` (top 3 open tasks in review order)
+  `thread reply --to MSG`, `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
   `tailor check APP [--version N]` (checks a version again without WeasyPrint);

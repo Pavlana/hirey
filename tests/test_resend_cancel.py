@@ -155,7 +155,11 @@ class ApplicationsBoxTest(ResendCancelBase):
         with self.conn() as conn:
             db.reply_message(conn, ACME, msg, "Late answer.")
         self.assertIn('<span class="msg-flag">after cancel</span>', self.get("/")[2])
-        self.assertEqual(self.post_json("/applications/cancel", {"msg_id": str(msg)})[0], 400)
+        status, reply = self.post_json("/applications/cancel", {"msg_id": str(msg)})  # no longer waiting
+        self.assertEqual(status, 200)  # not an error: the fresh conversation comes back
+        self.assertIn("no longer waiting", reply["message"])
+        self.assertIn("Late answer.", reply["html"])
+        self.assertEqual(self.post_json("/applications/cancel", {"msg_id": "99999"})[0], 400)  # unknown: refused
 
     def test_cancel_by_form_redirects_and_needs_same_origin(self) -> None:
         msg = self.ask()

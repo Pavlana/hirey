@@ -119,6 +119,8 @@ MESSAGES = {
     "learn_note_added": "Added to the notes.",
     "resent": "Sent to the Applications Assistant again.",
     "cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
+    "cancel_late": "It was no longer waiting: answered or cancelled meanwhile.",
+    "stopped": "Stopped. Waiting messages and this job's queued work are cancelled; ask or queue them again any time.",
     "learn_resent": "Sent to the Learn Assistant again.",
     "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
 }
@@ -544,7 +546,7 @@ def send_message(settings: Settings, conn: sqlite3.Connection, form: Form, today
     log.info("message %s added (application %s, job %s, topic %s) from the dashboard", msg_id, about, bool(job),
              topic)  # never the text
     assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None, topic=topic)
-    return {"html": _thread(conn, settings)}
+    return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
 def _about_target(settings: Settings, conn: sqlite3.Connection, key: str) -> tuple:
@@ -578,14 +580,14 @@ def _send_about(settings: Settings, conn: sqlite3.Connection, form: Form) -> dic
         msg_id = db.add_compare(conn, body, targets)
         log.info("message %s added comparing %d targets from the dashboard", msg_id, len(targets))  # never the text
         assistant.notify_message_in_background(settings, None, msg_id, topic=db.COMPARE)
-        return {"html": _thread(conn, settings)}
+        return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
     app_id, job_id, topic = targets[0] if targets else (None, None, None)
     msg_id = db.add_message(conn, app_id, body, job_id, topic)
     about, job = db.message_subject(conn, msg_id)
     log.info("message %s added (application %s, job %s, topic %s) from the dashboard", msg_id, about, bool(job),
              topic)  # never the text
     assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None, topic=topic)
-    return {"html": _thread(conn, settings)}
+    return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
 def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
@@ -601,7 +603,7 @@ def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: 
     msg_id = db.add_message(conn, app_id, db.MOCK_START.format(label=db.status_label(stage), stage=stage))
     log.info("mock interview (%s) asked for on application %s, message %s", stage, app_id, msg_id)
     assistant.notify_message_in_background(settings, app_id, msg_id)
-    return {"redirect": _here(app_id), "html": _thread(conn, settings)}
+    return {"redirect": _here(app_id), "html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
 def _msg_id(form: dict[str, str]) -> int:
@@ -627,15 +629,42 @@ def resend_message(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     if not assistant.notify_message(settings, about, msg["id"], job=about is None and job is not None,
                                     topic=msg["topic"]):
         raise _unreachable("Applications Assistant", settings.assistant_task)
-    return {"html": _thread(conn, settings)}
+    return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
 def cancel_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Cancel, on a message still waiting in the Applications Assistant box: marked cancelled, kept."""
+    """Cancel, on a message still waiting in the Applications Assistant box: marked cancelled, kept. One
+    answered (or cancelled) since the page was drawn is not an error: the fresh conversation shows it."""
     msg_id = _msg_id(form)
-    db.cancel_message(conn, msg_id)
+    try:
+        db.cancel_message(conn, msg_id)
+    except ValueError:
+        log.info("message %s was no longer waiting; nothing cancelled", msg_id)
+        return {"msg": "cancel_late", "html": _thread(conn, settings, *_panel_ctx(conn, form))}
     log.info("message %s cancelled", msg_id)
-    return {"html": _thread(conn, settings)}
+    return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
+
+
+def stop_waiting(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Stop, on the Applications Assistant box's waiting line: every Applications message still waiting
+    is cancelled (never a Learn one), and with the open panel (panel_app / panel_job) its queued agent
+    requests and job brief too. Rows are kept, marked cancelled. Nothing is sent to the assistant."""
+    app_id, job_id = _panel_ctx(conn, form)
+    msgs = db.cancel_waiting_messages(conn)
+    reqs = db.cancel_requests(conn, app_id) if app_id is not None else 0
+    brief_job = (db.get_application(conn, app_id) or {}).get("getjo_job_id") if app_id is not None else job_id
+    briefs = db.cancel_brief(conn, brief_job) if brief_job else 0
+    log.info("stop: %d message(s), %d request(s), %d brief(s) cancelled", len(msgs), reqs, briefs)
+    return {"html": _thread(conn, settings, app_id, job_id)}
+
+
+def _panel_ctx(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int | None, str | None]:
+    """The side panel open when a box form was sent (panel_app or panel_job, added by the page script):
+    (application id, None) or (None, getjo job id), or (None, None). An unknown application is ignored."""
+    raw = form.get("panel_app") or ""
+    if raw.isdigit() and db.get_application(conn, int(raw)) is not None:
+        return int(raw), None
+    return None, (form.get("panel_job") or None)
 
 
 def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
@@ -937,6 +966,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/mock": (start_mock, "/", "mock_started"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
+    "/applications/stop": (stop_waiting, "/", "stopped"),
     "/applications/notes": (save_notes, "/", "notes_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
@@ -2638,7 +2668,7 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         f'<div class="agent-filter" role="group" aria-label="Show messages"{"" if targets else " hidden"}>'
         '<button type="button" class="view-btn is-active" data-filter-chat="all">All</button>'
         '<button type="button" class="view-btn" data-filter-chat="sel">Selected</button></div></header>'
-        f'<div class="card-body">{_thread(conn, settings)}'
+        f'<div class="card-body">{_thread(conn, settings, f["app"], f["job"])}'
         '<form method="post" action="/applications/message" class="ask" data-ajax="thread">'
         f'<input type="hidden" name="return" value="{h(home_url(f))}">{_agent_about(f, targets)}'
         f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
@@ -2682,10 +2712,12 @@ def _job_names(settings: Settings, conn: sqlite3.Connection, ids: set[str]) -> d
     return names
 
 
-def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
+def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = None,
+            job_id: str | None = None) -> str:
     """The conversation, its latest AGENT_MESSAGES oldest first, each tagged with its application or
     job offer (a link to its panel) or "all jobs". Swapped in whole by the page script after Send and
-    while polling; data-pending marks a user message still waiting for its reply."""
+    while polling; data-pending marks a user message still waiting for its reply. While anything waits
+    (a message, or the open panel's queued work: `app_id` or `job_id`) the waiting line has Stop."""
     messages = db.thread(conn, limit=AGENT_MESSAGES)
     targets = db.message_targets(conn, [m["id"] for m in messages])
     untracked = {t["getjo_job_id"] for ts in targets.values() for t in ts if t["application_id"] is None and t["getjo_job_id"]}
@@ -2729,18 +2761,46 @@ def _thread(conn: sqlite3.Connection, settings: Settings) -> str:
         + "</li>"
         for m in messages
     )
-    pending = bool(db.pending_messages(conn))
-    if not messages:
-        state = '<p class="muted thread-empty">No messages yet.</p>'
-    elif pending and settings.assistant_task:
-        state = '<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>Applications Assistant is working…</p>'
+    waiting = len(db.pending_messages(conn))
+    pending = waiting > 0
+    work = _panel_work(conn, app_id, job_id)
+    stop = ""
+    if pending or work:
+        ctx = (f'<input type="hidden" name="panel_app" value="{h(app_id)}">' if app_id is not None
+               else f'<input type="hidden" name="panel_job" value="{h(job_id)}">' if job_id else "")
+        stop = ('<form method="post" action="/applications/stop" class="inline thread-stop" data-ajax="thread">'
+                f'<input type="hidden" name="return" value="/">{ctx}'
+                '<button class="btn btn-secondary btn-sm" title="Stop waiting: cancel the waiting messages'
+                + (" and this job's queued work" if work else "") + '">Stop</button></form>')
+    count = f" ({waiting} waiting)" if waiting else ""
+    doing = f'Working on {h(" · ".join(work))}…' if work else ""
+    if pending and settings.assistant_task:
+        state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
+                 f'<span>Applications Assistant is working…{count}{" " + doing if doing else ""}</span>{stop}</div>')
     elif pending:
-        state = ('<p class="thread-state" role="status">Waiting for the Applications Assistant: run /ask in a Claude Code session '
-                 "(no Applications Assistant task is set).</p>")
+        state = ('<div class="thread-state" role="status"><span>Waiting for the Applications Assistant: run /ask in a Claude Code '
+                 f'session (no Applications Assistant task is set).{count}</span>{stop}</div>')
+    elif work:
+        state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
+                 f'<span>{doing}</span>{stop}</div>')
+    elif not messages:
+        state = '<p class="muted thread-empty">No messages yet.</p>'
     else:
         state = ""
     return (f'<div class="thread" data-thread{" data-pending" if pending else ""}>'
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
+
+
+def _panel_work(conn: sqlite3.Connection, app_id: int | None, job_id: str | None) -> list[str]:
+    """What the open panel waits for: its application's queued agent requests (labels) and its job's
+    open brief request. Empty without a panel."""
+    labels = []
+    if app_id is not None:
+        labels = [db.REQUEST_LABELS.get(r["kind"], r["kind"]) for r in db.open_requests(conn, app_id)]
+        job_id = (db.get_application(conn, app_id) or {}).get("getjo_job_id")
+    if job_id and db.open_briefs(conn, job_id):
+        labels.append("Job brief")
+    return labels
 
 
 def _cancelled_cls(m: dict) -> str:
@@ -2748,12 +2808,19 @@ def _cancelled_cls(m: dict) -> str:
 
 
 def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]:
-    """A "Cancelled" flag on each cancelled user message and an "after cancel" one on a reply to it."""
+    """A "Cancelled" flag on each cancelled user message, an "after cancel" one on a reply to it, and
+    "no reply yet" on a message still waiting while a newer one on the same subject was answered."""
     status = {m["id"]: m["status"] for m in messages}
     flags = {}
+    answered = {(m["application_id"], m["getjo_job_id"], m["topic"]): m["id"] for m in messages
+                if m["author"] == "user" and m["status"] == "answered" and m["topic"] != db.COMPARE}
     for m in messages:
         if m["status"] == "cancelled":
             flags[m["id"]] = '<span class="msg-flag">Cancelled</span>'
+        elif (m["author"] == "user" and m["status"] in db.WAITING
+              and answered.get((m["application_id"], m["getjo_job_id"], m["topic"]), 0) > m["id"]):
+            flags[m["id"]] = ('<span class="msg-flag msg-flag-warn" title="A newer message on the same job was answered, '
+                              'this one was not. Cancel it, or Resend it.">no reply yet</span>')
         elif m["author"] == "agent" and m["reply_to"] is not None:
             to = status.get(m["reply_to"]) or (db.get_message(conn, m["reply_to"]) or {}).get("status")
             if to == "cancelled":
@@ -2836,7 +2903,8 @@ def thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> 
         pending = working or bool(db.pending_messages(conn))
         payload = {"ok": True, "pending": pending, "failed": _failed_pings(db.pending_messages(conn)),
                    "status": app["status"] if app else None,
-                   "messages": db.message_count(conn), "html": _thread(conn, settings)}
+                   "messages": db.message_count(conn),
+                   "html": _thread(conn, settings, app["id"] if app else None, None if app else job_id)}
     return _json(200, payload)
 
 
