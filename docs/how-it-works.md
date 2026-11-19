@@ -617,7 +617,9 @@
    and the card, answer and all-prep notes, and the latest 30 Learn messages) and answers with
    `learn-thread reply --to MSG`. A card the agent drafts is saved with `cards add` only after the
    user's yes in the box. The box (`web._learn_agent`, `web._learn_thread`) lists the latest 60 Learn
-   messages oldest first, each tagged with its card (a link; "this card" for the open one), with
+   messages oldest first, each tagged with its card (a link showing the card's question cut to about 50 characters,
+   the whole question as its title, from `learn.fronts`; "this card" for the open one; "a removed card",
+   not a link, for a deleted one), with
    Want a card for this? and Add to notes under each agent reply; while one waits, `app.js` polls GET
    `/learn/thread?card=ID` (pending, count, HTML) every 4 s for up to 5 minutes, then swaps the
    conversation in and tells the Notes editor to pick up an agent's addition (`learn:refresh`).

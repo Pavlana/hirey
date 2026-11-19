@@ -7,7 +7,7 @@ import json
 import os
 from unittest import mock
 
-from prep import assistant, cli, db, learnnotes
+from prep import assistant, cli, db, learn, learnnotes
 from prep.config import load_settings
 from tests.helpers import IsolatedTestCase
 from tests.test_web import HOST, TODAY, WebTestCase
@@ -131,11 +131,29 @@ class LearnBoxTest(LearnTestCase):
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "prep_assistant_task": 51})
         self.assertIn("Learn Assistant is working…", self.get("/learn?card=1")[2])
 
+    def test_thread_tag_cuts_a_long_question_and_names_a_removed_card(self) -> None:
+        front = "Why would a toy <shop> cache keep\nserving stale prices after the nightly import job finishes?"
+        with self.conn() as conn:
+            long_id = learn.add_card(conn, {"track": "caching-example", "front": front, "back": "- TTL"})
+            gone_id = learn.add_card(conn, {"track": "caching-example", "front": "Gone soon?", "back": "- x"})
+        self.ask(long_id, "Explain")
+        self.ask(gone_id, "And this")
+        with self.conn() as conn:
+            learn.delete_card(conn, gone_id)
+        body = self.get("/learn?card=1")[2]
+        whole = "Why would a toy &lt;shop&gt; cache keep serving stale prices after the nightly import job finishes?"
+        self.assertIn(f'<a class="msg-about" href="/learn?card={long_id}" title="{whole}">'
+                      'Why would a toy &lt;shop&gt; cache keep serving stale…</a>', body)
+        self.assertIn('<span class="msg-about">a removed card</span>', body)
+        self.assertNotIn(f"card={gone_id}", body)
+
     def test_thread_tags_cards_and_reply_actions(self) -> None:
         msg = self.ask(2, "Explain stampede")
         reply = self.answer(msg, "Many misses at once. See https://example.com/stampede")
         body = self.get("/learn?card=1")[2]
-        self.assertIn('<a class="msg-about" href="/learn?card=2">card 2</a>', body)
+        self.assertIn('<a class="msg-about" href="/learn?card=2" title="When does a cache stampede happen?">'
+                      'When does a cache stampede happen?</a>', body)
+        self.assertNotIn(">card 2<", body)
         self.assertIn('<a class="msg-about is-here" href="/learn?card=2">this card</a>', self.get("/learn?card=2")[2])
         self.assertIn(f'name="reply_id" value="{reply}"', body)
         self.assertIn('action="/learn/card"', body)
