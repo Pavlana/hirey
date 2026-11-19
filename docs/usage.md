@@ -389,7 +389,8 @@ Learn, each message tagged with the card that was open (a link back to it). Typi
 - "Quiz me on chapter 2": one question per reply from that chapter of the open card's track, then
   short feedback on each answer and the next question.
 - **Check my answer**, under the card's Your answer box: saves the answer, then asks the agent, which
-  replies with what was covered, what was missed and one better phrasing. An empty answer is refused.
+  replies with what was covered and what was missed of what the card's question asks, extra points
+  from the back as "Bonus for the interview", and one better phrasing. An empty answer is refused.
 
 Under each agent reply, **Want a card for this?** asks the agent to draft a card from that reply; it
 is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends the reply to the
