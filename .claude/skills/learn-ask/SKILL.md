@@ -65,6 +65,12 @@ numbers.
 
 Pay never goes into a reply unless the user's own message asks.
 
+**Never name a card by its id or number in a reply** ("card 33", "#33"): the user sees only "Card 5
+of 29" on the page and does not know the internal ids. Ids belong in commands only. To point at
+another card, show what it is about inline (a short code snippet or the fact itself) so the reply
+stands alone, or name it by its question as the page shows it ("the card asking what a mutable
+default list does").
+
 ### Kinds of message
 
 - **A question about the card** ("explain this more simply", "why does X matter?", "give me an
@@ -88,7 +94,7 @@ Pay never goes into a reply unless the user's own message asks.
   message is the answer: give short feedback by the same rule as Check my answer (right, missing
   only what that question asks, extras as "Bonus for the interview:", one better phrasing), then the next
   question with its footer. After the last one, end with `— Quiz · chapter N · finished` and a
-  two-line summary: what is solid, which cards to review. A message that is not an answer ("stop",
+  two-line summary: what is solid, which cards to review (named by their questions, not ids). A message that is not an answer ("stop",
   a new question) ends the quiz.
 - **Want a card for this?** (the message is "Want a card for this? Draft a card from your reply
   R; …"): draft one card from reply R — a front (the question to drill), a back (3 to 6 short key
@@ -107,7 +113,8 @@ Pay never goes into a reply unless the user's own message asks.
   Save nothing yet.
 - **A yes to a card draft** (the latest agent reply ends with `— Card draft`, and the message says
   save, yes, or asks for changes): with a yes, save the draft exactly as shown, with the user's
-  changes, in one call, then reply with the new card's id and a link line `/learn?card=ID`:
+  changes, in one call, then reply with the new card's question and a link line `/learn?card=ID`
+  (the link is the only place the id appears):
 
   ```bash
   python -m prep.cli cards add <<'CARD'

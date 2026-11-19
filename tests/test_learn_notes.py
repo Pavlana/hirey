@@ -97,6 +97,7 @@ class LearnNotesWebTest(WebTestCase):
         body = self.get("/learn?card=1")[2]
         self.assertIn('<pre class="ed-gutter" aria-hidden="true">1\n2\n3\n4</pre>', body)  # a, b, c and the last line
         self.assertIn('aria-label="Notes for this card">\na\nb\nc\n</textarea>', body)  # leading \n: the parser drops one
+        self.assertNotIn('wrap="off"', body)  # the editor soft-wraps long lines to the panel
 
     def test_plain_form_save_redirects_back_to_the_tab(self) -> None:
         stamp = stamp_of(self.get("/learn?card=2&notes=all")[2])
