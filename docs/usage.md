@@ -384,19 +384,22 @@ Learn, each message tagged with the card that was open (a link back to it). Typi
 
 - A question about the card ("explain this more simply", "give me an example"). The agent answers in
   plain English from the card, its **Learn** sources (it may open those links) and general knowledge,
-  and ends with two lines: "Understand:" (the core idea in one or two simple sentences) and "Say it:"
-  (one or two quoted sentences to say in the interview). It never invents facts about an
+  and ends with a closing block: "Understand:" (one to three plain bullets: what happens and why,
+  naming the exact error and its message when there is one), "Fix:" on a code card only ("DON'T": the
+  tempting wrong fix, why it is wrong, and its code; "INSTEAD:": the best fix and its code, maybe one
+  more) and "Say it:" (one or two quoted sentences to say in the interview). It never invents facts about an
   employer or the user and keeps the `confirmed` / `accelerator-default` / `unknown` labels.
 - "Quiz me on chapter 2": one question per reply from that chapter of the open card's track, then
   short feedback on each answer and the next question.
 - **Check my answer**, under the card's Your answer box: saves the answer, then asks the agent, which
   replies with what was covered and what was missed of what the card's question asks, extra points
-  from the back as "Extra for the interview", one better phrasing and the Understand / Say it lines.
+  from the back as "Extra for the interview", one better phrasing and the closing block.
   An empty answer is refused.
 
 Under each agent reply, **Want a card for this?** asks the agent to draft a card from that reply; it
 is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends only the reply's
-closing Understand / Say it lines to the card's note, under a heading with the card's question and the
+closing block (Understand, Fix, Say it), exactly as written, blank lines and code indentation kept, to
+the card's note, under a heading with the card's question and the
 day (the all-prep notes for a general reply, under "Agent" and the day); an older reply without those
 lines keeps its "Better phrasing" text as Understand and its "Say it in the interview" line as Say it
 (either alone is enough). A reply with none of these adds nothing; a line under the buttons says so

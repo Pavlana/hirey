@@ -179,7 +179,8 @@ def _closing_block(lines: list[str]) -> str | None:
         said = "\n".join(line.rstrip() for line in lines[say:end]).strip()
         if understand == UNDERSTAND or said == SAY_IT:
             continue  # a label with nothing after it
-        return f"{understand}\n{said}"
+        # As written: the blank lines between Understand:, Fix: and Say it: and the code's indentation.
+        return "\n".join(line.rstrip() for line in lines[start:end]).strip()
     return None
 
 
@@ -208,8 +209,9 @@ def essence(reply: str) -> str | None:
     """What Add to notes keeps of a Learn Assistant reply, or None when it has nothing short to keep
     (then nothing is added). In order:
     1. the closing "Understand:" / "Say it:" block, as written: the last "Understand:" line that a
-       "Say it:" line follows wins, so labels quoted earlier are not taken; "Understand:" runs to the
-       "Say it:" line, "Say it:" to the first blank line, a "—" footer line or the end;
+       "Say it:" line follows wins, so labels quoted earlier are not taken; the block is kept as written
+       (an optional "Fix:" part, blank lines and code indentation included) from "Understand:" through
+       "Say it:", which runs to the first blank line, a "—" footer line or the end;
     2. an older reply: its "Better phrasing:" text as "Understand:" and its "Say it in the interview:"
        line as "Say it:" (either alone is enough)."""
     lines = reply.replace("\r\n", "\n").replace("\r", "\n").split("\n")
