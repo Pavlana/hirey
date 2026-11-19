@@ -384,10 +384,11 @@ Learn, each message tagged with the card that was open (a link back to it). Typi
 
 - A question about the card ("explain this more simply", "give me an example"). The agent answers in
   plain English from the card, its **Learn** sources (it may open those links) and general knowledge,
-  and ends with a closing block: "Understand:" (one to three plain bullets: what happens and why,
-  naming the exact error and its message when there is one), "Fix:" on a code card only ("DON'T": the
-  tempting wrong fix, why it is wrong, and its code; "INSTEAD:": the best fix and its code, maybe one
-  more) and "Say it:" (one or two quoted sentences to say in the interview). It never invents facts about an
+  and ends with a short closing block for quick recall, specific to that card: "Understand:" (one to
+  three short bullets, each in words or a tiny code snippet, whichever is clearer; the exact error and
+  its message when there is one), an optional "Fix:" when the card is about a bug and code shows the
+  fix best (a "DON'T" / "INSTEAD:" pair when there is a tempting wrong fix) and "Say it:" (one or two
+  quoted sentences to say in the interview). It never invents facts about an
   employer or the user and keeps the `confirmed` / `accelerator-default` / `unknown` labels.
 - "Quiz me on chapter 2": one question per reply from that chapter of the open card's track, then
   short feedback on each answer and the next question.

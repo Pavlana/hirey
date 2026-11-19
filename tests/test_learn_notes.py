@@ -333,6 +333,11 @@ class EssenceTest(unittest.TestCase):
         self.assertEqual(learnnotes.essence("Long explanation.\n\n" + FIX_BLOCK + "\n\n— Quiz · chapter 1 · finished"),
                          FIX_BLOCK)
 
+    def test_words_only_block_is_kept_verbatim(self) -> None:
+        block = ('Understand:\n- A set finds an item by its hash.\n- A list checks items one by one.\n\n'
+                 'Say it: "Set lookups use hashing; a list scans."')
+        self.assertEqual(learnnotes.essence("Explanation.\n\n" + block + "\n"), block)
+
     def test_windows_line_ends(self) -> None:
         self.assertEqual(learnnotes.essence("Understand: a\r\nSay it: b\r\n"), "Understand: a\nSay it: b")
 

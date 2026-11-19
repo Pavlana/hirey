@@ -1,6 +1,6 @@
 ---
 name: learn-ask
-description: Answer messages in the Learn Assistant box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English, ending with an "Understand:" / "Fix:" (code cards) / "Say it:" block (the essence that Add to notes keeps) (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the Learn Assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Learn Assistant messages are waiting.
+description: Answer messages in the Learn Assistant box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English, ending with a short "Understand:" / optional "Fix:" / "Say it:" recall block (the essence that Add to notes keeps) (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the Learn Assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Learn Assistant messages are waiting.
 ---
 
 # /learn-ask
@@ -49,46 +49,54 @@ Read what the message needs, never more:
 
 Every answer is in **plain, simple English**: short sentences, everyday words, one idea at a time,
 a small example where it helps. Explain a term the first time it appears. Every reply that
-explains something or checks an answer ends with the **closing block**, last in the reply. Each
-label starts its own line, with a blank line between the parts:
+explains something or checks an answer ends with the **closing block**, last in the reply. Its job
+is quick recall: a memory jog with only the main points of this card's idea, nothing more. Keep it
+short. Each label starts its own line, with a blank line between the parts:
 
-- `Understand:` then 1 to 3 short `-` bullets in plain words: what happens and why. When there is an
-  error, name it exactly, with its message.
-- `Fix:` only when the card is about code (find the error, debug, read the code with a pitfall, pair
-  programming). Under `DON'T`, one line on the tempting wrong fix and why it is wrong, then its short
-  code, indented. Under `INSTEAD:`, `- Best, <one line>:` and the right fix's short code, indented,
-  plus at most one more right fix in the same shape. Leave `Fix:` out for any other topic.
+- `Understand:` then 1 to 3 short `-` bullets, specific to this card's topic. When there is an error,
+  name it exactly, with its message.
+- For each point, use words or code, whichever explains it better and shorter. A tiny snippet (2 to
+  6 lines) when it shows the point more clearly than words, such as the wrong and the right fix of
+  a bug; words and no code when they are clearer, such as for a concept.
+- `Fix:` is optional: only when the card is about a bug and code shows the fix best. A `DON'T` /
+  `INSTEAD:` pair fits when there is a tempting wrong fix; it is never required, never a template.
 - `Say it:` then 1 or 2 sentences in quotes, in the user's voice: what to say in the interview, in
   plain words that satisfy an interviewer.
 
-A made-up example, for a card about counting words in a dict:
+**Every example comes from the current card or question.** Never reuse an example from this skill
+file, from earlier replies or from other cards' notes. The two made-up examples below show the shape
+only: do not copy these; write for the card at hand.
+
+Words only (a concept):
 
 ```
 Understand:
-- counts[word] += 1 first reads counts[word]; a word not seen yet is not in the dict.
-- So Python raises KeyError: 'apple' on the first new word.
+- A set stores each item by its hash, so "x in s" jumps straight to one slot.
+- A list has no such index, so "x in items" checks items one by one.
+
+Say it: "Set lookups are fast on average because they use hashing; a list has to scan."
+```
+
+With a tiny snippet (a bug fix):
+
+```
+Understand:
+- Removing from a list while looping over it shifts the items, so the loop skips some.
 
 Fix:
-DON'T wrap it in try/except KeyError: pass: it hides the error and never counts the new word.
-    try:
-        counts[word] += 1
-    except KeyError:
-        pass
-
+DON'T remove inside the loop:
+    for x in items:
+        if x < 0: items.remove(x)
 INSTEAD:
-  - Best, read with a default of 0:
-        counts[word] = counts.get(word, 0) + 1
-  - Or let the dict start every key at 0:
-        counts = defaultdict(int)
+    items = [x for x in items if x >= 0]
 
-Say it: "Reading a missing key raises KeyError, so I give the count a default of 0 with
-dict.get or a defaultdict."
+Say it: "I never change a list while looping over it; I build a new one with a comprehension."
 ```
 
 **Add to notes** saves exactly this block (under the card's question and the day), so it must stand
-on its own: no "as above", no reference to the rest of the reply. Keep it short. Write each label
-once; nothing comes after "Say it:" but a blank line and, in a quiz, the next question. Notes
-refuse pay words, so code in the block avoids currency signs such as `$` (use another example).
+on its own: no "as above", no reference to the rest of the reply. Write each label once; nothing
+comes after "Say it:" but a blank line and, in a quiz, the next question. Notes refuse pay words, so
+code in the block avoids currency signs such as `$` (use another example).
 
 Sources: answer from the card, its **Learn** sources (open the links when the question needs more
 than the card says; read public pages only) and general knowledge. Give a source as a plain URL
@@ -124,7 +132,7 @@ default list does").
   question did not ask for, such as a trap, an edge case or wider context; never put these under
   "Missed:"; leave the part out when there is nothing extra) and "Better phrasing:" (one improved
   version of the answer, in the user's voice, 3 to 5 sentences). Then the closing block
-  (Understand:, Fix: on a code card, Say it:). An empty answer: say so in one line.
+  (Understand:, Fix: only when it helps, Say it:). An empty answer: say so in one line.
 - **Quiz mode** ("quiz me on chapter 2", "quiz me on this track", "quiz me"): the chapters list
   in `learn-thread show` numbers the chapters of the open card's track; "chapter N" is the Nth.
   Ask **one question per reply**, taken from that chapter's cards (fronts and follow-ups, in
