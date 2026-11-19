@@ -1299,19 +1299,39 @@ def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int) -> 
             + _button("Send", size="sm") + "</div></form></div>")
 
 
+CARD_TAG_CHARS = 50  # a Learn message from another card is tagged with its question, cut to this
+
+
+def _clip(text: str, limit: int) -> str:
+    """`text` cut to `limit` characters at a word break where one is close, with "…" when cut."""
+    if len(text) <= limit:
+        return text
+    cut = text[:limit]
+    space = cut.rfind(" ")
+    return (cut[:space] if space > limit * 0.6 else cut).rstrip(" ,;:-") + "…"
+
+
 def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | None) -> str:
     """The Learn Assistant conversation, its latest LEARN_MESSAGES oldest first, each tagged with the card it
-    was sent from (a link; "this card" for the open one). Under each agent reply: Want a card for
+    was sent from (a link with the card's question, cut short, the whole question as its title; "this
+    card" for the open one; "a removed card", not a link, for a deleted one). Under each agent reply: Want a card for
     this? and Add to notes. data-pending while a message waits for the Learn Assistant."""
     messages = db.thread(conn, topic=db.LEARN, limit=LEARN_MESSAGES)
     back = f'<input type="hidden" name="card_id" value="{h(card_id)}">' if card_id is not None else ""
 
+    questions = learn.fronts(conn, {m["card_id"] for m in messages if m["card_id"] is not None})
+
     def tag(m: dict) -> str:
         if m["card_id"] is None:
             return '<span class="msg-about">general</span>'
-        here = m["card_id"] == card_id
-        return (f'<a class="msg-about{" is-here" if here else ""}" href="/learn?card={h(m["card_id"])}">'
-                f'{"this card" if here else "card " + h(m["card_id"])}</a>')
+        if m["card_id"] == card_id:
+            return f'<a class="msg-about is-here" href="/learn?card={h(card_id)}">this card</a>'
+        question = questions.get(m["card_id"])
+        if question is None:
+            return '<span class="msg-about">a removed card</span>'
+        full = " ".join(question.split())
+        return (f'<a class="msg-about" href="/learn?card={h(m["card_id"])}" title="{h(full)}">'
+                f'{h(_clip(full, CARD_TAG_CHARS))}</a>')
 
     def actions(m: dict) -> str:
         if m["author"] != "agent":

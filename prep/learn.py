@@ -233,6 +233,15 @@ def set_status(conn: sqlite3.Connection, card_id: int, status: str) -> dict:
     return get_card(conn, card_id)
 
 
+def fronts(conn: sqlite3.Connection, card_ids: set[int]) -> dict[int, str]:
+    """The question (front) of each card that still exists, by id; removed cards are left out."""
+    if not card_ids:
+        return {}
+    marks = ",".join("?" * len(card_ids))
+    rows = conn.execute(f"SELECT id, front FROM cards WHERE id IN ({marks})", sorted(card_ids))
+    return {row[0]: row[1] for row in rows}
+
+
 def delete_card(conn: sqlite3.Connection, card_id: int) -> dict:
     """Remove a card for good (its chapter and track stay); returns the card as it was."""
     card = get_card(conn, card_id)
