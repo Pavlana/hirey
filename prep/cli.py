@@ -1751,6 +1751,9 @@ def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print(f"Message {msg['id']} to the Learn Assistant, sent with card {card['id']} open ({where}; {card['status']}).")
         print(f"\nCard {card['id']}")
         print(f"  front: {card['front']}")
+        if card["prompt"]:
+            print("  prompt (shown under the question):")
+            print("\n".join(f"    {line}" for line in card["prompt"].splitlines()))
         print("  back (key points):")
         print("\n".join(f"    {line}" for line in card["back"].splitlines()) or "    (none)")
         if card["follow_ups"]:
@@ -1908,7 +1911,10 @@ def _print_card(card: dict, done: list[bool] | None = None) -> None:
         print("Tags: " + ", ".join(card["tags"]))
     if card["source_gap_id"]:
         print(f"From gap #{card['source_gap_id']}")
-    print(f"\nQ: {card['front']}\n\nKey points:\n{card['back']}")
+    print(f"\nQ: {card['front']}")
+    if card["prompt"]:
+        print(f"\n{card['prompt']}")
+    print(f"\nKey points:\n{card['back']}")
     if card["follow_ups"]:
         print("\nLikely follow-ups:\n" + "\n".join(f"- {f}" for f in card["follow_ups"]))
     if card["sources"]:

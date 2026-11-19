@@ -21,6 +21,9 @@ cover: teal               (optional; matcha, teal, amber, rose, violet or slate)
 tags: confirmed, accelerator-default
 gap: 12                   (optional; the gap this card drills, one card per gap)
 
+Optional prompt: what the question refers to (a code snippet, a failing test),
+shown under the question and always visible.
+---
 The back: short key points in Markdown, as many lines as needed.
 Code blocks are fine; lines inside ``` fences are always back text.
 
@@ -35,6 +38,12 @@ sources:
 - `#` starts a track, `##` a chapter in it, `###` a card. The card's back is every other line up
   to the next heading or `follow-ups:` / `sources:` line. Do not use `#`, `##` or `###` headings
   inside a back.
+- A line holding only `---` splits the card: everything above the first one is the **prompt**,
+  shown under the question before Show answer; the rest is the back. Use it when the question
+  refers to code ("what does this print?"). A `---` inside a ``` fence, or a later `---` in the back,
+  does not split. Without a `---` the whole text is the back, as before; a card still needs a back.
+- The card text is Markdown (no headings): paragraphs, `- ` lists, **bold**, *italic*, `code` and
+  ``` fenced code blocks.
 - `tags:` takes a comma-separated list. `follow-ups:` and `sources:` stand alone on their line,
   followed by `- ` items, one per line.
 - A source is `kind | title | url | minutes | why`. `kind` is `watch`, `read` or `notes`; trailing
@@ -44,7 +53,7 @@ sources:
 ## Updating
 
 A card is matched by its track and its front (the question, exactly). A match gets the file's
-back, chapter, tags, follow-ups, sources and gap, and keeps its id, position and done or to-do
+prompt, back, chapter, tags, follow-ups, sources and gap, and keeps its id, position and done or to-do
 status. Changing a front makes a new card; the old one stays. Cards that are no longer in the
 file are left alone and counted as "not in the file"; remove one with `cards delete ID`. A track is matched by its slug; its title,
 and the subtitle and cover when given, are updated.

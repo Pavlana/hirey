@@ -180,6 +180,30 @@ class LearnImportTest(unittest.TestCase):
         self.assertEqual(len(toy["cards"]), 2)
         self.assertIsNone(second["cards"][0]["chapter"])
 
+    def test_prompt_above_the_first_rule(self) -> None:
+        text = ("# T\n### What does it print?\ntags: output\n\n```python\nprint(1)\n---\n```\n\n---\n\n"
+                "**Output:** `1`\n\n---\n\nmore back\n")
+        (c,) = learn.parse_markdown(text)[0]["cards"]
+        self.assertEqual(c["prompt"], "```python\nprint(1)\n---\n```")  # a --- inside a fence stays text
+        self.assertEqual(c["back"], "**Output:** `1`\n\n---\n\nmore back")  # only the first --- splits
+        self.assertIsNone(learn.parse_markdown("# T\n### Q\n- a")[0]["cards"][0]["prompt"])  # no ---: as before
+        with self.assertRaises(ValueError):
+            learn.parse_markdown("# T\n### Q\nthe code\n---\n")  # a prompt still needs a back
+
+    def test_import_adds_and_updates_the_prompt(self) -> None:
+        self.counts()
+        widget = learn.list_cards(self.conn, "toy")[0]
+        learn.set_status(self.conn, widget["id"], "done")
+        self.assertIsNone(widget["prompt"])
+        with_prompt = IMPORT.replace("tags: confirmed, unknown\n", "tags: confirmed, unknown\n\nLook at `w`.\n---\n")
+        self.assertEqual(self.counts(with_prompt)["toy"]["updated"], 1)
+        after = learn.get_card(self.conn, widget["id"])
+        self.assertEqual((after["prompt"], after["status"]), ("Look at `w`.", "done"))
+        self.assertTrue(after["back"].startswith("- A made-up thing"))
+        self.assertEqual(self.counts(with_prompt)["toy"]["unchanged"], 2)
+        self.assertEqual(self.counts()["toy"]["updated"], 1)  # the --- removed: the prompt goes too
+        self.assertIsNone(learn.get_card(self.conn, widget["id"])["prompt"])
+
     def test_parse_errors(self) -> None:
         bad = {
             "no track": "### card\n- x",
@@ -348,7 +372,14 @@ class LearnCliTest(IsolatedTestCase):
         with closing(db.connect(self.prep_db)) as conn:
             learn.set_source_done(conn, 1, "https://example.com/w", True)
         _, out, _ = self.run_cli("cards", "show", "1")
+        self.assertNotIn("\n\n\n", out)  # no prompt: no empty block
         self.assertIn("Learn more (1 / 2 done):\n[x] watch: Widget talk · 5 min · https://example.com/w\n[ ] notes: Script", out)
+
+    def test_show_prints_the_prompt(self) -> None:
+        self.run_cli("tracks", "add", "Toy track")
+        self.add(card(track="toy-track", front="What does it print?", prompt="```python\nprint(1)\n```"))
+        _, out, _ = self.run_cli("cards", "show", "1")
+        self.assertIn("Q: What does it print?\n\n```python\nprint(1)\n```\n\nKey points:\n- A made-up thing", out)
 
     def test_today_shows_done_and_todo(self) -> None:
         _, out, _ = self.run_cli("today")

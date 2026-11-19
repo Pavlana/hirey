@@ -825,6 +825,12 @@ main:has(.learn-view) { max-width: 1880px; }
 .learn-card-body { display: grid; gap: var(--space-4); padding: var(--space-5); }
 .learn-q { margin: 0; font-family: var(--font-display); font-size: 24px; font-weight: 500; line-height: 1.3;
   white-space: pre-line; overflow-wrap: anywhere; }
+.learn-prompt { font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
+.learn-prompt p, .learn-prompt ul { margin: 0 0 6px; }
+.doc pre { margin: 0 0 8px; padding: var(--space-3); overflow-x: auto; background: var(--surface-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); font-size: 13px; line-height: 1.45; }
+.doc pre code { white-space: pre; overflow-wrap: normal; }
+.doc code { font-family: var(--mono); font-size: .92em; }
 .learn-answer { display: grid; gap: var(--space-3); }
 .learn-answer > summary { list-style: none; width: fit-content; }
 .learn-answer > summary::-webkit-details-marker { display: none; }

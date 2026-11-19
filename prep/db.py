@@ -493,6 +493,9 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
     "tailored_cv_checks": {"summary": "TEXT"},
+    # prompt: Markdown shown under a Learn card's question, always visible (the code a "read the code"
+    # card asks about); NULL when the card has none. The back stays hidden until Show answer.
+    "cards": {"prompt": "TEXT"},
 }
 
 APPLICATION_FIELDS = (

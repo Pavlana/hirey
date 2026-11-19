@@ -39,6 +39,23 @@ for k in (3, 5, 10):
 follow-ups:
 - What is recall@K?
 
+### Read the code: what does this print?
+tags: output
+
+```python
+cache = {}
+def get(key, default=[]):
+    default.append(key)
+    return cache.get(key, default)
+
+print(get("a"), get("b"))
+```
+---
+**Output:** `['a', 'b'] ['a', 'b']`
+
+- The default list is made once and shared by both calls; both results are that same list.
+- Fix: `default=None`, then make a new list inside.
+
 # Stories (STAR)
 slug: stories
 cover: amber
