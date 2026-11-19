@@ -612,7 +612,9 @@
    ids only. `/learn/add-note` (`reply_id`) appends the essence of that reply to its card's note (all-prep for
    a general one) with `learnnotes.append` on the server: `learnnotes.essence` takes the reply's last
    "Understand:" line that a "Say it:" line follows, up to the blank line or "—" footer after "Say it:"
-   (the whole reply when there is none), under a heading with the card's question and the day ("Agent"
+   (else an older reply's last "Better phrasing:" text as "Understand:" and its "Say it in the
+   interview:" line as "Say it:", either alone; else nothing: a 400 with `web.NO_SUMMARY`, which
+   `app.js` shows as a `.msg-hint` line under that reply's buttons; never the whole reply), under a heading with the card's question and the day ("Agent"
    for a general one); refused when that text is already there or mentions pay (`learnnotes.append`
    skips only the old "Bonus for the interview:" label at the start of a line, now "Extra for the
    interview:"). `/learn-ask` (`.claude/skills/learn-ask/SKILL.md`) reads a message with `cli learn-thread show

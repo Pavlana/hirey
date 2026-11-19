@@ -788,6 +788,7 @@ main:has(.learn-view) { max-width: 1880px; }
 .learn-chat .msg-about { max-width: min(28em, 60%); }  /* a card's question (cut to ~50 characters in web.py) */
 .msg-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
 .msg-actions form { margin: 0; }
+.msg-hint { margin: 2px 0 0; color: var(--text-muted); font-size: 12.5px; }  /* why Add to notes added nothing */
 /* A user message still waiting: Resend (after a while, or at once when the ping failed) and Cancel,
    in both boxes. A cancelled message is greyed and flagged; a late reply to it says "after cancel". */
 .msg-wait { justify-content: flex-end; }

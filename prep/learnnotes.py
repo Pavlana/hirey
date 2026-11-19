@@ -155,12 +155,18 @@ UNDERSTAND = "Understand:"
 SAY_IT = "Say it:"
 
 
-def essence(reply: str) -> str | None:
-    """The closing "Understand:" / "Say it:" block of a Learn Assistant reply, as it is written there,
-    or None when the reply has none (an older reply). The last "Understand:" line that a "Say it:" line
-    follows wins, so the labels quoted earlier in a reply are not taken. "Understand:" runs to the
-    "Say it:" line; "Say it:" runs to the first blank line, a "—" footer line or the end."""
-    lines = reply.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+OLD_BETTER = "Better phrasing:"
+OLD_SAY = "Say it in the interview:"
+_LABEL_LINE = re.compile(r"^[A-Z][A-Za-z ]{1,40}:")  # "Covered:", "Missed:", "Say it:", …
+
+
+def _unquote(line: str) -> str:
+    """A line without the "> " of a Markdown quote."""
+    return line.lstrip().lstrip(">").lstrip()
+
+
+def _closing_block(lines: list[str]) -> str | None:
+    """The last "Understand:" line that a "Say it:" line follows, through "Say it:" (see essence)."""
     starts = [i for i, line in enumerate(lines) if line.lstrip().startswith(UNDERSTAND)]
     for start in reversed(starts):
         say = next((j for j in range(start + 1, len(lines)) if lines[j].lstrip().startswith(SAY_IT)), None)
@@ -175,3 +181,41 @@ def essence(reply: str) -> str | None:
             continue  # a label with nothing after it
         return f"{understand}\n{said}"
     return None
+
+
+def _old_value(lines: list[str], label: str) -> str:
+    """The text of the last `label` line in an older reply: the rest of that line, then the lines under
+    it up to a blank line, a "—" footer or the next "Label:" line ("" when there is none)."""
+    starts = [i for i, line in enumerate(lines) if _unquote(line).startswith(label)]
+    if not starts:
+        return ""
+    i = starts[-1]
+    parts = [_unquote(lines[i])[len(label):].strip()]
+    j = i + 1
+    if not parts[0]:
+        while j < len(lines) and not lines[j].strip():
+            j += 1  # the text starts on the next line
+    while j < len(lines):
+        line = _unquote(lines[j]).rstrip()
+        if not line or line.startswith("—") or _LABEL_LINE.match(line):
+            break
+        parts.append(line)
+        j += 1
+    return "\n".join(part for part in parts if part).strip()
+
+
+def essence(reply: str) -> str | None:
+    """What Add to notes keeps of a Learn Assistant reply, or None when it has nothing short to keep
+    (then nothing is added). In order:
+    1. the closing "Understand:" / "Say it:" block, as written: the last "Understand:" line that a
+       "Say it:" line follows wins, so labels quoted earlier are not taken; "Understand:" runs to the
+       "Say it:" line, "Say it:" to the first blank line, a "—" footer line or the end;
+    2. an older reply: its "Better phrasing:" text as "Understand:" and its "Say it in the interview:"
+       line as "Say it:" (either alone is enough)."""
+    lines = reply.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    block = _closing_block(lines)
+    if block:
+        return block
+    better, said = _old_value(lines, OLD_BETTER), _old_value(lines, OLD_SAY)
+    kept = ([f"{UNDERSTAND} {better}"] if better else []) + ([f"{SAY_IT} {said}"] if said else [])
+    return "\n".join(kept) or None

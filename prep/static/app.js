@@ -1200,7 +1200,20 @@
         toast(reply.message);
       }
     } catch (err) {
-      toast(err.message || "Not saved.", { error: true });
+      const actions = mode === "learn" && form.action.endsWith("/learn/add-note") && form.closest(".msg-actions");
+      if (actions) {
+        // Add to notes refused (no short summary, already there, pay): say why under the reply's buttons.
+        let hint = actions.nextElementSibling;
+        if (!hint?.classList.contains("msg-hint")) {
+          hint = document.createElement("p");
+          hint.className = "msg-hint";
+          hint.setAttribute("role", "status");
+          actions.after(hint);
+        }
+        hint.textContent = err.message || "Not saved.";
+      } else {
+        toast(err.message || "Not saved.", { error: true });
+      }
     } finally {
       if (button) button.disabled = false;
     }

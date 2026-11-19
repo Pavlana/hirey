@@ -152,6 +152,7 @@ REPLY
 Plain text: the box shows it as written (links become clickable), so no Markdown bold, italics or
 headings; short paragraphs, `-` bullets and the plain labels above (`Covered:`, `Missed:`,
 `Extra for the interview:`, `Better phrasing:`, `Understand:`, `Say it:`). **Add to notes** copies only
-the closing `Understand:` / `Say it:` block into the note (the whole reply when it has none). The reply
+the closing `Understand:` / `Say it:` block into the note, never the whole reply (a reply without
+the block adds nothing and the user is told to ask for a summary), so always end with it. The reply
 shows under the message in the Learn Assistant box, with **Want a card for this?** and **Add to notes**
 under it.

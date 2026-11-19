@@ -210,13 +210,13 @@ class LearnActionsTest(LearnTestCase):
         self.assertEqual(self.post_json("/learn/card", {"reply_id": "x"})[0], 400)
 
     def test_add_to_notes_once(self) -> None:
-        reply = self.answer(self.ask(1, "Explain TTL"), "A TTL expires an entry.")
+        reply = self.answer(self.ask(1, "Explain TTL"), "Long text.\n\nUnderstand: a TTL expires an entry.\nSay it: \"TTL.\"")
         status, out = self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})
         self.assertEqual(status, 200)
         self.assertEqual((out["note"], out["note_card"]), ("card", 1))
         text = learnnotes.read(self.settings.private_dir, "1")["text"]
         self.assertIn("**What is a cache-aside read? · ", text)  # the card's question, not its id
-        self.assertIn("A TTL expires an entry.", text)  # no Understand / Say it block: the whole reply
+        self.assertIn("Understand: a TTL expires an entry.", text)
         self.assertEqual(out["stamp"], learnnotes.read(self.settings.private_dir, "1")["stamp"])
         status, out = self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})
         self.assertEqual(status, 400)
@@ -239,11 +239,26 @@ class LearnActionsTest(LearnTestCase):
         self.assertIn("reads the &lt;store&gt;", page)  # escaped in the editor
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})[0], 400)
 
-    def test_old_reply_with_the_bonus_label_can_be_added(self) -> None:
-        old = "Covered: TTL.\nMissed: nothing, the question is fully answered.\nBonus for the interview:\n- warm the cache"
+    def test_old_reply_keeps_better_phrasing_and_say_it(self) -> None:
+        old = ("Covered: TTL.\nMissed: nothing, the question is fully answered.\nBonus for the interview:\n"
+               "- warm the cache\nBetter phrasing: I keep hot items in the cache\nwith a TTL.\n\n"
+               "> Say it in the interview: A TTL keeps cached items fresh.")
         reply = self.answer(self.ask(1, "Check my answer"), old)
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})[0], 200)
-        self.assertIn("Bonus for the interview:", learnnotes.read(self.settings.private_dir, "1")["text"])
+        text = learnnotes.read(self.settings.private_dir, "1")["text"]
+        self.assertTrue(text.endswith("Understand: I keep hot items in the cache\nwith a TTL.\n"
+                                      "Say it: A TTL keeps cached items fresh.\n"))
+        self.assertNotIn("Covered:", text)
+        self.assertNotIn("Bonus", text)
+
+    def test_reply_without_a_summary_adds_nothing(self) -> None:
+        long = "A long explanation of TTLs, with no labels at all. " * 40
+        reply = self.answer(self.ask(1, "Explain TTL"), long)
+        status, out = self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})
+        self.assertEqual(status, 400)
+        self.assertEqual(out["message"], 'This reply has no short summary to add. Ask the Learn Assistant to '
+                                         '"summarise this as Understand / Say it".')
+        self.assertEqual(learnnotes.read(self.settings.private_dir, "1")["text"], "")
 
     def test_general_essence_has_no_question(self) -> None:
         reply = self.answer(self.ask(None, "How?"), "Plan.\n\nUnderstand: one card a day.\nSay it: \"I drill daily.\"")
@@ -254,11 +269,11 @@ class LearnActionsTest(LearnTestCase):
         self.assertNotIn("Plan.", text)
 
     def test_general_reply_goes_to_all_prep_and_pay_is_refused(self) -> None:
-        reply = self.answer(self.ask(None, "How do I prep?"), "One card a day.")
+        reply = self.answer(self.ask(None, "How do I prep?"), "Understand: one card a day.\nSay it: \"Daily.\"")
         status, out = self.post_json("/learn/add-note", {"reply_id": str(reply)})
         self.assertEqual((status, out["note"]), (200, "all"))
-        self.assertIn("One card a day.", learnnotes.read(self.settings.private_dir, "all")["text"])
-        pay = self.answer(self.ask(1, "q"), "The bonus is large.")
+        self.assertIn("Understand: one card a day.", learnnotes.read(self.settings.private_dir, "all")["text"])
+        pay = self.answer(self.ask(1, "q"), "Understand: the bonus is large.\nSay it: \"x\"")
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(pay)})[0], 400)
         self.assertNotIn("bonus", learnnotes.read(self.settings.private_dir, "1")["text"])
 
