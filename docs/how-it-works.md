@@ -611,7 +611,8 @@
    seq:<N> [--project …] --subject "Learn question on card <id>" "/learn-ask <card id|general> <msg id>"`,
    ids only. `/learn/add-note` (`reply_id`) appends the essence of that reply to its card's note (all-prep for
    a general one) with `learnnotes.append` on the server: `learnnotes.essence` takes the reply's last
-   "Understand:" line that a "Say it:" line follows, up to the blank line or "—" footer after "Say it:"
+   "Understand:" line that a "Say it:" line follows, up to the blank line or "—" footer after "Say it:",
+   kept as written (an optional "Fix:" part, any code snippets, blank lines and indentation)
    (else an older reply's last "Better phrasing:" text as "Understand:" and its "Say it in the
    interview:" line as "Say it:", either alone; else nothing: a 400 with `web.NO_SUMMARY`, which
    `app.js` shows as a `.msg-hint` line under that reply's buttons; never the whole reply), under a heading with the card's question and the day ("Agent"

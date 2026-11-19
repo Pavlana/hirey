@@ -260,6 +260,13 @@ class LearnActionsTest(LearnTestCase):
                                          '"summarise this as Understand / Say it".')
         self.assertEqual(learnnotes.read(self.settings.private_dir, "1")["text"], "")
 
+    def test_note_holds_the_fix_block_verbatim(self) -> None:
+        from tests.test_learn_notes import FIX_BLOCK
+        reply = self.answer(self.ask(1, "Find the error"), "Here is what goes wrong.\n\n" + FIX_BLOCK)
+        self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})[0], 200)
+        text = learnnotes.read(self.settings.private_dir, "1")["text"]
+        self.assertEqual(text, "**What is a cache-aside read? · 20 Jan**\n\n" + FIX_BLOCK + "\n")
+
     def test_general_essence_has_no_question(self) -> None:
         reply = self.answer(self.ask(None, "How?"), "Plan.\n\nUnderstand: one card a day.\nSay it: \"I drill daily.\"")
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply)})[0], 200)

@@ -255,6 +255,27 @@ class AnswerBoxTest(WebTestCase):
         self.assertEqual(learnnotes.read(self.settings.private_dir, "answer-1")["text"], "Read the cache, then the db.\n")
 
 
+FIX_BLOCK = """Understand:
+- counts[word] += 1 reads counts[word] first, and a new word is not in the dict yet.
+- So Python raises KeyError: 'apple'.
+
+Fix:
+DON'T wrap it in try/except KeyError: pass: it hides the error and never counts the word.
+    try:
+        counts[word] += 1
+    except KeyError:
+        pass
+
+INSTEAD:
+  - Best, read with a default of 0:
+        counts[word] = counts.get(word, 0) + 1
+  - Or start every key at 0:
+        counts = defaultdict(int)
+
+Say it: "A missing key raises KeyError, so I count with dict.get and a default of 0."
+""".rstrip("\n")
+
+
 class EssenceTest(unittest.TestCase):
     """The closing Understand: / Say it: block that Add to notes keeps. Fictional text only."""
 
@@ -307,6 +328,15 @@ class EssenceTest(unittest.TestCase):
     def test_new_block_wins_over_old_labels(self) -> None:
         reply = "Better phrasing: old.\n\nUnderstand: new.\nSay it: \"new.\""
         self.assertEqual(learnnotes.essence(reply), 'Understand: new.\nSay it: "new."')
+
+    def test_block_with_fix_is_kept_verbatim(self) -> None:
+        self.assertEqual(learnnotes.essence("Long explanation.\n\n" + FIX_BLOCK + "\n\n— Quiz · chapter 1 · finished"),
+                         FIX_BLOCK)
+
+    def test_words_only_block_is_kept_verbatim(self) -> None:
+        block = ('Understand:\n- A set finds an item by its hash.\n- A list checks items one by one.\n\n'
+                 'Say it: "Set lookups use hashing; a list scans."')
+        self.assertEqual(learnnotes.essence("Explanation.\n\n" + block + "\n"), block)
 
     def test_windows_line_ends(self) -> None:
         self.assertEqual(learnnotes.essence("Understand: a\r\nSay it: b\r\n"), "Understand: a\nSay it: b")
