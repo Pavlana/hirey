@@ -1226,7 +1226,8 @@ def _notes_panel(settings: Settings, card_id: int, key: str) -> str:
 
 
 def _notes_editor(card_id: int, key: str, note: dict, draft: str | None = None, alert: str = "") -> str:
-    """The editor: a textarea (monospace, no wrapping) with a line-number gutter and a status line
+    """The editor: a monospace textarea (soft-wrapped) with a line-number gutter (one number per
+    logical line; app.js sizes each to its wrapped height) and a status line
     (vim mode, file, autosave time, line,col, the vim keys toggle). app.js autosaves it; vim.js adds
     the optional vim keys. `draft` (a refused save): the user's text stays in the editor, under the
     current note, and the stamp is the current one, so Save again replaces it knowingly."""
@@ -1242,7 +1243,7 @@ def _notes_editor(card_id: int, key: str, note: dict, draft: str | None = None, 
             f'<input type="hidden" name="card_id" value="{h(card_id)}"><input type="hidden" name="note" value="{which}">'
             f'<input type="hidden" name="stamp" value="{h(note["stamp"])}">'
             f'<div class="ed-frame" data-ed-anchor><pre class="ed-gutter" aria-hidden="true">{gutter}</pre>'
-            f'<textarea name="text" class="ed-text" wrap="off" spellcheck="false" autocomplete="off" '
+            f'<textarea name="text" class="ed-text" spellcheck="false" autocomplete="off" '
             f'maxlength="{learnnotes.MAX_CHARS}" aria-label="{label}">\n{h(text)}</textarea></div>'
             '<div class="ed-status"><span class="ed-mode" data-ed-mode hidden></span>'
             f'<span class="ed-file">{h(note["file"])}</span><span class="ed-saved" data-ed-saved role="status"></span>'

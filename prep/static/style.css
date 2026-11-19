@@ -748,8 +748,8 @@ main:has(.learn-view) { max-width: 1880px; }
 .learn-side { min-width: 0; display: grid; gap: var(--space-4); align-content: start; }
 .learn-view.is-agent-wide .learn-notes { display: none; }
 .learn-expand[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); }
-/* Notes editor: tabs in the head; a line-number gutter beside a no-wrap monospace textarea (one line
-   per number); a status line (vim mode, file, autosave time, line,col, the vim keys toggle). */
+/* Notes editor: tabs in the head; a line-number gutter beside a monospace textarea that soft-wraps to
+   the panel (one number per logical line, as tall as its wrapped rows: app.js measures them in .ed-mirror); a status line (vim mode, file, autosave time, line,col, the vim keys toggle). */
 .ed-tabs { display: inline-flex; gap: 4px; }
 .ed-tab { padding: 2px 10px; border: 1px solid var(--border); border-radius: var(--radius-full); color: var(--text-muted);
   font-size: 12.5px; text-decoration: none; }
@@ -761,14 +761,15 @@ main:has(.learn-view) { max-width: 1880px; }
 .ed-current summary { cursor: pointer; color: var(--text-muted); font-size: 13px; }
 .ed-current pre { max-height: 220px; overflow: auto; margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3);
   background: var(--surface-2); border-radius: var(--radius-sm); font: 12.5px/1.5 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
-.ed-frame { display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(200px, 34vh, 340px); }  /* ~13-15 lines: the Learn Assistant stays in view */
+.ed-frame { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); height: clamp(200px, 34vh, 340px); }  /* ~13-15 lines: the Learn Assistant stays in view */
 .ed-frame:focus-within { box-shadow: inset 0 0 0 1px var(--accent); }
 .ed-text:focus-visible { box-shadow: none; }
 .ed-gutter, .ed-text { margin: 0; font: 13px/1.6 var(--mono); tab-size: 4; }
 .ed-gutter { overflow: hidden; min-width: 4ch; padding: var(--space-3) var(--space-2) calc(var(--space-3) + 16px) var(--space-3);
   border-right: 1px solid var(--border); color: var(--text-faint); text-align: right; user-select: none; }
 .ed-text { display: block; width: 100%; height: 100%; padding: var(--space-3); border: 0; outline: none; resize: none;
-  background: transparent; color: var(--text); white-space: pre; overflow: auto; }
+  background: transparent; color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
+.ed-mirror { position: absolute; top: 0; left: 0; height: auto; visibility: hidden; pointer-events: none; overflow: hidden; }
 .ed-status { display: flex; flex-wrap: wrap; align-items: center; gap: 4px var(--space-3); padding: 6px var(--space-4);
   border-top: 1px solid var(--border); color: var(--text-muted); font: 12px/1.5 var(--mono); }
 .ed-mode { padding: 0 6px; border-radius: var(--radius-sm); background: var(--accent-soft); color: var(--accent-text); font-weight: 700; }

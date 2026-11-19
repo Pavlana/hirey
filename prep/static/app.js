@@ -619,15 +619,39 @@
     const VIM_KEY = "learn-vim";
     let vim = null;
 
+    // Lines soft-wrap to the panel, so the gutter gives each logical line one number, sized to that
+    // line's wrapped height: a hidden mirror with the textarea's width and font measures each line.
+    const mirror = document.createElement("div");
+    mirror.className = "ed-text ed-mirror";
+    mirror.setAttribute("aria-hidden", "true");
+    area.after(mirror);
+    let painted = "";
     function paintGutter() {
-      const n = area.value.split("\n").length;
-      if (gutter.dataset.lines !== String(n)) {
-        gutter.textContent = Array.from({ length: n }, (_, i) => i + 1).join("\n");
-        gutter.dataset.lines = String(n);
+      const lines = area.value.split("\n");
+      const width = area.clientWidth;
+      const key = `${width}|${area.value}`;
+      if (key !== painted && width > 0) {
+        painted = key;
+        mirror.style.width = `${width}px`; // CSSOM, not an inline style attribute: allowed by the CSP
+        mirror.replaceChildren(...lines.map((line) => {
+          const row = document.createElement("div");
+          row.textContent = line || " ";
+          return row;
+        }));
+        const heights = Array.from(mirror.children, (row) => row.getBoundingClientRect().height);
+        gutter.replaceChildren(...heights.map((px, i) => {
+          const num = document.createElement("div");
+          num.textContent = String(i + 1);
+          num.style.height = `${px}px`;
+          return num;
+        }));
+        mirror.replaceChildren();
       }
       gutter.scrollTop = area.scrollTop;
     }
     area.addEventListener("scroll", () => { gutter.scrollTop = area.scrollTop; });
+    if (window.ResizeObserver) new ResizeObserver(() => paintGutter()).observe(area);
+    else window.addEventListener("resize", paintGutter);
     function paintPos() {
       if (!vim) return;
       const { line, col } = HireyVim.position(area.value, area.selectionStart);
