@@ -36,7 +36,8 @@ Keys:
     context_warn_tokens  context size per turn above which the Usage tab says "time to /compact"
                     (default 300000)
     [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
-                    cache_read, cache_write) for the Usage tab's cost estimate; none set: no estimate
+                    cache_read, cache_write, cache_write_1h) for the Usage tab's cost estimate; they
+                    override the built-in list prices (prep/prices.py) for matching models
 
 An env var set to an empty string clears the assistant keys (CLEARABLE); for every other key an
 empty value is ignored. Relative paths are resolved against the repo root, never the current directory,
@@ -60,7 +61,7 @@ DEFAULT_STALE_DAYS = 3
 DEFAULT_BRIEF_AUTO_MIN_SCORE = 8
 DEFAULT_CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
 DEFAULT_CONTEXT_WARN_TOKENS = 300_000
-PRICE_KINDS = ("input", "output", "cache_read", "cache_write")
+PRICE_KINDS = ("input", "output", "cache_read", "cache_write", "cache_write_1h")  # 1h defaults to cache_write
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -115,7 +116,7 @@ class Settings:
     coordinator_task: int | None = None
     context_warn_tokens: int = DEFAULT_CONTEXT_WARN_TOKENS
     # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
-    prices: tuple[tuple[str, tuple[float, float, float, float]], ...] = ()
+    prices: tuple[tuple[str, tuple[float, float, float, float, float]], ...] = ()
 
 
 def _resolve(value: str) -> Path:
@@ -203,8 +204,9 @@ def facts_path(settings: Settings) -> Path | None:
     return settings.private_dir / "cv-facts.md" if settings.private_dir else None
 
 
-def _prices(value: object) -> tuple[tuple[str, tuple[float, float, float, float]], ...]:
-    """[prices."model"] tables: input, output, cache_read, cache_write in dollars per million tokens."""
+def _prices(value: object) -> tuple[tuple[str, tuple[float, float, float, float, float]], ...]:
+    """[prices."model"] tables: input, output, cache_read, cache_write (5-minute) and cache_write_1h in
+    dollars per million tokens. A missing cache_write_1h is cache_write; any other missing kind is 0."""
     if not value:
         return ()
     if not isinstance(value, dict):
@@ -215,7 +217,7 @@ def _prices(value: object) -> tuple[tuple[str, tuple[float, float, float, float]
             raise ConfigError(f"prices.{model} must be a table with {', '.join(PRICE_KINDS)}")
         nums = []
         for kind in PRICE_KINDS:
-            v = table.get(kind, 0)
+            v = table.get(kind, table.get("cache_write", 0) if kind == "cache_write_1h" else 0)
             if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
                 raise ConfigError(f"prices.{model}.{kind} must be a number of dollars per million tokens, got {v!r}")
             nums.append(float(v))

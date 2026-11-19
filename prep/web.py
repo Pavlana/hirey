@@ -990,8 +990,10 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
 
 METRICS_TABS = (("usage", "Usage"), ("applications", "Applications"))
 TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
-ROLE_SHADES = {"Applications Assistant": "s8", "Learn Assistant": "s6", "Coordinator": "s4", "Build tasks": "s3",
-               "Main checkouts": "s2"}
+COST_SHADES = {"Cache read": "s4", "Cache write": "s6", "Output": "s8", "Input": "s10"}
+ESTIMATE_NOTE = "Estimated at API prices. Your Claude subscription is billed differently."
+ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Coordinator": "s5", "Build tasks": "s3",
+               "Main checkouts": "s1"}
 
 
 def metrics_filters(query: dict[str, list[str]]) -> dict:
@@ -1033,6 +1035,62 @@ def _tok(n: float) -> str:
     return usage.short(n)
 
 
+def _usd(x: float) -> str:
+    """$0 · <$0.01 · $3.27 · $41.80 · $1,234."""
+    if x <= 0:
+        return "$0"
+    if x < .01:
+        return "<$0.01"
+    return f"${x:,.0f}" if round(x, 2) >= 1000 else f"${x:,.2f}"
+
+
+def _usd_axis(x: float) -> str:
+    return f"${x:,.0f}" if x >= 10 or x == 0 else f"${x:,.2f}"
+
+
+def _money_tile(label: str, w: dict) -> str:
+    unknown = f" · {h(_tok(w['unpriced']))} price unknown" if w["unpriced"] else ""
+    return _tile(label, _usd(w["cost"]), f"<small>{h(_tok(w['tokens']))} tokens{unknown}</small>", "accent")
+
+
+def _cost_cell(dollars: float, unpriced: int, tokens: int) -> str:
+    if unpriced and unpriced == tokens:
+        return '<span class="muted">price unknown</span>'
+    return h(_usd(dollars)) + ("*" if unpriced else "")
+
+
+def money_section(r: dict) -> tuple[str, str]:
+    """The Usage tab's cost parts: (today / 7 / 30-day tiles with the cost per day by role, the card
+    "Where the money goes")."""
+    m = r["money"]
+    tiles = (_money_tile("Today", m["today"]) + _money_tile("Last 7 days", m["week"])
+             + _money_tile(f"Last {usage.MONEY_DAYS} days", m["month"]))
+    series = [(name, ROLE_SHADES.get(name, "s3")) for name in usage.ROLES]
+    days = [(f"{date.fromisoformat(d).day}", v) for d, v in m["days"]]
+    used = [s for k, s in enumerate(series) if any(v[k] for _, v in days)]
+    keep = [k for k, s in enumerate(series) if s in used]
+    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in used)
+    chart = charts.stacked_columns([(label, [v[k] for k in keep]) for label, v in days], used, _usd_axis)
+    per_day = (f'<div class="stack-legend">{legend}</div>' + (chart or _empty("Nothing priced in this period."))
+               + _note(f"Last {usage.MONEY_DAYS} days, day of the month under each column. " + ESTIMATE_NOTE))
+    total = sum(c for _, c, _ in m["kinds"])
+    kinds = [(name, c, COST_SHADES[name]) for name, c, _ in m["kinds"]]
+    split_rows = [(f'<span class="swatch {COST_SHADES[name]}"></span>{h(name)}', h(_usd(c)),
+                   f"{c / total:.0%}" if total else "–", h(_tok(n)))
+                  for name, c, n in sorted(m["kinds"], key=lambda k: -k[1])]
+    unknown = ""
+    if m["unknown_models"]:
+        unknown = _note("Price unknown (not counted in $): " + ", ".join(
+            f"{model} {_tok(n)} tokens" for model, n in m["unknown_models"]) + ".")
+    where = (charts.share_bar(kinds) + _table(("Part", ("Cost", "num"), ("Share", "num"), ("Tokens", "num")),
+                                              split_rows, "Nothing priced.")
+             + _note("Cache write includes 5-minute and 1-hour writes at their own prices. Last "
+                     f"{usage.MONEY_DAYS} days.") + unknown)
+    return (f'<p class="card-note">{h(ESTIMATE_NOTE)}</p><div class="tiles">{tiles}</div>'
+            + _card(f"Cost per day by role, last {usage.MONEY_DAYS} days", per_day, cls="card-wide"),
+            _card("Where the money goes", where))
+
+
 def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict) -> str:
     try:
         usage.sync(conn, settings)
@@ -1056,13 +1114,9 @@ def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict)
     over = [c for c in r["context"] if c["over"]]
     tiles = (
         _tile(f"Tokens, last {f['days']} days", _tok(r["total"]),
-              f"<small>{r['turns']:,} turns · {r['sessions']} sessions</small>", "accent")
+              f"<small>{r['turns']:,} turns · {r['sessions']} sessions</small>")
         + _tile("Cache-read share", share, "<small>context re-read from the cache, the cheap part</small>",
                 "success" if r["cache_read_share"] and r["cache_read_share"] >= .8 else "")
-        + (_tile("API-equivalent cost", f"${r['cost']:,.0f}",
-                 "<small>estimate at API prices, not your subscription bill"
-                 + (f" · {h(_tok(r['unpriced']))} tokens without a price left out" if r["unpriced"] else "")
-                 + "</small>") if r["cost"] is not None else "")
         + _tile(f"Context over {_tok(settings.context_warn_tokens)}", str(len(over)),
                 "<small>" + (h(", ".join(c["role"] for c in over)) + ": time to /compact" if over
                              else "assistants and coordinator") + "</small>", "warning" if over else "")
@@ -1073,14 +1127,16 @@ def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict)
                + charts.stacked_columns(days, list(TOKEN_SERIES), _tok)
                + _note("Stacked from the bottom: cache read, cache write, output, fresh input. A turn is one "
                        "API response."))
-    top = _table(("Task", "Title", ("Turns", "num"), ("Tokens", "num"), ("Per turn", "num")),
-                 [(_mono(h(t["ref"])), h(t["title"]), f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"])))
-                  for t in r["top"]], "No tasks.")
-    roles = [(name, n, ROLE_SHADES.get(name, "s3")) for name, n in r["roles"]]
+    top = _table(("Task", "Title", ("Cost", "num"), ("Turns", "num"), ("Tokens", "num"), ("Per turn", "num")),
+                 [(_mono(h(t["ref"])), h(t["title"]), _cost_cell(t["cost"], t["unpriced"], t["tokens"]),
+                   f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"]))) for t in r["top"]], "No tasks.")
+    total_cost = sum(c for _, _, c in r["roles"])
+    roles = [(name, c if total_cost else n, ROLE_SHADES.get(name, "s3")) for name, n, c in r["roles"]]
     who = charts.share_bar(roles) + _table(
-        ("Role", ("Share", "num"), ("Tokens", "num")),
-        [(f'<span class="swatch {shade}"></span>{h(name)}', f"{n / r['total']:.0%}", h(_tok(n)))
-         for name, n, shade in roles], "No usage.")
+        ("Role", ("Cost", "num"), ("Share of $", "num"), ("Tokens", "num")),
+        [(f'<span class="swatch {ROLE_SHADES.get(name, "s3")}"></span>{h(name)}', h(_usd(c)),
+          f"{c / total_cost:.0%}" if total_cost else "–", h(_tok(n)))
+         for name, n, c in r["roles"]], "No usage.")
     ctx_rows = []
     for c in r["context"]:
         top_v = max(max(v for _, v in c["trend"]), settings.context_warn_tokens)
@@ -1092,10 +1148,13 @@ def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict)
                  hint="Settings assistant_task, prep_assistant_task and coordinator_task name them.")
     save = ("<ul class=\"save-list\">" + "".join(f"<li>{h(t)}</li>" for t in r["save"]) + "</ul>" if r["save"]
             else _empty("Nothing stands out."))
-    return (filters + f'<div class="tiles">{tiles}</div>'
+    money, where = money_section(r)
+    starred = _note("* part of its tokens has no price") if any(0 < t["unpriced"] < t["tokens"] for t in r["top"]) else ""
+    return (filters + money
+            + '<div class="columns">' + where + _card(f"Who spends what, last {f['days']} days", who) + "</div>"
+            + _card(f"Top tasks by cost, last {f['days']} days", top + starred, count=len(r["top"]), cls="card-wide")
+            + f'<div class="tiles">{tiles}</div>'
             + _card("Tokens per day", per_day, cls="card-wide")
-            + '<div class="columns">' + _card("Top tasks by tokens", top, count=len(r["top"]))
-            + _card("Who uses what", who) + "</div>"
             + '<div class="columns">'
             + _card("Context size per turn", ctx + _note(
                 f"Input plus cache read and written per response: each day's last turn, up to {usage.CONTEXT_DAYS} "

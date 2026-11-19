@@ -132,12 +132,18 @@ charts are server-rendered SVG):
   count next to Applications. The Applications Assistant box sits under the list in both views; the panel on the
   right shows the selected application or job offer. Details below.
 - **Metrics** (`/metrics`, last in the nav; `/dashboard` and `/progress` redirect here), two tabs:
-  - **Usage** (`?tab=usage`, the default): Claude Code token use, to see which sessions cost the
-    most and where to save. Filters: project (each project seen, or all) and 7 / 14 / 30 days.
-    Tiles: tokens, turns and sessions; cache-read share; an API-equivalent cost when `[prices]` are
-    set ("estimate at API prices, not your subscription bill"); assistants over the context
-    threshold. Then tokens per day (stacked: cache read, cache write, output, fresh input), top
-    tasks by tokens (seq, title, turns, tokens, tokens per turn), who uses what (Applications
+  - **Usage** (`?tab=usage`, the default): Claude Code token use in tokens and US dollars, to see
+    which sessions cost the most and where to save. Filters: project (each project seen, or all)
+    and 7 / 14 / 30 days. Dollars are an estimate at Claude API list prices, labelled as such: a
+    Claude subscription is billed differently. First three dollar tiles, Today, Last 7 days and
+    Last 30 days (each with its token total; these windows ignore the days filter), cost per day by
+    role for the last 30 days (stacked columns), and **Where the money goes** (cache read, cache
+    write, output, input in dollars). Tokens of a model with no known price read "price unknown"
+    and count as $0, never at a guessed price. Then who spends what (cost, share of dollars,
+    tokens per role) and top tasks by cost (seq, title, turns, cost, tokens, tokens per turn),
+    both sorted by dollars and following the days filter; a cost with `*` is partly unpriced.
+    Then tiles: tokens, turns and sessions; cache-read share; assistants over the context
+    threshold. Then tokens per day (stacked: cache read, cache write, output, fresh input), who uses what (Applications
     Assistant, Learn Assistant, coordinator, build tasks, main checkouts), context size per turn
     for the two assistants and the coordinator (each day's last turn; "time to /compact" above
     `context_warn_tokens`), and **Where to save**: an assistant over the threshold, a task (not an assistant or the coordinator) still
@@ -493,7 +499,8 @@ rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 
 The Usage tab reads Claude Code's transcripts under `claude_projects_dir` (default
 `~/.claude/projects`), every `*.jsonl` below it, read only. Of each line it keeps the time, working
-directory, session id and, for API responses, the message id, model and four token counts. Message
+directory, session id and, for API responses, the message id, model, four token counts, the
+1-hour part of the cache write, the speed (fast mode) and the inference region. Message
 text is never stored, logged or shown. Each page load reads only what was appended since the last
 one (byte offsets in `prep.db`); `python -m prep.cli usage scan` does the same from the command line,
 for example once before the first page load.
@@ -506,8 +513,18 @@ minutes); without dev3 the task id is shown. Settings:
 - `coordinator_task`: dev3 seq of the coordinator; tasks of dev3 type coordinator count anyway.
 - `context_warn_tokens`: context per turn above which an assistant reads "time to /compact"
   (default 300000).
-- `[prices."<model id or prefix>"]` with `input`, `output`, `cache_read`, `cache_write` in dollars
-  per million tokens: shows an estimate at API prices. Without prices the tile is hidden.
+- `[prices."<model id or prefix>"]` with `input`, `output`, `cache_read`, `cache_write` (5-minute
+  cache) and optional `cache_write_1h` (default: `cache_write`) in dollars per million tokens:
+  overrides the built-in price for every model id starting with the prefix (longest prefix wins),
+  or prices a model the built-in list does not know.
+
+Built-in prices live in `prep/prices.py`, copied from Anthropic's pricing page
+(https://platform.claude.com/docs/en/about-claude/pricing, with the date it was read). Each
+response is priced on its own: a cache write at the 5-minute or 1-hour rate as the transcript
+records it (rows read before that was recorded, whose transcript is gone, at the 1-hour rate,
+Claude Code's default), fast mode at the fast price, US-only inference at 1.1x, and Claude Haiku 5.5
+at its higher rate when the prompt is over 100,000 tokens. When prices change, the table in
+`prep/prices.py` is updated by hand.
 
 The Applications and Learn Assistants are the `assistant_task` and `prep_assistant_task` seqs (in
 `assistant_project` when set, else in this checkout's project).

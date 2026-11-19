@@ -75,9 +75,13 @@ private_dir = "/absolute/path/to/inter_prep"
 # claude_projects_dir = "/Users/example/.claude/projects"   # absolute; default ~/.claude/projects
 # coordinator_task = 3              # dev3 seq of the coordinator (tasks of dev3 type coordinator count anyway)
 # context_warn_tokens = 300000      # context per turn above this reads "time to /compact"
-# Optional API prices in dollars per million tokens, for an estimate (not a subscription bill).
-# [prices."claude-opus-5-5"]
-# input = 0.0
-# output = 0.0
-# cache_read = 0.0
-# cache_write = 0.0
+# Dollars on the Usage tab are an estimate at Claude API list prices (not a subscription bill).
+# Built-in prices for current models are in prep/prices.py. A [prices."<model id or prefix>"] table
+# overrides them (longest prefix wins) or prices a model the list does not know; dollars per
+# million tokens; cache_write is the 5-minute cache write, cache_write_1h defaults to cache_write.
+# [prices."claude-example"]
+# input = 1.0
+# output = 5.0
+# cache_read = 0.1
+# cache_write = 1.25
+# cache_write_1h = 2.0

@@ -2,8 +2,9 @@
 
 Source: Claude Code's transcripts (`claude_projects_dir`, default ~/.claude/projects), every `*.jsonl`
 below it, read only. Of each line only these are used: `timestamp`, `cwd`, `sessionId` and, when the
-line has `message.usage`, `message.id`, `message.model` and the four token counts (`input_tokens`,
-`output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`). Message content is never
+line has `message.usage`, `message.id`, `message.model`, the four token counts (`input_tokens`,
+`output_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`), the 1-hour part of the cache
+write (`cache_creation.ephemeral_1h_input_tokens`), `speed` and `inference_geo`. Message content is never
 read into prep.db, logged or shown: a line is decoded with json.loads, those fields are copied out and
 the rest is dropped at once. Lines without the text `"usage"` are skipped before decoding.
 
@@ -20,6 +21,10 @@ shows as its project (the dev3 project whose checkout holds it), else the folder
 
 Definitions: a turn is one API response (one message.id). Tokens are all four counts added up. Context
 size of a turn is input + cache read + cache write: what the model read for that response.
+
+Cost: an estimate at Claude API list prices (prep/prices.py, overridden by settings `prices`), worked
+out per response group so the per-response modifiers apply (Haiku 5.5 long prompts, fast mode, US-only
+inference). Tokens of a model without a price are counted as "price unknown", never priced.
 """
 
 import json
@@ -31,7 +36,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from prep import assistant
+from prep import assistant, prices as price_list
 from prep.config import REPO_ROOT, Settings
 
 log = logging.getLogger("prep.usage")
@@ -47,6 +52,8 @@ CACHE_WRITE_SHARE = .25   # "many cache writes": a session whose cache writes ar
 CACHE_WRITE_MIN = 1_000_000  # ... and at least this many tokens
 DONE = ("completed", "cancelled")
 COUNTS = ("input", "output", "cache_read", "cache_write")
+COST_KINDS = ("Cache read", "Cache write", "Output", "Input")  # how the money splits, as shown
+MONEY_DAYS = 30        # the cost chart and the "last 30 days" tile
 ROLES = ("Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts")
 STANDING = ROLES[:3]
 
@@ -63,9 +70,14 @@ def _local_day(ts: str) -> str:
         return ts[:10]
 
 
+def _count(v: object) -> int:
+    return v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0
+
+
 def parse_line(raw: bytes) -> tuple | None:
-    """(message_id, ts, day, session, cwd, model, input, output, cache_read, cache_write) from one
-    transcript line with message.usage, else None. Only these fields are copied out."""
+    """(message_id, ts, day, session, cwd, model, input, output, cache_read, cache_write, cache_write_1h,
+    speed, geo) from one transcript line with message.usage, else None. Only these fields are copied
+    out. cache_write_1h is None when the line does not split the cache write by duration."""
     if b'"usage"' not in raw:
         return None
     try:
@@ -76,10 +88,8 @@ def parse_line(raw: bytes) -> tuple | None:
     usage = msg.get("usage") if isinstance(msg, dict) else None
     if not isinstance(usage, dict) or not isinstance(msg.get("id"), str):
         return None
-    counts = []
-    for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
-        v = usage.get(key) or 0
-        counts.append(v if isinstance(v, int) and not isinstance(v, bool) and v > 0 else 0)
+    counts = [_count(usage.get(key)) for key in
+              ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")]
     if not any(counts):
         return None
     ts = line.get("timestamp") if isinstance(line.get("timestamp"), str) else ""
@@ -88,14 +98,21 @@ def parse_line(raw: bytes) -> tuple | None:
     model = msg.get("model") if isinstance(msg.get("model"), str) else None
     session = line.get("sessionId") if isinstance(line.get("sessionId"), str) else None
     cwd = line.get("cwd") if isinstance(line.get("cwd"), str) else ""
-    return (msg["id"], ts, _local_day(ts), session, cwd, model, *counts)
+    split = usage.get("cache_creation")
+    write_1h = min(_count(split.get("ephemeral_1h_input_tokens")), counts[3]) if isinstance(split, dict) else None
+    speed = usage.get("speed") if usage.get("speed") in ("standard", "fast") else None
+    geo = usage.get("inference_geo") if isinstance(usage.get("inference_geo"), str) else None
+    return (msg["id"], ts, _local_day(ts), session, cwd, model, *counts, write_1h, speed, geo and geo[:20])
 
 
-UPSERT = """INSERT INTO usage_messages (message_id, ts, day, session, cwd, model, input, output, cache_read, cache_write)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+UPSERT = """INSERT INTO usage_messages (message_id, ts, day, session, cwd, model, input, output, cache_read, cache_write,
+    cache_write_1h, speed, geo)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(message_id) DO UPDATE SET
     input = max(input, excluded.input), output = max(output, excluded.output),
-    cache_read = max(cache_read, excluded.cache_read), cache_write = max(cache_write, excluded.cache_write)"""
+    cache_read = max(cache_read, excluded.cache_read), cache_write = max(cache_write, excluded.cache_write),
+    cache_write_1h = max(coalesce(cache_write_1h, 0), coalesce(excluded.cache_write_1h, cache_write_1h, 0)),
+    speed = coalesce(excluded.speed, speed), geo = coalesce(excluded.geo, geo)"""
 
 
 def _read_file(conn: sqlite3.Connection, path: Path, offset: int) -> int:
@@ -292,11 +309,32 @@ def _tasks(conn: sqlite3.Connection) -> dict[str, dict]:
     return {r["task_id"][:8]: dict(r) for r in conn.execute("SELECT * FROM usage_tasks")}
 
 
-def _price(settings: Settings, model: str | None) -> tuple[float, float, float, float] | None:
-    for prefix, prices in settings.prices:
-        if model and model.startswith(prefix):
-            return prices
-    return None
+def price(settings: Settings, model: str | None, long_prompt: bool = False, speed: str | None = None,
+          geo: str | None = None) -> price_list.Price | None:
+    """Dollars per million tokens (input, output, cache read, cache write 5m, cache write 1h) for one
+    response, or None when the model has no price. Settings win over the built-in list."""
+    base = next((p for prefix, p in settings.prices if model and model.startswith(prefix)), None)
+    key = price_list.base_id(model)
+    if base is None and key:
+        base = (price_list.LONG_PROMPT_PRICES.get(key) if long_prompt else None) or price_list.DEFAULTS[key]
+    if base is None:
+        return None
+    p = list(base)
+    if speed == "fast" and key in price_list.FAST and base[0]:
+        fast_in, fast_out = price_list.FAST[key]
+        scale = fast_in / base[0]
+        p = [fast_in, fast_out, p[2] * scale, p[3] * scale, p[4] * scale]
+    if geo == "us":
+        p = [v * price_list.US_ONLY for v in p]
+    return tuple(p)
+
+
+def cost(counts: tuple[int, int, int, int, int], p: price_list.Price) -> tuple[float, float, float, float]:
+    """(cache read, cache write, output, input) dollars for (input, output, cache_read, cache_write,
+    cache_write_1h) tokens. The 5-minute write is the write minus its 1-hour part."""
+    i, o, cr, cw, cw1h = counts
+    m = 1_000_000
+    return (cr * p[2] / m, ((cw - cw1h) * p[3] + cw1h * p[4]) / m, o * p[1] / m, i * p[0] / m)
 
 
 def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int = 14,
@@ -329,38 +367,66 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
     per_day = {(start + timedelta(days=i)).isoformat(): [0, 0, 0, 0] for i in range(days)}
     keys: dict[tuple[str, str | None], dict] = {}
     roles = {r: 0 for r in ROLES}
+    role_cost = {r: 0.0 for r in ROLES}
     sessions: dict[str, dict] = {}
-    cost, unpriced = 0.0, 0
     totals = [0, 0, 0, 0]
     turns = 0
+    unpriced = 0
+    # Money: fixed windows (today, 7 and MONEY_DAYS days) whatever `days` is.
+    m_start = end - timedelta(days=MONEY_DAYS - 1)
+    week = (end - timedelta(days=6)).isoformat()
+    money_day = {(m_start + timedelta(days=i)).isoformat(): {r: 0.0 for r in ROLES} for i in range(MONEY_DAYS)}
+    windows = {w: {"cost": 0.0, "tokens": 0, "unpriced": 0} for w in ("today", "week", "month")}
+    kinds = [0.0, 0.0, 0.0, 0.0]
+    kind_tokens = [0, 0, 0, 0]
+    unknown_models: dict[str, int] = {}
     rows = conn.execute(
-        "SELECT day, cwd, session, model, COUNT(*), SUM(input), SUM(output), SUM(cache_read), SUM(cache_write) "
-        "FROM usage_messages WHERE day BETWEEN ? AND ? GROUP BY day, cwd, session, model",
-        (start.isoformat(), end.isoformat()))
-    for day, cwd, session, model, n, i, o, cr, cw in rows:
+        "SELECT day, cwd, session, model, speed, geo, input + cache_read + cache_write > ?, COUNT(*), SUM(input), "
+        "SUM(output), SUM(cache_read), SUM(cache_write), SUM(coalesce(cache_write_1h, cache_write)) "
+        "FROM usage_messages WHERE day BETWEEN ? AND ? GROUP BY 1, 2, 3, 4, 5, 6, 7",
+        (price_list.LONG_PROMPT, min(start, m_start).isoformat(), end.isoformat()))
+    for day, cwd, session, model, speed, geo, long_prompt, n, i, o, cr, cw, cw1h in rows:
         proj, task = places.get(cwd) or place(cwd, projs)
         if project and proj != project:
             continue
         counts = (i, o, cr, cw)
         tokens = sum(counts)
+        p = price(settings, model, bool(long_prompt), speed, geo)
+        split = cost((i, o, cr, cw, cw1h), p) if p else None
+        dollars = sum(split) if split else 0.0
+        r_name = role(proj, task)
+        if day >= m_start.isoformat():
+            for w, since in (("today", today), ("week", week), ("month", m_start.isoformat())):
+                if day >= since:
+                    windows[w]["tokens"] += tokens
+                    windows[w]["cost"] += dollars
+                    windows[w]["unpriced"] += 0 if p else tokens
+            money_day[day][r_name] += dollars
+            if split:
+                kinds = [a + b for a, b in zip(kinds, split)]
+                kind_tokens = [a + b for a, b in zip(kind_tokens, (cr, cw, o, i))]
+            else:
+                unknown_models[model or "unknown"] = unknown_models.get(model or "unknown", 0) + tokens
+        if day < start.isoformat():
+            continue
         for k, v in enumerate(counts):
             per_day[day][k] += v
             totals[k] += v
         turns += n
         key = (proj, task)
-        entry = keys.setdefault(key, {"project": proj, "task": task, "turns": 0, "tokens": 0, "cwds": set()})
+        entry = keys.setdefault(key, {"project": proj, "task": task, "turns": 0, "tokens": 0, "cost": 0.0,
+                                      "unpriced": 0, "cwds": set()})
         entry["turns"] += n
         entry["tokens"] += tokens
+        entry["cost"] += dollars
+        entry["unpriced"] += 0 if p else tokens
         entry["cwds"].add(cwd)
-        roles[role(proj, task)] += tokens
+        roles[r_name] += tokens
+        role_cost[r_name] += dollars
+        unpriced += 0 if p else tokens
         s = sessions.setdefault(session or "", {"key": key, "tokens": 0, "cache_write": 0})
         s["tokens"] += tokens
         s["cache_write"] += cw
-        price = _price(settings, model)
-        if price:
-            cost += sum(v * p for v, p in zip(counts, price)) / 1_000_000
-        else:
-            unpriced += tokens
 
     total = sum(totals)
 
@@ -374,9 +440,10 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
             return {"ref": ref, "title": info.get("title") or ""}
         return {"ref": task, "title": f"{proj} task"}
 
-    top = sorted(keys.values(), key=lambda e: -e["tokens"])[:10]
+    top = sorted(keys.values(), key=lambda e: (-e["cost"], -e["tokens"]))[:10]
     top_rows = [{**label((e["project"], e["task"])), "turns": e["turns"], "tokens": e["tokens"],
-                 "per_turn": e["tokens"] // max(e["turns"], 1), "role": role(e["project"], e["task"])} for e in top]
+                 "per_turn": e["tokens"] // max(e["turns"], 1), "role": role(e["project"], e["task"]),
+                 "cost": e["cost"], "unpriced": e["unpriced"]} for e in top]
 
     # Context per turn: per assistant and coordinator task, its last turn on each of its latest
     # CONTEXT_DAYS active days (any date, so the trend shows even in a short period).
@@ -425,11 +492,12 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
         "cache_read_share": totals[2] / total if total else None,
         "totals": dict(zip(COUNTS, totals)),
         "top": top_rows,
-        "roles": [(r, n) for r, n in roles.items() if n],
+        "roles": sorted(((r, n, role_cost[r]) for r, n in roles.items() if n), key=lambda x: (-x[2], -x[1])),
         "context": context,
         "save": save,
-        "cost": cost if settings.prices else None,
-        "unpriced": unpriced if settings.prices else 0,
+        "unpriced": unpriced,
+        "money": {**windows, "days": [(d, [v[r] for r in ROLES]) for d, v in money_day.items()],
+                  "kinds": list(zip(COST_KINDS, kinds, kind_tokens)), "unknown_models": sorted(unknown_models.items())},
         "projects": names, "home": home,
     }
 
