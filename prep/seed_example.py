@@ -135,27 +135,30 @@ def build_prep_db(path: Path, data: dict) -> None:
         conn.close()
 
 
-def _turn(message_id: str, ts: str, session: str, cwd: str, context: int, cw_share: float) -> list[dict]:
+def _turn(message_id: str, ts: str, session: str, cwd: str, context: int, cw_share: float,
+          model: str = "claude-opus-5-5", ttl: str = "1h") -> list[dict]:
     """Transcript lines for one made-up turn: the user's line, then the response written twice (as a
     streamed response is) with the same message id. The content is a placeholder."""
     cache_write = int(context * cw_share)
     cache_read = int(context * .97) - cache_write
+    one_hour = cache_write if ttl == "1h" else 0
     usage = {"input_tokens": context - cache_read - cache_write, "cache_read_input_tokens": cache_read,
-             "cache_creation_input_tokens": cache_write}
+             "cache_creation_input_tokens": cache_write, "speed": "standard", "inference_geo": "global",
+             "cache_creation": {"ephemeral_1h_input_tokens": one_hour, "ephemeral_5m_input_tokens": cache_write - one_hour}}
     base = {"timestamp": ts, "cwd": cwd, "sessionId": session}
     return [
         {**base, "type": "user", "message": {"role": "user", "content": "example prompt"}},
-        {**base, "type": "assistant", "message": {"id": message_id, "model": "claude-example-1", "role": "assistant",
+        {**base, "type": "assistant", "message": {"id": message_id, "model": model, "role": "assistant",
                                                    "content": [{"type": "text", "text": "example"}],
                                                    "usage": {**usage, "output_tokens": 40}}},
-        {**base, "type": "assistant", "message": {"id": message_id, "model": "claude-example-1", "role": "assistant",
+        {**base, "type": "assistant", "message": {"id": message_id, "model": model, "role": "assistant",
                                                    "content": [{"type": "text", "text": "example reply"}],
                                                    "usage": {**usage, "output_tokens": 1500}}},
     ]
 
 
 def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -> None:
-    """Made-up Claude Code transcripts under `root` (replaced) for the 14 days up to `anchor`, and the
+    """Made-up Claude Code transcripts under `root` (replaced) for the 30 days up to `anchor`, and the
     dev3 projects and tasks they belong to in prep.db at `prep_path`, so no dev3 is needed."""
     from prep import usage  # here, not at the top: usage imports the assistant module
     import shutil
@@ -165,8 +168,9 @@ def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -
                for t in spec["tasks"]]
     sources += [(c, paths[c["project"]]) for c in spec.get("checkouts", [])]
     first = anchor - timedelta(days=13)
-    for n, (src, cwd) in enumerate(sources):
-        d0, d1 = src["days"]
+    runs = [(src, cwd, src["days"]) for src, cwd in sources]
+    runs += [(src, cwd, days) for src, cwd in sources for days in src.get("earlier", [])]
+    for n, (src, cwd, (d0, d1)) in enumerate(runs):
         c0, c1 = src["context"]
         folder = root / ("-" + cwd.strip("/").replace("/", "-").replace("_", "-"))
         folder.mkdir(parents=True, exist_ok=True)
@@ -179,7 +183,8 @@ def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -
                 progress = ((day - d0) + k / max(turns, 1)) / max(d1 - d0 + 1, 1)
                 ts = f"{when.isoformat()}T{9 + k * 9 // max(turns, 1):02d}:{(k * 7) % 60:02d}:00Z"
                 lines += _turn(f"msg_example_{n}_{day}_{k}", ts, session, cwd, int(c0 + (c1 - c0) * progress),
-                               src.get("cache_write_share", .04))
+                               src.get("cache_write_share", .04), src.get("model", "claude-opus-5-5"),
+                               src.get("cache_ttl", "1h"))
         with (folder / f"{session}.jsonl").open("w", encoding="utf-8") as f:
             f.writelines(json.dumps(line) + "\n" for line in lines)
     conn = db.connect(prep_path)

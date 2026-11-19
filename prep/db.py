@@ -496,6 +496,11 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # prompt: Markdown shown under a Learn card's question, always visible (the code a "read the code"
     # card asks about); NULL when the card has none. The back stays hidden until Show answer.
     "cards": {"prompt": "TEXT"},
+    # cache_write_1h: the part of cache_write written with the 1-hour lifetime (priced higher than the
+    # 5-minute one); NULL when the transcript line did not say. speed ("standard" | "fast") and geo
+    # (inference_geo, e.g. "global" | "us") change the price of a response. Adding them re-reads every
+    # transcript once (usage_files is emptied) so rows still on disk get the split.
+    "usage_messages": {"cache_write_1h": "INTEGER", "speed": "TEXT", "geo": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -535,6 +540,8 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
         for column, definition in columns.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+                if (table, column) == ("usage_messages", "cache_write_1h"):
+                    conn.execute("DELETE FROM usage_files")
                 if (table, column) == ("tasks", "stage"):
                     _backfill_task_stages(conn)
                     next_actions_to_tasks(conn)

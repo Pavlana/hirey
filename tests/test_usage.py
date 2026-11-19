@@ -8,7 +8,7 @@ from datetime import date
 from pathlib import Path
 from unittest import mock
 
-from prep import db, usage, web
+from prep import db, prices, usage, web
 from prep.config import ConfigError, load_settings
 from prep.seed_example import build_usage_example
 from tests.helpers import IsolatedTestCase
@@ -56,6 +56,25 @@ class ScanTest(IsolatedTestCase):
         dump = "\n".join(self.conn.iterdump())
         self.assertNotIn(SECRET, dump)
         self.assertNotIn("content", dump.replace("CREATE", ""))
+
+    def test_cache_lifetime_speed_and_geo_are_stored(self) -> None:
+        raw = json.loads(line("m1", w=300))
+        raw["message"]["usage"].update({"cache_creation": {"ephemeral_1h_input_tokens": 200,
+                                                           "ephemeral_5m_input_tokens": 100},
+                                        "speed": "fast", "inference_geo": "us"})
+        self.write(json.dumps(raw), line("m2"))
+        usage.scan(self.conn, self.root)
+        rows = self.rows()
+        self.assertEqual((rows["m1"]["cache_write_1h"], rows["m1"]["speed"], rows["m1"]["geo"]), (200, "fast", "us"))
+        self.assertEqual((rows["m2"]["cache_write_1h"], rows["m2"]["speed"]), (None, None))  # no split: unknown
+
+    def test_new_cache_column_reads_every_transcript_again(self) -> None:
+        self.write(line("m1"))
+        usage.scan(self.conn, self.root)
+        self.assertEqual(usage.scan(self.conn, self.root)["read"], 0)
+        self.conn.executescript("ALTER TABLE usage_messages DROP COLUMN cache_write_1h;")
+        db._add_missing_columns(self.conn)
+        self.assertEqual(usage.scan(self.conn, self.root)["read"], 1)  # usage_files was emptied once
 
     def test_incremental_and_partial_last_line(self) -> None:
         self.write(line("m1"))
@@ -205,19 +224,22 @@ class ReportTest(ExampleUsage):
     def test_roles_top_and_totals(self) -> None:
         r = self.report()
         self.assertEqual(r["projects"], ["getjo", "inter_prep"])
-        self.assertEqual([role for role, _ in r["roles"]],
-                         ["Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts"])
+        self.assertEqual({role for role, _, _ in r["roles"]},
+                         {"Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts"})
+        costs = [c for _, _, c in r["roles"]]
+        self.assertEqual(costs, sorted(costs, reverse=True))  # roles sorted by dollars
         self.assertEqual(r["top"][0]["ref"], "seq:7")
         self.assertEqual(r["top"][0]["title"], "Applications Assistant")
+        self.assertEqual([t["cost"] for t in r["top"]], sorted((t["cost"] for t in r["top"]), reverse=True))
         self.assertNotIn("seq:getjo/12", [t["ref"] for t in r["top"]])  # another project: filtered out
-        self.assertEqual(sum(n for _, n in r["roles"]), r["total"])
+        self.assertEqual(sum(n for _, n, _ in r["roles"]), r["total"])
+        self.assertAlmostEqual(sum(c for _, _, c in r["roles"]), sum(t["cost"] for t in r["top"]))
         self.assertEqual(sum(v for d in r["days"] for v in d[1:]), r["total"])
         self.assertEqual(len(r["days"]), 14)
         self.assertGreater(r["cache_read_share"], .8)
-        self.assertIsNone(r["cost"])  # no prices set: no estimate
 
     def test_turns_count_each_response_once(self) -> None:
-        r = self.report(project=None)
+        r = self.report(days=30, project=None)  # the example spans 30 days
         files = list((self.tmp / "claude-projects").rglob("*.jsonl"))
         responses = {json.loads(l)["message"]["id"] for f in files for l in f.read_text().splitlines()
                      if "usage" in json.loads(l)["message"]}
@@ -253,41 +275,144 @@ class ReportTest(ExampleUsage):
                 save = "\n".join(self.report(**{setting: 41})["save"])
                 self.assertNotIn("still open after its PR merged", save)
 
-    def test_cost_estimate(self) -> None:
-        r = self.report(prices=(("claude-example", (1.0, 2.0, 0.5, 1.5)),))
-        t = r["totals"]
-        expected = (t["input"] * 1.0 + t["output"] * 2.0 + t["cache_read"] * .5 + t["cache_write"] * 1.5) / 1e6
-        self.assertAlmostEqual(r["cost"], expected)
-        self.assertEqual(r["unpriced"], 0)
-        other = self.report(prices=(("claude-other", (1.0, 1.0, 1.0, 1.0)),))
-        self.assertEqual((other["cost"], other["unpriced"]), (0.0, other["total"]))
+    def test_money_windows_and_split(self) -> None:
+        r = self.report()
+        m = r["money"]
+        self.assertEqual(len(m["days"]), usage.MONEY_DAYS)  # fixed 30 days, whatever the filter
+        self.assertEqual(m, self.report(days=7)["money"])
+        self.assertAlmostEqual(sum(sum(c) for _, c in m["days"]), m["month"]["cost"])
+        self.assertAlmostEqual(sum(sum(c) for _, c in m["days"][-7:]), m["week"]["cost"])
+        self.assertAlmostEqual(sum(m["days"][-1][1]), m["today"]["cost"])
+        self.assertLess(m["today"]["cost"], m["week"]["cost"])
+        self.assertLess(m["week"]["cost"], m["month"]["cost"])
+        self.assertEqual([k for k, _, _ in m["kinds"]], list(usage.COST_KINDS))
+        self.assertAlmostEqual(sum(c for _, c, _ in m["kinds"]), m["month"]["cost"])
+        # seq:27 ran on a model with no price, 19 days ago: in the 30-day window only.
+        self.assertEqual(m["unknown_models"], [("claude-example-1", m["month"]["unpriced"])])
+        self.assertGreater(m["month"]["unpriced"], 0)
+        self.assertEqual((m["week"]["unpriced"], r["unpriced"]), (0, 0))
+        self.assertIn("seq:27", [t["ref"] for t in self.report(days=30)["top"]])
+        t27 = next(t for t in self.report(days=30)["top"] if t["ref"] == "seq:27")
+        self.assertEqual((t27["cost"], t27["unpriced"]), (0.0, t27["tokens"]))
+
+    def test_settings_price_overrides_and_prices_the_unknown(self) -> None:
+        r = self.report(days=30, prices=(("claude-example", (1.0, 2.0, 0.5, 1.5, 3.0)),))
+        self.assertEqual(r["money"]["unknown_models"], [])
+        self.assertEqual(r["money"]["month"]["unpriced"], 0)
+        t27 = next(t for t in r["top"] if t["ref"] == "seq:27")
+        self.assertGreater(t27["cost"], 0)
+        free = self.report(prices=(("claude-", (0.0, 0.0, 0.0, 0.0, 0.0)),))  # a prefix covers every model
+        self.assertEqual(free["money"]["month"]["cost"], 0.0)
+
+
+class CostMathTest(IsolatedTestCase):
+    """usage.price and usage.cost with made-up prices: never the real list in assertions on sums."""
+
+    PRICES = (("claude-made-up", (1.0, 2.0, 0.5, 1.5, 3.0)),)
+
+    def settings(self, prices: tuple = PRICES):
+        s = load_settings(self.tmp / "missing.toml")
+        return s.__class__(**{**s.__dict__, "prices": prices})
+
+    def test_cost_split(self) -> None:
+        p = (1.0, 2.0, 0.5, 1.5, 3.0)
+        # 1M input, 2M output, 4M cache read, 3M cache write of which 1M is 1-hour.
+        cr, cw, o, i = usage.cost((1_000_000, 2_000_000, 4_000_000, 3_000_000, 1_000_000), p)
+        self.assertEqual((cr, o, i), (2.0, 4.0, 1.0))
+        self.assertEqual(cw, 2 * 1.5 + 1 * 3.0)
+        self.assertEqual(usage.cost((0, 0, 0, 0, 0), p), (0.0, 0.0, 0.0, 0.0))
+        self.assertAlmostEqual(sum(usage.cost((7, 0, 0, 0, 0), p)), 7e-6)  # tiny counts stay exact
+
+    def test_settings_prefix_wins_over_the_built_in_list(self) -> None:
+        s = self.settings((("claude-opus-5-5", (1.0, 1.0, 1.0, 1.0, 1.0)),))
+        self.assertEqual(usage.price(s, "claude-opus-5-5"), (1.0, 1.0, 1.0, 1.0, 1.0))
+        self.assertEqual(usage.price(self.settings(), "claude-made-up-2"), self.PRICES[0][1])
+
+    def test_unknown_model_has_no_price(self) -> None:
+        s = self.settings(())
+        for model in ("claude-example-1", "claude-3-opus-20240229", "<synthetic>", "", None,
+                      "claude-opus-5-5-preview", "claude-opus-5-55"):
+            with self.subTest(model=model):
+                self.assertIsNone(usage.price(s, model))
+
+    def test_built_in_ids(self) -> None:
+        s = self.settings(())
+        base = usage.price(s, "claude-opus-4-1")
+        self.assertIsNotNone(base)
+        for model in ("claude-opus-4-1-20250805", "claude-opus-4-1[1m]", "claude-opus-4-1@20250805"):
+            with self.subTest(model=model):
+                self.assertEqual(usage.price(s, model), base)
+        for key, row in prices.DEFAULTS.items():
+            with self.subTest(key=key):
+                self.assertEqual(len(row), 5)
+                self.assertTrue(all(v > 0 for v in row))
+                self.assertEqual(row[4], row[0] * 2)       # 1-hour write is 2x input
+                self.assertAlmostEqual(row[3], row[0] * 1.25)  # 5-minute write is 1.25x input
+
+    def test_modifiers(self) -> None:
+        s = self.settings((("claude-made-up", (1.0, 2.0, 0.5, 1.5, 3.0)),))
+        us = usage.price(s, "claude-made-up", geo="us")
+        self.assertEqual([round(v, 6) for v in us], [1.1, 2.2, 0.55, 1.65, 3.3])
+        self.assertEqual(usage.price(s, "claude-made-up", speed="fast"), (1.0, 2.0, 0.5, 1.5, 3.0))  # no fast row
+        with mock.patch.dict(prices.FAST, {"claude-made-up": (4.0, 8.0)}), \
+                mock.patch.dict(prices.DEFAULTS, {"claude-made-up": (1.0, 2.0, 0.5, 1.5, 3.0)}):
+            fast = usage.price(self.settings(()), "claude-made-up", speed="fast")
+            self.assertEqual(fast, (4.0, 8.0, 2.0, 6.0, 12.0))  # cache prices scale with input
+        with mock.patch.dict(prices.LONG_PROMPT_PRICES, {"claude-made-up": (5.0, 5.0, 5.0, 5.0, 5.0)}), \
+                mock.patch.dict(prices.DEFAULTS, {"claude-made-up": (1.0, 2.0, 0.5, 1.5, 3.0)}):
+            self.assertEqual(usage.price(self.settings(()), "claude-made-up", long_prompt=True), (5.0,) * 5)
+            self.assertEqual(usage.price(self.settings(()), "claude-made-up"), (1.0, 2.0, 0.5, 1.5, 3.0))
+
+    def test_long_prompt_is_per_response(self) -> None:
+        conn = db.connect(self.prep_db)
+        self.addCleanup(conn.close)
+        with mock.patch.dict(prices.LONG_PROMPT_PRICES, {"claude-made-up": (10.0, 10.0, 10.0, 10.0, 10.0)}), \
+                mock.patch.dict(prices.DEFAULTS, {"claude-made-up": (1.0, 1.0, 1.0, 1.0, 1.0)}):
+            for msg_id, read in (("short", prices.LONG_PROMPT - 100), ("long", prices.LONG_PROMPT)):
+                conn.execute("INSERT INTO usage_messages (message_id, ts, day, cwd, session, model, input, output,"
+                             " cache_read, cache_write) VALUES (?, '2026-01-19T10:00:00Z', '2026-01-19', '/example/x', 's', 'claude-made-up',"
+                             " 50, 0, ?, 50)", (msg_id, read))
+            conn.commit()
+            r = usage.report(conn, self.settings(()), "2026-01-19", 7)
+        short = (prices.LONG_PROMPT - 100 + 100) / 1e6 * 1.0
+        long_ = (prices.LONG_PROMPT + 100) / 1e6 * 10.0
+        self.assertAlmostEqual(r["money"]["today"]["cost"], short + long_)
 
 
 class UsageTabTest(ExampleUsage):
     def test_usage_tab(self) -> None:
         body = self.get("/metrics")[2]
-        for text in ("Tokens per day", "Top tasks by tokens", "Who uses what", "Context size per turn",
+        for text in ("Tokens per day", "Top tasks by cost", "Who spends what", "Context size per turn",
+                     "Cost per day by role, last 30 days", "Where the money goes", web.ESTIMATE_NOTE,
+                     "Last 7 days", "Last 30 days", "price unknown", "claude-example-1",
                      "Where to save", "Cache-read share", 'class="chart columns stacked"', 'class="chart share-bar"',
                      "time to /compact", "Tailored CV as PDF", '<span class="mono">seq:7</span>'):
             self.assertIn(text, body)
-        self.assertNotIn("API-equivalent cost", body)  # no prices
         self.assertNotIn(SECRET, body)
         self.assertNotIn("example reply", body)  # the made-up content never reaches the page
         self.assertNotIn(" style=", body)
         self.assertIn('href="/metrics?tab=usage&amp;project=getjo"', body)
         self.assertIn('class="view-tab is-active" href="/metrics?tab=usage&amp;project=inter_prep"', body)
 
-    def test_filters_and_cost_tile(self) -> None:
+    def test_filters_and_settings_prices(self) -> None:
         body = self.get("/metrics?project=all&days=30")[2]
         self.assertIn("Tokens, last 30 days", body)
         self.assertIn("seq:getjo/12", body)
+        self.assertIn('<span class="muted">price unknown</span>', body)  # seq:27, no price for its model
         settings_file = self.tmp / "prices.toml"
-        settings_file.write_text('[prices."claude-example"]\ninput = 1\noutput = 2\ncache_read = 0.1\ncache_write = 1.25\n')
+        settings_file.write_text('[prices."claude-example"]\ninput = 1\noutput = 2\ncache_read = 0.1\n'
+                                 'cache_write = 1.25\n')
         with mock.patch.dict(os.environ, {"INTERPREP_SETTINGS": str(settings_file)}):
             self.settings = load_settings()
-            body = self.get("/metrics")[2]
-        self.assertIn("API-equivalent cost", body)
-        self.assertIn("estimate at API prices, not your subscription bill", body)
+            body = self.get("/metrics?project=all&days=30")[2]
+        self.assertNotIn("price unknown", body)
+
+    def test_usd(self) -> None:
+        for x, text in ((0, "$0"), (-1, "$0"), (.004, "<$0.01"), (.0099, "<$0.01"), (.01, "$0.01"), (.0149, "$0.01"),
+                        (3.274, "$3.27"), (3.275 + 1e-9, "$3.28"), (41.8, "$41.80"), (999.994, "$999.99"),
+                        (999.996, "$1,000"), (1000, "$1,000"), (1234.5, "$1,234"), (1235.5, "$1,236")):
+            with self.subTest(x=x):
+                self.assertEqual(web._usd(x), text)
 
     def test_escapes_titles(self) -> None:
         with closing(db.connect(self.prep_db)) as conn:
@@ -318,10 +443,13 @@ class UsageSettingsTest(IsolatedTestCase):
     def test_keys(self) -> None:
         os.environ.pop("PREP_COORDINATOR_TASK")  # an empty value would clear the file's (CLEARABLE)
         s = load_settings(self.write('coordinator_task = 3\ncontext_warn_tokens = 250000\n'
-                                     '[prices."claude-a"]\ninput = 3\noutput = 15\n'
+                                     '[prices."claude-a"]\ninput = 3\noutput = 15\ncache_write = 3.75\n'
+                                     '[prices."claude-b"]\ncache_write = 1\ncache_write_1h = 2\n'
                                      '[prices."claude-a-long"]\ninput = 1\ncache_read = 0.3\n'))
         self.assertEqual((s.coordinator_task, s.context_warn_tokens), (3, 250_000))
-        self.assertEqual(s.prices, (("claude-a-long", (1.0, 0.0, 0.3, 0.0)), ("claude-a", (3.0, 15.0, 0.0, 0.0))))
+        self.assertEqual(s.prices, (("claude-a-long", (1.0, 0.0, 0.3, 0.0, 0.0)),
+                                    ("claude-a", (3.0, 15.0, 0.0, 3.75, 3.75)),  # 1-hour write defaults to cache_write
+                                    ("claude-b", (0.0, 0.0, 0.0, 1.0, 2.0))))
 
     def test_bad_values(self) -> None:
         for text in ('[prices."m"]\ninput = "x"\n', '[prices."m"]\ninput = -1\n', 'prices = 3\n',

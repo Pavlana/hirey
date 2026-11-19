@@ -935,3 +935,4 @@ main:has(.learn-view) { max-width: 1880px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+.muted { color: var(--text-muted); }
