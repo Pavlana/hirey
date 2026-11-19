@@ -25,7 +25,7 @@ ALL = "all"
 MAX_CHARS = 60_000  # fits MAX_BODY (256 KB) once URL-encoded
 _KEY = re.compile(r"^(?:all|(?:answer-)?[1-9][0-9]{0,9})$")
 
-__all__ = ["ALL", "MAX_CHARS", "NotesChanged", "answer_key", "append", "is_answer", "label", "read", "save"]
+__all__ = ["ALL", "MAX_CHARS", "NotesChanged", "answer_key", "append", "essence", "is_answer", "label", "read", "save"]
 
 
 def answer_key(card_id: int) -> str:
@@ -126,6 +126,12 @@ def save(private_dir: Path | None, key: str, text: str, stamp: str) -> str:
     return stamp_of(text)
 
 
+# Older Learn Assistant replies label extras "Bonus for the interview:" (now "Extra for the interview:").
+# The pay check skips exactly that label at the start of a line, so such a reply can still be added;
+# any other "bonus" is refused as before.
+_OLD_LABEL = re.compile(r"^[ \t]*bonus for the interview:", re.IGNORECASE | re.MULTILINE)
+
+
 def append(private_dir: Path | None, key: str, text: str, day: str | None = None, author: str = "Agent") -> str:
     """Add a dated block ("**Agent · 18 Nov**", then the text) at the end; what is there stays as it is.
     Return the new stamp. The agent's text never mentions pay."""
@@ -133,7 +139,7 @@ def append(private_dir: Path | None, key: str, text: str, day: str | None = None
         raise ValueError("a card's answer is the user's own: agents read it (--show), never add to it")
     if not text.strip():
         raise ValueError("nothing to append")
-    db.check_no_pay(text, "notes from the agent")
+    db.check_no_pay(_OLD_LABEL.sub("", text), "notes from the agent")
     block = db.notes_block(text, day or db.today_iso(), author)
     folder = _folder(private_dir)
     path = folder / _name(key)
@@ -143,3 +149,29 @@ def append(private_dir: Path | None, key: str, text: str, day: str | None = None
         _check_length(new)
         _write(path, new)
     return stamp_of(new)
+
+
+UNDERSTAND = "Understand:"
+SAY_IT = "Say it:"
+
+
+def essence(reply: str) -> str | None:
+    """The closing "Understand:" / "Say it:" block of a Learn Assistant reply, as it is written there,
+    or None when the reply has none (an older reply). The last "Understand:" line that a "Say it:" line
+    follows wins, so the labels quoted earlier in a reply are not taken. "Understand:" runs to the
+    "Say it:" line; "Say it:" runs to the first blank line, a "—" footer line or the end."""
+    lines = reply.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    starts = [i for i, line in enumerate(lines) if line.lstrip().startswith(UNDERSTAND)]
+    for start in reversed(starts):
+        say = next((j for j in range(start + 1, len(lines)) if lines[j].lstrip().startswith(SAY_IT)), None)
+        if say is None:
+            continue
+        end = say + 1
+        while end < len(lines) and lines[end].strip() and not lines[end].lstrip().startswith("—"):
+            end += 1
+        understand = "\n".join(line.rstrip() for line in lines[start:say]).strip()
+        said = "\n".join(line.rstrip() for line in lines[say:end]).strip()
+        if understand == UNDERSTAND or said == SAY_IT:
+            continue  # a label with nothing after it
+        return f"{understand}\n{said}"
+    return None

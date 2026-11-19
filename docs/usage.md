@@ -384,18 +384,21 @@ Learn, each message tagged with the card that was open (a link back to it). Typi
 
 - A question about the card ("explain this more simply", "give me an example"). The agent answers in
   plain English from the card, its **Learn** sources (it may open those links) and general knowledge,
-  and ends with a one-line "Say it in the interview" version. It never invents facts about an
+  and ends with two lines: "Understand:" (the core idea in one or two simple sentences) and "Say it:"
+  (one or two quoted sentences to say in the interview). It never invents facts about an
   employer or the user and keeps the `confirmed` / `accelerator-default` / `unknown` labels.
 - "Quiz me on chapter 2": one question per reply from that chapter of the open card's track, then
   short feedback on each answer and the next question.
 - **Check my answer**, under the card's Your answer box: saves the answer, then asks the agent, which
   replies with what was covered and what was missed of what the card's question asks, extra points
-  from the back as "Bonus for the interview", and one better phrasing. An empty answer is refused.
+  from the back as "Extra for the interview", one better phrasing and the Understand / Say it lines.
+  An empty answer is refused.
 
 Under each agent reply, **Want a card for this?** asks the agent to draft a card from that reply; it
-is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends the reply to the
-card's note (the all-prep notes for a general reply) as a dated "Agent" block, at once and once per
-reply; a reply mentioning pay is refused.
+is saved (`cards add`) only after a "save card" in the box. **Add to notes** appends only the reply's
+closing Understand / Say it lines to the card's note, under a heading with the card's question and the
+day (the all-prep notes for a general reply, under "Agent" and the day); an older reply without those
+lines is appended whole. At once and once per reply; a reply mentioning pay is refused.
 
 The dashboard stores each message (topic `learn`, with the card id) and pings the Learn Assistant
 with ids only: `/learn-ask <card id> <message id>`. Without one the message waits; the SessionStart
