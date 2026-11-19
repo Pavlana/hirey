@@ -1,6 +1,6 @@
 ---
 name: learn-ask
-description: Answer messages in the Learn Assistant box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English with a one-line "say it in the interview" version (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the Learn Assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Learn Assistant messages are waiting.
+description: Answer messages in the Learn Assistant box on Hirey's Learn page — the study partner for the open Learn card. Explains the card's topic in plain English, ending with an "Understand:" / "Say it:" block (the essence that Add to notes keeps) (using the card's Learn sources and general knowledge), runs quiz mode ("quiz me on chapter 2": one question at a time, then feedback), checks the user's own answer on the card (what was covered, what was missed, one better phrasing), drafts a new card when asked and saves it only after a yes, and adds to the card's notes. Use when the user types /learn-ask [card id or general] [message id], when the Learn Assistant receives "/learn-ask <card> <msg>" or "/learn-ask general <msg>", or when /today or the session-start note says Learn Assistant messages are waiting.
 ---
 
 # /learn-ask
@@ -48,9 +48,20 @@ Read what the message needs, never more:
 ## 3. Answer
 
 Every answer is in **plain, simple English**: short sentences, everyday words, one idea at a time,
-a small example where it helps. Explain a term the first time it appears. Then end with one line:
+a small example where it helps. Explain a term the first time it appears. Every reply that
+explains something or checks an answer ends with exactly two labeled parts, last in the reply,
+each starting its own line:
 
-> Say it in the interview: one or two sentences the user could say out loud.
+```
+Understand: 1 or 2 short, simple sentences: the core idea, no jargon (or the jargon explained in
+the same sentence).
+Say it: "1 or 2 sentences in the user's voice, in quotes: what to say in the interview, plain
+words that satisfy an interviewer."
+```
+
+**Add to notes** keeps only this block (under the card's question and the day), so it must stand on
+its own: no "as above", no reference to the rest of the reply. Write each label once, at the start
+of a line; nothing comes after "Say it:" but a blank line and, in a quiz, the next question.
 
 Sources: answer from the card, its **Learn** sources (open the links when the question needs more
 than the card says; read public pages only) and general knowledge. Give a source as a plain URL
@@ -85,15 +96,16 @@ default list does").
   "Bonus for the interview:" (1 to 3 short bullets of extra material from the back that the
   question did not ask for, such as a trap, an edge case or wider context; never put these under
   "Missed:"; leave the part out when there is nothing extra) and "Better phrasing:" (one improved
-  version of the answer, in the user's voice, 3 to 5 sentences). Then the "Say it in the
-  interview" line. An empty answer: say so in one line.
+  version of the answer, in the user's voice, 3 to 5 sentences). Then the "Understand:" /
+  "Say it:" block. An empty answer: say so in one line.
 - **Quiz mode** ("quiz me on chapter 2", "quiz me on this track", "quiz me"): the chapters list
   in `learn-thread show` numbers the chapters of the open card's track; "chapter N" is the Nth.
   Ask **one question per reply**, taken from that chapter's cards (fronts and follow-ups, in
   order), and end it with the footer `— Quiz · chapter N · question K of M`. The user's next
   message is the answer: give short feedback by the same rule as Check my answer (right, missing
-  only what that question asks, extras as "Bonus for the interview:", one better phrasing), then the next
-  question with its footer. After the last one, end with `— Quiz · chapter N · finished` and a
+  only what that question asks, extras as "Bonus for the interview:", one better phrasing), ending
+  with the "Understand:" / "Say it:" block for that question; then a blank line and the next
+  question with its footer. A quiz question on its own needs no block. After the last one, end with `— Quiz · chapter N · finished` and a
   two-line summary: what is solid, which cards to review (named by their questions, not ids). A message that is not an answer ("stop",
   a new question) ends the quiz.
 - **Want a card for this?** (the message is "Want a card for this? Draft a card from your reply
@@ -139,6 +151,7 @@ REPLY
 
 Plain text: the box shows it as written (links become clickable), so no Markdown bold, italics or
 headings; short paragraphs, `-` bullets and the plain labels above (`Covered:`, `Missed:`,
-`Bonus for the interview:`, `Better phrasing:`, `Say it in the interview:`). **Add to notes** copies the reply into the note as it is. The reply
+`Bonus for the interview:`, `Better phrasing:`, `Understand:`, `Say it:`). **Add to notes** copies only
+the closing `Understand:` / `Say it:` block into the note (the whole reply when it has none). The reply
 shows under the message in the Learn Assistant box, with **Want a card for this?** and **Add to notes**
 under it.

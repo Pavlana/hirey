@@ -609,9 +609,11 @@
    `/learn/card` (`reply_id`) stores `db.LEARN_CARD` naming a Learn Assistant reply. Each pings
    `prep_assistant_task` in a background thread with `assistant.learn_command`: `dev3 message --task
    seq:<N> [--project …] --subject "Learn question on card <id>" "/learn-ask <card id|general> <msg id>"`,
-   ids only. `/learn/add-note` (`reply_id`) appends that reply to its card's note (all-prep for a general
-   one) with `learnnotes.append` on the server, refused when the reply text is already there or mentions
-   pay. `/learn-ask` (`.claude/skills/learn-ask/SKILL.md`) reads a message with `cli learn-thread show
+   ids only. `/learn/add-note` (`reply_id`) appends the essence of that reply to its card's note (all-prep for
+   a general one) with `learnnotes.append` on the server: `learnnotes.essence` takes the reply's last
+   "Understand:" line that a "Say it:" line follows, up to the blank line or "—" footer after "Say it:"
+   (the whole reply when there is none), under a heading with the card's question and the day ("Agent"
+   for a general one); refused when that text is already there or mentions pay. `/learn-ask` (`.claude/skills/learn-ask/SKILL.md`) reads a message with `cli learn-thread show
    MSG --claim` (the card's front, back, follow-ups, tags and Learn sources, the track's chapters with
    card ids for quiz mode, the paths of `stories.md`, the facts bank, `notes/interview-coaching.md`
    and the card, answer and all-prep notes, and the latest 30 Learn messages) and answers with

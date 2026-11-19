@@ -856,14 +856,23 @@ def draft_card(settings: Settings, conn: sqlite3.Connection, form: dict[str, str
 
 
 def add_reply_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """Add to notes: the reply appended as a dated "Agent" block to its card's note (the all-prep notes
-    for a general reply), as `learn-notes CARD --append` does. Once per reply; never pay."""
+    """Add to notes: the essence of the reply, its closing Understand: / Say it: block, appended to its
+    card's note under the card's question and the day (the all-prep notes for a general reply, under
+    "Agent" and the day). A reply without that block (an older one) is added whole. Once per reply;
+    never pay."""
     reply = _learn_reply(conn, form)
     _, back = _learn_back(conn, form)
     key = str(reply["card_id"]) if reply["card_id"] is not None else learnnotes.ALL
-    if reply["body"].strip() in learnnotes.read(settings.private_dir, key)["text"]:
+    text = learnnotes.essence(reply["body"]) or reply["body"]
+    if text.strip() in learnnotes.read(settings.private_dir, key)["text"]:
         raise BadRequest("That reply is already in the notes.")
-    stamp = learnnotes.append(settings.private_dir, key, reply["body"], today)
+    heading = "Agent"
+    if reply["card_id"] is not None:
+        try:
+            heading = " ".join(learn.get_card(conn, reply["card_id"])["front"].split()).replace("*", "") or heading
+        except LookupError:
+            pass  # a removed card: "Agent"
+    stamp = learnnotes.append(settings.private_dir, key, text, today, author=heading)
     log.info("Learn Assistant reply %s added to %s", reply["id"], learnnotes.label(key))  # never the text
     return {"redirect": back, "stamp": stamp, "note": "all" if key == learnnotes.ALL else "card",
             "note_card": reply["card_id"]}

@@ -3,6 +3,7 @@
 import io
 import json
 import re
+import unittest
 from unittest import mock
 
 from prep import learnnotes, privacy, web
@@ -250,3 +251,38 @@ class AnswerBoxTest(WebTestCase):
         with self.assertRaises(ValueError):
             learnnotes.read(self.settings.private_dir, "answer-0")
         self.assertEqual(learnnotes.read(self.settings.private_dir, "answer-1")["text"], "Read the cache, then the db.\n")
+
+
+class EssenceTest(unittest.TestCase):
+    """The closing Understand: / Say it: block that Add to notes keeps. Fictional text only."""
+
+    def test_block_at_the_end(self) -> None:
+        reply = "Long explanation.\n\nUnderstand: a TTL ends an entry.\nSay it: \"Entries expire.\""
+        self.assertEqual(learnnotes.essence(reply), 'Understand: a TTL ends an entry.\nSay it: "Entries expire."')
+
+    def test_multi_line_values_are_kept(self) -> None:
+        reply = "x\nUnderstand: one\ntwo\nSay it: \"three\nfour\"\n\n— Quiz · chapter 1 · question 2 of 3"
+        self.assertEqual(learnnotes.essence(reply), 'Understand: one\ntwo\nSay it: "three\nfour"')
+
+    def test_stops_at_a_blank_line_or_footer(self) -> None:
+        quiz = "Right.\nUnderstand: a.\nSay it: \"b.\"\n\nNext: what is c?\n— Quiz · chapter 1 · question 2 of 3"
+        self.assertEqual(learnnotes.essence(quiz), 'Understand: a.\nSay it: "b."')
+        footer = "Understand: a.\nSay it: \"b.\"\n— Quiz · chapter 1 · finished"
+        self.assertEqual(learnnotes.essence(footer), 'Understand: a.\nSay it: "b."')
+
+    def test_missing_block_is_none(self) -> None:
+        self.assertIsNone(learnnotes.essence("Just an answer.\nSay it in the interview: x"))
+        self.assertIsNone(learnnotes.essence("Understand: only half."))
+        self.assertIsNone(learnnotes.essence("Understand:\nSay it:"))
+        self.assertIsNone(learnnotes.essence(""))
+
+    def test_the_last_understand_followed_by_say_it_wins(self) -> None:
+        reply = ("The reply ends with \"Understand:\" and \"Say it:\" lines:\n"
+                 "Understand: quoted example\nSay it: quoted too\n\n"
+                 "Understand: the real one.\nSay it: \"The real line.\"\n")
+        self.assertEqual(learnnotes.essence(reply), 'Understand: the real one.\nSay it: "The real line."')
+        trailing = "Understand: real.\nSay it: \"yes.\"\n\nUnderstand: a stray label with no Say it"
+        self.assertEqual(learnnotes.essence(trailing), 'Understand: real.\nSay it: "yes."')
+
+    def test_windows_line_ends(self) -> None:
+        self.assertEqual(learnnotes.essence("Understand: a\r\nSay it: b\r\n"), "Understand: a\nSay it: b")
