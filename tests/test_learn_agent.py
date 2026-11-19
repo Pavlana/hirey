@@ -239,6 +239,12 @@ class LearnActionsTest(LearnTestCase):
         self.assertIn("reads the &lt;store&gt;", page)  # escaped in the editor
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})[0], 400)
 
+    def test_old_reply_with_the_bonus_label_can_be_added(self) -> None:
+        old = "Covered: TTL.\nMissed: nothing, the question is fully answered.\nBonus for the interview:\n- warm the cache"
+        reply = self.answer(self.ask(1, "Check my answer"), old)
+        self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply), "card_id": "1"})[0], 200)
+        self.assertIn("Bonus for the interview:", learnnotes.read(self.settings.private_dir, "1")["text"])
+
     def test_general_essence_has_no_question(self) -> None:
         reply = self.answer(self.ask(None, "How?"), "Plan.\n\nUnderstand: one card a day.\nSay it: \"I drill daily.\"")
         self.assertEqual(self.post_json("/learn/add-note", {"reply_id": str(reply)})[0], 200)

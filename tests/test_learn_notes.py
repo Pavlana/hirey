@@ -3,7 +3,9 @@
 import io
 import json
 import re
+import tempfile
 import unittest
+from pathlib import Path
 from unittest import mock
 
 from prep import learnnotes, privacy, web
@@ -286,3 +288,28 @@ class EssenceTest(unittest.TestCase):
 
     def test_windows_line_ends(self) -> None:
         self.assertEqual(learnnotes.essence("Understand: a\r\nSay it: b\r\n"), "Understand: a\nSay it: b")
+
+
+class OldBonusLabelTest(unittest.TestCase):
+    """The old "Bonus for the interview:" label is not pay; any other bonus still is. Fictional text only."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.private = Path(self.tmp.name)
+
+    def test_old_label_is_accepted(self) -> None:
+        text = "Covered: TTL.\nBonus for the interview:\n- a stampede on expiry\n  BONUS FOR THE INTERVIEW: twice"
+        learnnotes.append(self.private, "1", text, "2026-01-20")
+        self.assertIn("Bonus for the interview:", learnnotes.read(self.private, "1")["text"])
+
+    def test_new_label_is_accepted(self) -> None:
+        learnnotes.append(self.private, "1", "Extra for the interview:\n- warm the cache", "2026-01-20")
+        self.assertIn("Extra for the interview:", learnnotes.read(self.private, "1")["text"])
+
+    def test_other_bonus_is_refused(self) -> None:
+        for text in ("They offer a bonus of 5000.", "Bonus for the interview: a signing bonus",
+                     "A bonus for the interview: maybe", "Bonus for the interviewer:"):
+            with self.subTest(text=text), self.assertRaisesRegex(ValueError, "must not mention pay"):
+                learnnotes.append(self.private, "1", text, "2026-01-20")
+        self.assertEqual(learnnotes.read(self.private, "1")["text"], "")

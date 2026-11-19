@@ -126,6 +126,12 @@ def save(private_dir: Path | None, key: str, text: str, stamp: str) -> str:
     return stamp_of(text)
 
 
+# Older Learn Assistant replies label extras "Bonus for the interview:" (now "Extra for the interview:").
+# The pay check skips exactly that label at the start of a line, so such a reply can still be added;
+# any other "bonus" is refused as before.
+_OLD_LABEL = re.compile(r"^[ \t]*bonus for the interview:", re.IGNORECASE | re.MULTILINE)
+
+
 def append(private_dir: Path | None, key: str, text: str, day: str | None = None, author: str = "Agent") -> str:
     """Add a dated block ("**Agent · 18 Nov**", then the text) at the end; what is there stays as it is.
     Return the new stamp. The agent's text never mentions pay."""
@@ -133,7 +139,7 @@ def append(private_dir: Path | None, key: str, text: str, day: str | None = None
         raise ValueError("a card's answer is the user's own: agents read it (--show), never add to it")
     if not text.strip():
         raise ValueError("nothing to append")
-    db.check_no_pay(text, "notes from the agent")
+    db.check_no_pay(_OLD_LABEL.sub("", text), "notes from the agent")
     block = db.notes_block(text, day or db.today_iso(), author)
     folder = _folder(private_dir)
     path = folder / _name(key)

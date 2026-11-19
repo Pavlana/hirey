@@ -613,7 +613,9 @@
    a general one) with `learnnotes.append` on the server: `learnnotes.essence` takes the reply's last
    "Understand:" line that a "Say it:" line follows, up to the blank line or "—" footer after "Say it:"
    (the whole reply when there is none), under a heading with the card's question and the day ("Agent"
-   for a general one); refused when that text is already there or mentions pay. `/learn-ask` (`.claude/skills/learn-ask/SKILL.md`) reads a message with `cli learn-thread show
+   for a general one); refused when that text is already there or mentions pay (`learnnotes.append`
+   skips only the old "Bonus for the interview:" label at the start of a line, now "Extra for the
+   interview:"). `/learn-ask` (`.claude/skills/learn-ask/SKILL.md`) reads a message with `cli learn-thread show
    MSG --claim` (the card's front, back, follow-ups, tags and Learn sources, the track's chapters with
    card ids for quiz mode, the paths of `stories.md`, the facts bank, `notes/interview-coaching.md`
    and the card, answer and all-prep notes, and the latest 30 Learn messages) and answers with
