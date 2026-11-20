@@ -42,9 +42,10 @@ body { margin: 0; }
 .focus { word-spacing: 1.5pt; }
 .summary { padding-top: 3pt; }
 .summary p { margin: 0 0 3pt 0; }
-/* a summary written as bullets: tight, each with its bold lead-in */
+/* a summary written as list items: no bullet mark, each line starts with its bold lead-in; a
+   wrapped line is indented under it */
 .summary ul { margin: 0; }
-.summary li { margin: 0 0 2pt 0; }
+.summary li { margin: 0 0 2pt 0; padding-left: 8pt; text-indent: -8pt; }
 .contact { margin: 5pt 0 0 0; font-size: 9pt; line-height: 1.3; color: var(--ink); white-space: nowrap; }
 .note { margin: 3pt 0 0 0; color: var(--grey); }
 /* two columns: the narrow one floats left, the wide one runs beside it and on past it */
@@ -76,7 +77,7 @@ h3 + .role { margin-top: 0; }
 ul { margin: 1pt 0 4pt 0; padding-left: 0; list-style: none; }
 /* the bullet is text in the line (hanging), so it is extracted with its item, not apart from it */
 li { margin: 0 0 1pt 0; padding-left: 9pt; text-indent: -9pt; break-inside: avoid; }
-.main li::before, .summary li::before { content: "•\2002"; }
+.main li::before { content: "•\2002"; }
 .side li { padding-left: 0; text-indent: 0; margin-bottom: 2pt; }
 /* a skills group: its name, then one item per bullet in two tight columns */
 .side li:has(> ul) { margin-bottom: 1pt; }
