@@ -8,11 +8,11 @@
   header, then a narrow and a wide column). Real text in a system sans (Helvetica Neue, Arial
   fallback; no font file), selectable, ligatures off, no tables, images, headers or footers. The
   reading order is the HTML order: name, title, focus, contact, summary, narrow column, wide
-  column. Black on white; the name in pink (#f26a8d), the section headings and their rules in
+  column. Black on white; the name in pink (#e85a80), the section headings and their rules in
   slate (#59656f). A4.
 -->
 <style>
-:root { --name: #f26a8d; --head: #59656f; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
+:root { --name: #e85a80; --head: #59656f; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
 @page { size: A4; margin: 14mm 15mm 14mm 15mm; }
 html {
   font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
@@ -38,7 +38,7 @@ body { margin: 0; }
 }
 .name span { display: block; }
 .title, .focus { margin: 1pt 0 0 0; text-transform: uppercase; color: var(--ink); }
-.title { margin-top: 7pt; }
+.title { margin-top: 7pt; font-weight: 700; }
 .focus { word-spacing: 1.5pt; }
 .summary { padding-top: 3pt; }
 .summary p { margin: 0 0 3pt 0; }

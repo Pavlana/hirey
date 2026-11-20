@@ -335,7 +335,7 @@
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
    title, the dates (the first later part with a year or "Present") and the company line. Words are
    kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
-   column. Black on white; the name in pink (#f26a8d), section headings and rules in slate (#59656f); a
+   column. Black on white; the name in pink (#e85a80), section headings and rules in slate (#59656f); a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
    tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
    read) is name, title, focus, contact, summary, narrow column, wide column; a CSS grid puts the
