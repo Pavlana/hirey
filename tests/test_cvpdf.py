@@ -114,9 +114,8 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<h2 class="name"><span>Sam</span> <span>Sample</span></h2>', page)
         self.assertIn('<p class="title">Platform Engineer</p>', page)
         self.assertIn('<p class="focus">Python • Kubernetes</p>', page)
-        sep = '<span class="sep"> · </span>'
-        self.assertIn(f'<p class="contact"><span>Leeds, UK</span>{sep}<span>Mobile: +44 7700 900456</span>{sep}'
-                      f"<span>Email: sam@example.com</span>{sep}<span>GitHub: github.com/sam-sample</span></p>", page,
+        self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
+                      "GitHub: github.com/sam-sample</p>", page,
                       "location, mobile, email, LinkedIn, GitHub")
         self.assertIn('<div class="about"><section class="summary"><h3>Summary</h3>'
                       "<p>Engineer who builds example platforms.</p></section>", page, "the summary, top right")

@@ -84,7 +84,7 @@ def _contact_rank(item: str) -> int:
 def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
     """The header: on the left the name (first word, then the rest, on two lines), the title line, the
     focus line ("A • B • C") and any longer sentence; on the right `summary` (the summary section's
-    HTML, if any) and under it the contact line. `lines` are the Markdown lines between "# Name" and
+    HTML, if any) and under it the contact block, one item per line. `lines` are the Markdown lines between "# Name" and
     the first "## " section; their " · "-separated items are sorted into those parts. A role after
     " — " in the name line is the title. Reading order: name, title, focus, summary, contact."""
     name, _, role = name_line.lstrip("#").strip().partition(" — ")
@@ -106,8 +106,7 @@ def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
     out += [f'<p class="note">{render_inline(n, links=True)}</p>' for n in notes]
     out.append('</div><div class="about">' + summary)
     if contact:
-        out.append('<p class="contact">' + '<span class="sep"> · </span>'.join(
-            f"<span>{render_inline(c, links=True)}</span>" for c in contact) + "</p>")
+        out.append('<p class="contact">' + "<br>".join(render_inline(c, links=True) for c in contact) + "</p>")
     out.append("</div></header>")
     return "".join(out)
 

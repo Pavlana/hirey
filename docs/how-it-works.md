@@ -324,12 +324,12 @@
    mailto links kept), is grouped by `cvpdf.cv_layout` and goes into the committed template
    `prep/cv_template.html`. Layout: a header with, on the left, the name on two lines (Helvetica Neue Bold,
    uppercase), the title line and a focus line ("A • B • C"); on the right, the first section named
-   like `cvpdf.SUMMARY_WORDS` (summary, profile, about) with the contact line under it. Below, a
-   narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
+   like `cvpdf.SUMMARY_WORDS` (summary, profile, about) with the contact block under it, one item
+   per line. Below, a narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
    wide one (experience, projects, anything else). Skills groups (`- **Group**` with indented
    `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns. `cvpdf.masthead` sorts the " · " items of
    the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
-   label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact line in
+   label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
    the order location, mobile, email, LinkedIn, GitHub; the first other item is the title (or a role
    after " — " in the name line), the rest, split at commas, the focus line. A role, written as
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
