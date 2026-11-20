@@ -72,12 +72,13 @@ p { margin: 0 0 4pt 0; orphans: 2; widows: 2; }
 /* a role: TITLE  CITY / DATES, then the company line, then its bullets */
 .role { margin: 6pt 0 0 0; break-after: avoid; }
 h3 + .role { margin-top: 0; }
-.role strong { text-transform: uppercase; color: var(--ink); }
-/* a job or project title (a role with a company line) in the name's pink; breaks stay black */
+.role strong { text-transform: uppercase; color: var(--head); }
+/* a job or project title (a role with a company line) in the name's pink; a break (no company
+   line) in the headings' slate */
 .job strong { color: var(--name); }
-.when { white-space: nowrap; margin-left: 6pt; font-style: italic; text-transform: uppercase; color: var(--grey); }
+.when { white-space: nowrap; margin-left: 6pt; text-transform: uppercase; color: var(--grey); }
 .side .when { display: block; margin: 1pt 0 0 0; }
-.org { font-weight: 700; color: #3a3a3a; margin: 0 0 1pt 0; break-after: avoid; }
+.org { font-weight: 400; color: #3a3a3a; margin: 0 0 1pt 0; break-after: avoid; }
 ul { margin: 1pt 0 4pt 0; padding-left: 0; list-style: none; }
 /* the bullet is text in the line (hanging), so it is extracted with its item, not apart from it */
 li { margin: 0 0 1pt 0; padding-left: 9pt; text-indent: -9pt; break-inside: avoid; }

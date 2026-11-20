@@ -334,7 +334,7 @@
    after " — " in the name line), the rest, split at commas, the focus line. A role, written as
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
    title, the dates (the first later part with a year or "Present") and the company line. A role with a company line (a job or project) has its title in the name's pink; one without
-   (a break) stays black. The summary starts level with the title line under the name. Words are
+   (a break) is slate like the section headings; dates are grey caps, company lines plain. The summary starts level with the title line under the name. Words are
    kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
    column. Black on white; the name in pink (#e85a80), section headings and rules in slate (#59656f); a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
