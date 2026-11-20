@@ -8,10 +8,11 @@
   header, then a narrow and a wide column). Real text in a system sans (Helvetica Neue, Arial
   fallback; no font file), selectable, ligatures off, no tables, images, headers or footers. The
   reading order is the HTML order: name, title, focus, contact, summary, narrow column, wide
-  column. Black on white; deep pine (#233421, 13.9:1 on white) on the name, the section headings and their rules. A4.
+  column. Black on white; the name in pink (#f26a8d), the section headings and their rules in
+  slate (#59656f). A4.
 -->
 <style>
-:root { --pine: #233421; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
+:root { --name: #f26a8d; --head: #59656f; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
 @page { size: A4; margin: 14mm 15mm 14mm 15mm; }
 html {
   font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
@@ -26,7 +27,7 @@ body { margin: 0; }
    lined up with the wide column below */
 .mast { margin: 0 0 12pt 0; display: grid; grid-template-columns: 37% 63%; }
 .name {
-  color: var(--pine);
+  color: var(--name);
   font-weight: 700;
   font-size: 34pt;
   line-height: 0.88;
@@ -54,10 +55,10 @@ h3 {
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.2pt;
-  color: var(--pine);
+  color: var(--head);
   margin: 0 0 5pt 0;
   padding-bottom: 1.5pt;
-  border-bottom: 0.75pt solid var(--pine);
+  border-bottom: 0.75pt solid var(--head);
   break-after: avoid;
 }
 h4 { font-size: 9.5pt; margin: 6pt 0 1pt 0; text-transform: uppercase; break-after: avoid; }

@@ -330,12 +330,12 @@
    `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns, at 8.5pt. `cvpdf.masthead` sorts the " · " items of
    the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
    label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
-   the order location, mobile, email, LinkedIn, GitHub; the first other item is the title (or a role
+   the order location, mobile, email, LinkedIn, GitHub, shown as values only (labels dropped); the first other item is the title (or a role
    after " — " in the name line), the rest, split at commas, the focus line. A role, written as
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
    title, the dates (the first later part with a year or "Present") and the company line. Words are
    kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
-   column. Black on white; deep pine (#233421) on the name, the section headings and their rules; a
+   column. Black on white; the name in pink (#f26a8d), section headings and rules in slate (#59656f); a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
    tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
    read) is name, title, focus, contact, summary, narrow column, wide column; a CSS grid puts the

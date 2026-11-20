@@ -114,8 +114,8 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<h2 class="name"><span>Sam</span> <span>Sample</span></h2>', page)
         self.assertIn('<p class="title">Platform Engineer</p>', page)
         self.assertIn('<p class="focus">Python • Kubernetes</p>', page)
-        self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
-                      "GitHub: github.com/sam-sample</p>", page,
+        self.assertIn('<p class="contact">Leeds, UK<br>+44 7700 900456<br>sam@example.com<br>'
+                      "github.com/sam-sample</p>", page,
                       "location, mobile, email, LinkedIn, GitHub")
         self.assertIn('<div class="about"><section class="summary"><p>Engineer who builds example platforms.</p>'
                       "</section></div>", page, "the summary text top right, without its heading")
@@ -156,8 +156,9 @@ class LayoutTest(IsolatedTestCase):
         def words(text: str) -> list[str]:
             return sorted(re.findall(r"[a-z0-9]+", re.sub(r"<[^>]+>|&\w+;", " ", text).lower()))
         source = re.sub(r"[#*·—-]", " ", HEADED_CV.replace("## Summary\n", ""))
+        source = re.sub(r"\b(Mobile|Email|GitHub): ", "", source)
         self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source),
-                         "every word kept (but the summary's heading), none added")
+                         "every word kept (but the summary's heading and the contact labels), none added")
 
     def test_escaped_and_without_a_name_heading(self) -> None:
         page = cvpdf.cv_layout("# <b>Sam</b> Sample\n\n<i>x</i> · sam@example.com\n\n## Summary\n\n<script>\n")
