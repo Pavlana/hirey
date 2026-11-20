@@ -7,7 +7,7 @@
   A CV as a PDF (prep/cvpdf.py fills in the title and the body: cvpdf.cv_layout's escaped HTML, a
   header, then a narrow and a wide column). Real text in a system sans (Helvetica Neue, Arial
   fallback; no font file), selectable, ligatures off, no tables, images, headers or footers. The
-  reading order is the HTML order: name, title, focus, summary, contact, narrow column, wide
+  reading order is the HTML order: name, title, focus, contact, summary, narrow column, wide
   column. Black on white; deep pine (#233421, 13.9:1 on white) on the name, the section headings and their rules. A4.
 -->
 <style>
@@ -22,7 +22,7 @@ html {
   font-kerning: normal;
 }
 body { margin: 0; }
-/* the header: name, title, focus on the left; the summary and the contact line under it on the right,
+/* the header: name, title, focus and the contact block on the left; the summary text on the right,
    lined up with the wide column below */
 .mast { margin: 0 0 12pt 0; display: grid; grid-template-columns: 37% 63%; }
 .name {
@@ -39,8 +39,9 @@ body { margin: 0; }
 .title, .focus { margin: 1pt 0 0 0; text-transform: uppercase; color: var(--ink); }
 .title { margin-top: 7pt; }
 .focus { word-spacing: 1.5pt; }
+.summary { padding-top: 3pt; }
 .summary p { margin: 0 0 3pt 0; }
-.contact { margin: 4pt 0 0 0; font-size: 9pt; line-height: 1.3; color: var(--ink); white-space: nowrap; }
+.contact { margin: 5pt 0 0 0; font-size: 9pt; line-height: 1.3; color: var(--ink); white-space: nowrap; }
 .note { margin: 3pt 0 0 0; color: var(--grey); }
 /* two columns: the narrow one floats left, the wide one runs beside it and on past it */
 .side { float: left; width: 33%; }
@@ -74,8 +75,9 @@ li { margin: 0 0 1pt 0; padding-left: 9pt; text-indent: -9pt; break-inside: avoi
 .main li::before { content: "•\2002"; }
 .side li { padding-left: 0; text-indent: 0; margin-bottom: 2pt; }
 /* a skills group: its name, then one item per bullet in two tight columns */
-.side li > ul { columns: 2; column-gap: 6pt; margin: 1pt 0 3pt 0; }
-.side li li { margin: 0; line-height: 1.22; padding-left: 7pt; text-indent: -7pt; break-inside: avoid; }
+.side li:has(> ul) { margin-bottom: 1pt; }
+.side li > ul { columns: 2; column-gap: 6pt; margin: 0.5pt 0 0 0; font-size: 8.5pt; }
+.side li li { margin: 0; line-height: 1.15; padding-left: 7pt; text-indent: -7pt; break-inside: avoid; }
 .side li li::before { content: "•\2002"; color: var(--grey); }
 p:has(+ ul) { break-after: avoid; }
 strong { font-weight: 700; color: var(--ink); }

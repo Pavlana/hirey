@@ -83,10 +83,10 @@ def _contact_rank(item: str) -> int:
 
 def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
     """The header: on the left the name (first word, then the rest, on two lines), the title line, the
-    focus line ("A • B • C") and any longer sentence; on the right `summary` (the summary section's
-    HTML, if any) and under it the contact block, one item per line. `lines` are the Markdown lines between "# Name" and
-    the first "## " section; their " · "-separated items are sorted into those parts. A role after
-    " — " in the name line is the title. Reading order: name, title, focus, summary, contact."""
+    focus line ("A • B • C", if any), any longer sentence and the contact block, one item per line; on
+    the right `summary` (the summary section's text, if any). `lines` are the Markdown lines between
+    "# Name" and the first "## " section; their " · "-separated items are sorted into those parts. A
+    role after " — " in the name line is the title. Reading order: name, title, contact, summary."""
     name, _, role = name_line.lstrip("#").strip().partition(" — ")
     items = [i.strip() for line in lines for i in line.split(" · ") if i.strip()]
     contact = sorted((i for i in items if _LABEL.search(i) or _CONTACT.search(i) or _LOCATION.match(i)),
@@ -104,10 +104,9 @@ def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
     if focus:
         out.append('<p class="focus">' + " • ".join(render_inline(f) for f in focus) + "</p>")
     out += [f'<p class="note">{render_inline(n, links=True)}</p>' for n in notes]
-    out.append('</div><div class="about">' + summary)
     if contact:
         out.append('<p class="contact">' + "<br>".join(render_inline(c, links=True) for c in contact) + "</p>")
-    out.append("</div></header>")
+    out.append('</div><div class="about">' + summary + "</div></header>")
     return "".join(out)
 
 
@@ -154,7 +153,7 @@ def cv_layout(body: str) -> str:
         found = re.match(r"<h3>(.*?)</h3>", part)
         heading = found.group(1).lower() if found else ""
         if not summary and any(w in heading for w in SUMMARY_WORDS):
-            summary = f'<section class="summary">{part}</section>'
+            summary = '<section class="summary">' + re.sub(r"^<h3>.*?</h3>", "", part) + "</section>"
             continue
         to_side = any(w in heading for w in SIDE_WORDS)
         (side if to_side else main).append(f'<section class="block">{_roles(part)}</section>')

@@ -323,11 +323,11 @@
    body goes through `prep/md.py` (the dashboard's escaped Markdown subset: headings, lists with one level of indented sub-bullets, paragraphs, ``` code blocks, `code`, bold, italic; here with http(s) and
    mailto links kept), is grouped by `cvpdf.cv_layout` and goes into the committed template
    `prep/cv_template.html`. Layout: a header with, on the left, the name on two lines (Helvetica Neue Bold,
-   uppercase), the title line and a focus line ("A • B • C"); on the right, the first section named
-   like `cvpdf.SUMMARY_WORDS` (summary, profile, about) with the contact block under it, one item
-   per line. Below, a narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
+   uppercase), the title line, a focus line ("A • B • C", when there is one) and the contact block,
+   one item per line; on the right, the text of the first section named like `cvpdf.SUMMARY_WORDS`
+   (summary, profile, about), without its heading. Below, a narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
    wide one (experience, projects, anything else). Skills groups (`- **Group**` with indented
-   `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns. `cvpdf.masthead` sorts the " · " items of
+   `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns, at 8.5pt. `cvpdf.masthead` sorts the " · " items of
    the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
    label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
    the order location, mobile, email, LinkedIn, GitHub; the first other item is the title (or a role
@@ -338,8 +338,8 @@
    column. Black on white; deep pine (#233421) on the name, the section headings and their rules; a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
    tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
-   read) is name, title, focus, summary, contact, narrow column, wide column; a CSS grid puts the
-   summary and contact beside the name. A narrow-column section that does not fit moves whole to the next page.
+   read) is name, title, focus, contact, summary, narrow column, wide column; a CSS grid puts the
+   summary beside the name. A narrow-column section that does not fit moves whole to the next page.
    WeasyPrint
    renders it (the only third-party library, `requirements.txt`, imported only here). `tailor save`
    makes the PDF of the version it saves and prints the page count, with a warning above two

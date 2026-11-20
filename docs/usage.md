@@ -276,7 +276,7 @@ asked for in the Applications Assistant box and saved as the next version. Telli
 
 Every saved version also gets a PDF beside it, `CV_<Company>_<RoleShort>_<DDMMYY>_<n>.pdf`, made
 from one committed template (`prep/cv_template.html`): A4, the name in deep pine with the
-summary and contact block beside it, then a narrow column (skills, education…) beside a wide one
+contact block under it and the summary beside it, then a narrow column (skills, education…) beside a wide one
 (experience, projects), real selectable text in a system font with no tables or images. Contact
 details come from the lines under `# Name` (for example `Mobile: … · Email: … · LinkedIn: …`). A
 normal CV fits two pages; the page count is printed and a longer one gets a warning. The

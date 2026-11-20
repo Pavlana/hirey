@@ -117,17 +117,18 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
                       "GitHub: github.com/sam-sample</p>", page,
                       "location, mobile, email, LinkedIn, GitHub")
-        self.assertIn('<div class="about"><section class="summary"><h3>Summary</h3>'
-                      "<p>Engineer who builds example platforms.</p></section>", page, "the summary, top right")
-        order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="summary"',
-                                         'class="contact"', 'class="side"', 'class="main"')]
-        self.assertEqual(order, sorted(order), "name, title lines, summary, contact, then the columns")
+        self.assertIn('<div class="about"><section class="summary"><p>Engineer who builds example platforms.</p>'
+                      "</section></div>", page, "the summary text top right, without its heading")
+        order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="contact"',
+                                         'class="summary"', 'class="side"', 'class="main"')]
+        self.assertEqual(order, sorted(order), "name, title lines, contact, summary, then the columns")
 
     def test_sections_split_into_two_columns(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
         head, cols = page.split('<div class="cols">')
         side, main = cols.split('<div class="main">')
-        self.assertIn("<h3>Summary</h3>", head)
+        self.assertNotIn("<h3>Summary</h3>", page)
+        self.assertIn('<section class="summary">', head)
         for heading in ("Skills", "Education &amp; Training"):
             self.assertIn(f"<h3>{heading}</h3>", side)
         for heading in ("Experience", "Projects"):
@@ -136,7 +137,7 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn("<h3>Skills</h3><ul><li><strong>Languages</strong><ul><li>Python</li><li>Go</li></ul></li></ul>",
                       side, "a skills group: its name, then one item per bullet")
         no_summary = cvpdf.cv_layout(HEADED_CV.replace("## Summary", "## Interests"))
-        self.assertIn('<div class="about"><p class="contact">', no_summary, "no summary: the contact line alone")
+        self.assertIn('<div class="about"></div>', no_summary, "no summary: the right side stays empty")
 
     def test_role_lines(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
@@ -154,8 +155,9 @@ class LayoutTest(IsolatedTestCase):
     def test_words_kept(self) -> None:
         def words(text: str) -> list[str]:
             return sorted(re.findall(r"[a-z0-9]+", re.sub(r"<[^>]+>|&\w+;", " ", text).lower()))
-        source = re.sub(r"[#*·—-]", " ", HEADED_CV)
-        self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source), "every word kept, none added")
+        source = re.sub(r"[#*·—-]", " ", HEADED_CV.replace("## Summary\n", ""))
+        self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source),
+                         "every word kept (but the summary's heading), none added")
 
     def test_escaped_and_without_a_name_heading(self) -> None:
         page = cvpdf.cv_layout("# <b>Sam</b> Sample\n\n<i>x</i> · sam@example.com\n\n## Summary\n\n<script>\n")
