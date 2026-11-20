@@ -166,6 +166,7 @@ match), ask one short question instead.
 | remove a comment | `python -m prep.cli comments remove REF` (a stage change keeps its move) |
 | move the stage, with a date or a note | `python -m prep.cli update APP --status S [--interview-date D] [--comment "…"]`, stages as in `/stage` |
 | set the tier | `python -m prep.cli update APP --tier A\|B\|C`; say why in one line if they gave a reason |
+| set product or client | `python -m prep.cli update APP --employer-kind product\|client\|unknown`: product = in-house product work, client = consultancy, agency, outsourcing or client delivery; unknown clears it. The pipeline lists product roles first in each stage. Set it when asked, or when the research or brief makes it plain; say which in one line |
 | which CV was sent ("sent CV_Globex_FDE_210926_2") | `python -m prep.cli cv sent APP FILE_NAME` (one of the versions `thread show` lists) |
 | skip the job (only while Interested) | `python -m prep.cli skip APP --reason R [--comment "…"]`, R one of location, seniority, role_type, stack, company, pay, contract_type, other |
 | withdraw after applying | `python -m prep.cli update APP --status withdrawn --comment "…"` |

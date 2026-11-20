@@ -217,8 +217,12 @@ charts are server-rendered SVG):
   Recruiter call → Coding interview → System design → Company interview → Offer) with the
   columns Company, Role, Stage, Next task and the latest comment (one line, with the count when
   there are more). A stage strip with counts filters it; closed applications (Rejected, No
-  response, Withdrawn, Skipped) show with **Show closed**. Clicking a row opens the panel:
-  company, role, stage with interview steps, days in this stage and the job posting; the
+  response, Withdrawn, Skipped) show with **Show closed**. **All · Product · Client** beside it
+  keeps one employer kind (in-house product work or client delivery); a small Product or Client
+  label sits under the company, and within each stage product roles come first, then unknown,
+  then client. Clicking a row opens the panel:
+  company, role, stage with interview steps, days in this stage and the job posting, and an
+  **Employer** select (Product / Client / Unknown) that saves on change; the
   latest comment (and how many came before it); the shortcut buttons **Research company · CV fit · Tailor CV · Mark
   applied · Skip** (each shows its state: "Researching…", "CV fit 4/5", "CV v2 · sent"; Mark
   applied and Skip only while Interested); then the tasks (tick ☐ to mark

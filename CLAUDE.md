@@ -99,6 +99,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Daily brief: `python -m prep.cli today`
 - Record an application: `python -m prep.cli applied --job-id ID --next-action "..." --next-date +7`
 - Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ... [--comment ...]`,
+  `python -m prep.cli update ID --employer-kind product|client|unknown` (in-house product vs client delivery; unknown clears it),
   `python -m prep.cli comment ID "..."`
 - Tasks: `python -m prep.cli task add|list|done`
 - Practice sessions and gaps: `python -m prep.cli session add --kind mock|real [--app ID] [--stage S]
