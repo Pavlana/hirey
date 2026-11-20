@@ -42,6 +42,10 @@ body { margin: 0; }
 .focus { word-spacing: 1.5pt; }
 .summary { padding-top: 3pt; }
 .summary p { margin: 0 0 3pt 0; }
+/* a summary written as list items: no bullet mark, each line starts with its bold lead-in; a
+   wrapped line is indented under it */
+.summary ul { margin: 0; }
+.summary li { margin: 0 0 2pt 0; padding-left: 8pt; text-indent: -8pt; }
 .contact { margin: 5pt 0 0 0; font-size: 9pt; line-height: 1.3; color: var(--ink); white-space: nowrap; }
 .note { margin: 3pt 0 0 0; color: var(--grey); }
 /* two columns: the narrow one floats left, the wide one runs beside it and on past it */
