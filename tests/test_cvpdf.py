@@ -145,15 +145,19 @@ class LayoutTest(IsolatedTestCase):
 
     def test_role_lines(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
-        self.assertIn('<p class="role"><strong>Platform Engineer</strong> <span class="when">Jan 2020 – Present</span>'
+        self.assertIn('<p class="role job"><strong>Platform Engineer</strong> <span class="when">Jan 2020 – Present</span>'
                       '</p><p class="org">Example Widgets (fictional)</p>', page)
-        self.assertIn('<p class="role"><strong>Example tool</strong> <span class="when">personal project / 2025</span>'
+        self.assertIn('<p class="role job"><strong>Example tool</strong> <span class="when">personal project / 2025</span>'
                       '</p><p class="org">Python</p>', page, "the part with a year is the dates, wherever it is")
         self.assertIn("<p><strong>BSc Examples:</strong> University of Example (fictional), 2012</p>", page,
                       "a bold label followed by text stays a paragraph")
+        brk = cvpdf.cv_layout(HEADED_CV.replace("### Example tool · personal project, 2025 · Python",
+                                                "### Career Break · 2025"))
+        self.assertIn('<p class="role"><strong>Career Break</strong> <span class="when">2025</span></p>', brk,
+                      "a role with no company line (a break) is not a job: its title stays black")
         example = cvpdf.cv_layout(CV)
         self.assertIn('<p class="title">Cloud Platform Engineer</p>', example, 'a role after " — " in the name')
-        self.assertIn('<p class="role"><strong>Senior Platform Engineer</strong> <span class="when">2019–2024</span>'
+        self.assertIn('<p class="role job"><strong>Senior Platform Engineer</strong> <span class="when">2019–2024</span>'
                       '</p><p class="org">Brightwater Widgets (fictional)</p>', example)
 
     def test_words_kept(self) -> None:
