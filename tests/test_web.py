@@ -1109,6 +1109,7 @@ class ApplicationsPageTest(WebTestCase):
         self.assertIn('data-jump="card-tailor">CV v2 · sent v1</a>', panel)
         card = panel[panel.index('id="card-tailor"'):]
         self.assertLess(card.index("_200126_2.md"), card.index("_200126_1.md"))  # newest first
+        self.assertNotIn("older-versions", card)  # the latest and the sent one: nothing to fold
         self.assertIn('/research/file?app=3&amp;kind=tailor&amp;v=1', card)
         sent = card[card.index("_200126_1.md"):]
         self.assertIn(">sent</span>", sent[:sent.index("</li>")])
@@ -1117,6 +1118,34 @@ class ApplicationsPageTest(WebTestCase):
         self.assertIn("CV_WayneAnalytics_AIEng_200126_1.md", body)
         self.assertEqual(self.get("/research/file?app=3&kind=tailor&v=9")[0], 404)
         self.assertEqual(self.get("/research/file?app=3&kind=cv_sent")[0], 404)
+
+    def test_tailored_versions_fold_all_but_the_latest_and_the_sent_one(self) -> None:
+        private = self.tmp / "private"
+        (private / "cv-tailored").mkdir(parents=True)
+        with self.conn() as conn:
+            db.update_application(conn, 3, role_short="AIEng")
+            for n in (1, 2, 3, 4):
+                path = private / "cv-tailored" / f"CV_WayneAnalytics_AIEng_200126_{n}.md"
+                path.write_text(f"+++\njob = \"x\"\n+++\nCV {n}\n", encoding="utf-8")
+                db.save_tailored_cv(conn, 3, str(path), f"v{n}")
+        card = self.panel(self.get("/?app=3")[2])
+        card = card[card.index('id="card-tailor"'):]
+        shown, older = card.split('<details class="older-versions">')
+        self.assertIn("_200126_4.md", shown)
+        self.assertNotIn("_200126_3.md", shown)
+        self.assertIn('<summary>Older versions <span class="count">3</span></summary>', older)
+        older = older[:older.index("</details>")]
+        self.assertLess(older.index("_200126_3.md"), older.index("_200126_1.md"))
+        with self.conn() as conn:
+            db.record_cv_sent(conn, 3, "CV_WayneAnalytics_AIEng_200126_2")
+        card = self.panel(self.get("/?app=3")[2])
+        card = card[card.index('id="card-tailor"'):]
+        shown, older = card.split('<details class="older-versions">')
+        self.assertLess(shown.index("_200126_4.md"), shown.index("_200126_2.md"))
+        sent = shown[shown.index("_200126_2.md"):]
+        self.assertIn(">sent</span>", sent[:sent.index("</li>")])
+        self.assertIn('<span class="count">2</span>', older)
+        self.assertNotIn("_200126_2.md", older)
 
     def test_polling_covers_agent_requests(self) -> None:
         app_id = self.app_id("interested")  # research and CV fit queued

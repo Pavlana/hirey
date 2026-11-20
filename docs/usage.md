@@ -227,7 +227,8 @@ charts are server-rendered SVG):
   applied · Skip** (each shows its state: "Researching…", "CV fit 4/5", "CV v2 · sent"; Mark
   applied and Skip only while Interested); then the tasks (tick ☐ to mark
   one done, with Undo), Results: the **Notes** card (below), then the agent's results (company
-  research with the tier and why, CV fit, every tailored CV version with Open and Redo), and the
+  research with the tier and why, CV fit, the tailored CV with Open and Redo: the latest version and
+  the sent one, older versions folded under **Older versions**), and the
   stage history. Mark applied records
   Applied today at once and offers Undo, which moves it back to Interested. Skip asks for a
   reason (the same reasons as an offer's Skip) and an optional comment, closes the application as
@@ -352,9 +353,12 @@ already being written still arrives, marked "after cancel".
 **My CV** in the Applications header opens the master CV (`private_dir/cv.md`) in the side panel
 (`/?cv=1`; Esc and ✕ close it like a job panel): the skills as chips grouped by theme (one group
 per `- **Theme:** a, b; c` line of the Skills section, or per `- **Theme**` bullet with its items as
-indented `  - item` sub-bullets), the CV itself, and its **History**: every
-saved version with its date and a one-line note of what changed, each with **Open**, **Compare**
-(a line diff against the current CV) and **Restore**. Restore keeps the text it replaces as a
+indented `  - item` sub-bullets), the CV itself, and its **History**: the current
+version, with the other saved versions folded under **Older versions**, each with its date and a
+one-line note of what changed, **Open**, **Compare** (a line diff against the current CV) and
+**Restore**. Nothing is deleted: every version stays on disk. A save whose text is the same as the
+current one (`cv save` against cv.md, `tailor save` against the latest tailored version) prints
+"No changes, nothing saved" and adds no version. Restore keeps the text it replaces as a
 version, so the toast's **Undo** brings it back.
 
 There is no edit box. With the panel open the Applications Assistant box reads "About my CV": ask for the change

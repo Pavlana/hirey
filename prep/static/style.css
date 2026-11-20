@@ -594,6 +594,9 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 }
 .notes-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .notes-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
+.older-versions > summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
+.older-versions[open] > summary { margin-bottom: var(--space-2); }
+.versions + .older-versions { margin-top: 6px; }
 .versions { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
 .versions li { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .version-name { font-size: 12.5px; overflow-wrap: anywhere; }

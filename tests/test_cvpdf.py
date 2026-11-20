@@ -250,7 +250,7 @@ class CliTest(IsolatedTestCase):
         self.assertIn("Saved tailored CV v1", out)
         self.assertIn("no PDF: WeasyPrint is not available; make it later with tailor pdf", out)
         with mock.patch.object(cvpdf, "write_pdf", side_effect=ValueError("bad css")):
-            write(research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 2), TAILORED)
+            write(research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 2), TAILORED + "\n- v2\n")
             code, out, _ = self.save()
         self.assertEqual(code, 0)
         self.assertIn("no PDF: the render failed (ValueError)", out)
@@ -261,7 +261,7 @@ class CliTest(IsolatedTestCase):
         self.assertIn("no tailored CV yet", err)
         with mock.patch.object(cvpdf, "write_pdf", side_effect=cvpdf.PdfUnavailable("x")):
             self.save()
-        v2 = write(research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 2), TAILORED)
+        v2 = write(research.tailored_file(self.private, "Globex Labs", "Eng", db.today_iso(), 2), TAILORED + "\n- v2\n")
         with mock.patch.object(cvpdf, "write_pdf", side_effect=cvpdf.PdfUnavailable("x")):
             self.save()
         with mock.patch.object(cvpdf, "write_pdf", side_effect=fake_pdf(3)) as made:

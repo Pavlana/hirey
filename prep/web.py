@@ -2508,8 +2508,8 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
                     check: dict | None = None, notes: dict | None = None) -> str:
     """The Notes card (always, when `notes` is given: db.get_notes), then the agent's results, each with
     Open and Redo: company research (with the tier the research set and why), the CV fit with its top
-    gaps, and every tailored CV version (the sent one marked; the latest with its PDF, its check's
-    verdict, flagged lines and changes vs cv.md: `check`). A result card shows once there is a result;
+    gaps, and the tailored CV: the latest version (with its PDF, its check's verdict, flagged lines and
+    changes vs cv.md: `check`) and the sent one (marked), the rest folded under "Older versions". A result card shows once there is a result;
     queued work shows on its shortcut button."""
     profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
     cards = [_notes_card(app["id"], notes, here)] if notes is not None else []
@@ -2537,18 +2537,31 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
         cards.append(_artifact("card-fit", "CV fit", meta, actions, gaps))
     if versions:
         ai = "done" if check and check.get("summary") else ("pending" if "cv_eval" in open_kinds else "none")
-        items = "".join(
-            f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
-            f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
-            + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
-            + _open_link(app["id"], "tailor", version=v["version"])
-            + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check, ai) if v is versions[-1] else "") + "</li>"
-            for v in reversed(versions))
+
+        def item(v: dict) -> str:
+            return (f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
+                    f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
+                    + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
+                    + _open_link(app["id"], "tailor", version=v["version"])
+                    + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check, ai) if v is versions[-1] else "")
+                    + "</li>")
+        shown = [v for v in reversed(versions) if v is versions[-1] or v["version"] == app.get("cv_sent_version")]
+        older = [v for v in reversed(versions) if v not in shown]
         actions = "" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md")
-        body = (f'<ul class="versions">{items}</ul>' + _check_body(check, versions[-1]["version"], ai) +
+        body = (f'<ul class="versions">{"".join(map(item, shown))}</ul>'
+                + _older_versions("".join(map(item, older)), len(older), "ul", "versions")
+                + _check_body(check, versions[-1]["version"], ai) +
                 '<p class="muted">Ask the assistant for changes; each one is a new version. Tell it which file you sent.</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
+
+
+def _older_versions(items: str, count: int, tag: str, cls: str) -> str:
+    """Versions that are neither current nor sent, in a closed <details> (nothing when there are none)."""
+    if not count:
+        return ""
+    return (f'<details class="older-versions"><summary>Older versions <span class="count">{count}</span></summary>'
+            f'<{tag} class="{cls}">{items}</{tag}></details>')
 
 
 def _notes_card(app_id: int, notes: dict, here: str, draft: str | None = None, alert: str = "") -> str:
@@ -2699,11 +2712,12 @@ def _cv_link(f: dict, label: str, aria: str = "", **changes: object) -> str:
 
 def _cv_history(versions: list[dict], current: int | None, f: dict, here: str) -> str:
     """Saved versions newest first: number, date, the note of what changed, and Open · Compare ·
-    Restore (the current one is marked and has Open only)."""
+    Restore (the current one is marked and has Open only). Only the current one shows; the rest are
+    folded under "Older versions"."""
     if not versions:
         body = '<p class="muted">No saved versions yet. The first change through the assistant saves this text as v1.</p>'
     else:
-        items = []
+        items, older = [], []
         for v in versions:
             n = v["id"]
             is_current = n == current
@@ -2712,13 +2726,14 @@ def _cv_history(versions: list[dict], current: int | None, f: dict, here: str) -
                 actions += _cv_link(f, "Compare", f"Compare v{n} with the current CV", cv_cmp=n, cv_v=None)
                 actions += _cv_restore_form(n, here)
             mark = ' class="is-current"' if is_current else ""
-            items.append(
+            (items if is_current else older).append(
                 f'<li{mark}><span class="mono version-name">v{h(n)}</span>'
                 f'<time class="muted" datetime="{h(v["created_at"])}">{h(_local_time(v["created_at"]))}</time>'
                 f'<span class="cv-note">{h(v["note"])}</span>'
                 + (_badge("current", "s9") if is_current else "")
                 + f'<span class="artifact-actions">{actions}</span></li>')
-        body = f'<ol class="versions cv-versions">{"".join(items)}</ol>'
+        body = ((f'<ol class="versions cv-versions">{"".join(items)}</ol>' if items else "")
+                + _older_versions("".join(older), len(older), "ol", "versions cv-versions"))
     return (f'<section class="cv-history" id="cv-history"><h3>History <span class="count">{len(versions)}</span></h3>'
             f'{body}</section>')
 

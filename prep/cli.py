@@ -494,6 +494,9 @@ def cmd_cv(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connectio
               "--note \"what changed\" [--to MSG]")
     elif args.cv_cmd == "save":
         result = cvfile.save_draft(conn, private_dir, args.note, Path(args.file).expanduser() if args.file else None)
+        if result is None:
+            print("No changes, nothing saved: the text is the same as cv.md.")
+            return 0
         _cv_saved(conn, args, result, "Saved")
     elif args.cv_cmd == "restore":
         result = cvfile.restore(conn, private_dir, args.version)
@@ -1214,6 +1217,13 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
     _, body = research.split_front_matter(path.read_text(encoding="utf-8"))  # the same +++ block as the other files
+    latest = (db.tailored_versions(conn, args.app_id) or [None])[-1]
+    old = Path(latest["file_path"]) if latest else None
+    if old and old != path and old.is_file() \
+            and research.split_front_matter(old.read_text(encoding="utf-8"))[1] == body:
+        print(f"No changes, nothing saved: {path.name} is the same as v{latest['version']} ({old.name})."
+              + (f" Message {args.to} is still waiting for a reply." if args.to else ""))
+        return 0
     note = sys.stdin.read()
     mark = db.last_request_id(conn)
     version = db.save_tailored_cv(conn, args.app_id, str(path), note, args.to)
