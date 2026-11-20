@@ -8,11 +8,11 @@
   header, then a narrow and a wide column). Real text in a system sans (Helvetica Neue, Arial
   fallback; no font file), selectable, ligatures off, no tables, images, headers or footers. The
   reading order is the HTML order: name, title, focus, contact, summary, narrow column, wide
-  column. Black on white; the name in pink (#e85a80), the section headings and their rules in
+  column. Black on white; the name in mint (#3eb489), the section headings and their rules in
   slate (#59656f). A4.
 -->
 <style>
-:root { --name: #e85a80; --head: #59656f; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
+:root { --name: #3eb489; --head: #59656f; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
 @page { size: A4; margin: 14mm 15mm 14mm 15mm; }
 html {
   font-family: "Helvetica Neue", Helvetica, Arial, "Liberation Sans", sans-serif;
@@ -73,7 +73,7 @@ p { margin: 0 0 4pt 0; orphans: 2; widows: 2; }
 .role { margin: 6pt 0 0 0; break-after: avoid; }
 h3 + .role { margin-top: 0; }
 .role strong { text-transform: uppercase; color: var(--head); }
-/* a job or project title (a role with a company line) in the name's pink; a break (no company
+/* a job or project title (a role with a company line) in the name's mint; a break (no company
    line) in the headings' slate */
 .job strong { color: var(--name); }
 .when { white-space: nowrap; margin-left: 6pt; text-transform: uppercase; color: var(--grey); }

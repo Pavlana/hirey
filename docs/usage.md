@@ -275,7 +275,7 @@ asked for in the Applications Assistant box and saved as the next version. Telli
 ### PDF of a tailored CV
 
 Every saved version also gets a PDF beside it, `CV_<Company>_<RoleShort>_<DDMMYY>_<n>.pdf`, made
-from one committed template (`prep/cv_template.html`): A4, the name in pink (#e85a80) with the
+from one committed template (`prep/cv_template.html`): A4, the name in mint (#3eb489) with the
 contact block under it and the summary beside it, then a narrow column (skills, education…) beside a wide one
 (experience, projects), real selectable text in a system font with no tables or images. Contact
 details come from the lines under `# Name` (for example `Mobile: … · Email: … · LinkedIn: …`). A
