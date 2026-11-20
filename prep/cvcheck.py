@@ -88,8 +88,15 @@ def _contacts(text: str) -> set[tuple[str, str]]:
     """(kind, normalised value) for every email, link and phone number in `text`."""
     found = {("email", e.lower()) for e in EMAIL.findall(text)}
     found |= {("link", _norm_url(u)) for u in URL.findall(text) if "@" not in u}
-    found |= {("phone", re.sub(r"\D", "", p)) for p in PHONE.findall(text) if len(re.sub(r"\D", "", p)) >= 9}
+    no_links = URL.sub(" ", text)  # digits in a link ("linkedin.com/in/name-123456789") are no phone
+    found |= {("phone", _norm_phone(p)) for p in PHONE.findall(no_links) if len(re.sub(r"\D", "", p)) >= 9}
     return found
+
+
+def _norm_phone(phone: str) -> str:
+    """The digits of a phone number, without the "(0)" a UK number writes after its country code:
+    "+44 (0) 7700 900123" and "+447700900123" are the same number."""
+    return re.sub(r"\D", "", re.sub(r"\(0\)", "", phone))
 
 
 def check_pages(pages: int | None) -> list[dict]:

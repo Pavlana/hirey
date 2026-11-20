@@ -321,9 +321,24 @@
    PDF: `prep/cvpdf.py` turns a version's Markdown into a PDF beside it, same name with `.pdf`
    (`CV_Globex_FDE_210926_2.pdf`, gitignored like every `*.pdf`). The front matter is dropped, the
    body goes through `prep/md.py` (the dashboard's escaped Markdown subset: headings, lists, paragraphs, ``` code blocks, `code`, bold, italic; here with http(s) and
-   mailto links kept) into the committed template `prep/cv_template.html`: A4, one column in
-   reading order, a common sans font with ligatures off, bullets as text in the line, no tables,
-   images, headers or footers, so applicant tracking systems read the text as written. WeasyPrint
+   mailto links kept), is grouped by `cvpdf.cv_layout` and goes into the committed template
+   `prep/cv_template.html`. Layout: the name large on two lines (Helvetica Neue Bold, uppercase),
+   then the title line and a focus line ("A • B • C"), then the contact block; below, a narrow
+   column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: summary, skills, education…)
+   and a wide one (experience, projects, anything else). `cvpdf.masthead` sorts the " · " items of
+   the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
+   label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
+   the order location, mobile, email, LinkedIn, GitHub; the first other item is the title (or a role
+   after " — " in the name line), the rest, split at commas, the focus line. A role, written as
+   `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
+   title, the dates (the first later part with a year or "Present") and the company line. Words are
+   kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
+   column. Black on white; deep pine (#233421) on the name, the section headings and their rules; a
+   system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
+   tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
+   read) is name, title, focus, contact, narrow column, wide column; the contact block is only shown
+   top right by a CSS grid. A narrow-column section that does not fit moves whole to the next page.
+   WeasyPrint
    renders it (the only third-party library, `requirements.txt`, imported only here). `tailor save`
    makes the PDF of the version it saves and prints the page count, with a warning above two
    pages (a CV of `TAILOR_MAX_WORDS` words fits two); a failed or impossible render prints
@@ -340,7 +355,8 @@
    link are there and every header contact is kept: per field (email, phone, LinkedIn, GitHub,
    other link) the values in the facts bank's `## Contact` section (`cvcheck.contact_section`:
    `- Email: …` lines, empty ones skipped), else those in cv.md's header (the lines before the
-   first `##`), since the skills build each tailored header from that section and fall back to cv.md; no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
+   first `##`), since the skills build each tailored header from that section and fall back to cv.md (a phone number
+   compared by its digits with a "(0)" after the country code dropped; digits inside a link are no phone); no placeholder (`[X]` outside a Markdown link, TODO, TBD, `<...>`, `{{...}}`,
    lorem ipsum, `??`; a `<https://…>` autolink is a look, since the PDF prints its brackets); pay, in lines other than the user's own from cv.md and never quoted:
    clear pay wording (salary, compensation, per annum, day rate, OTE, bonus…: `cvcheck.PAY_WORDS`)
    within `cvcheck.PAY_NEAR` characters of a number blocks, a money or "k" figure that neither

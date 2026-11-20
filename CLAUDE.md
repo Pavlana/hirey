@@ -75,7 +75,7 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
              cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
-             md.py (safe Markdown subset), cvpdf.py + cv_template.html (tailored CV as PDF, WeasyPrint),
+             md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: two-column layout, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
              assistant.py (optional dev3 message to a standing agent: /ask, /research, /learn-ask),
