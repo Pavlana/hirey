@@ -3,6 +3,7 @@ pdf_python fallback, the panel's PDF link and the /research/pdf route. cv.exampl
 only; the real render is skipped when WeasyPrint (or Pango) cannot be loaded."""
 
 import io
+import re
 import subprocess
 from contextlib import closing
 from pathlib import Path
@@ -21,11 +22,17 @@ try:
 except (ImportError, OSError):  # OSError: installed, but Pango cannot be loaded
     WEASYPRINT = False
 
-# About research.TAILOR_MAX_WORDS words of made-up CV: should still fit two pages.
-ROLE = ("**Senior Engineer — Example Widgets {n} (fictional)**, 2010–2012\n"
-        + "".join(f"- Built and ran example system {i} for twelve teams, cutting deploy time by half.\n"
-                  for i in range(6)) + "\n")
-LONG_CV = "# Sam Sample\n\nEngineer · sam@example.com\n\n## Experience\n\n" + "".join(ROLE.format(n=n) for n in range(11))
+# About research.TAILOR_MAX_WORDS words of made-up CV in the usual shape (narrow-column sections, roles as
+# headings, two-line bullets): should still fit two pages.
+ROLE = ("### Senior Engineer · Example Widgets {n} (fictional) · Jan 2010 – Dec 2012\n"
+        + "".join(f"- Built and ran example system {i} for twelve product teams, moving their releases to a shared "
+                  "pipeline and cutting the time from merge to production by half.\n" for i in range(4)) + "\n")
+LONG_CV = ("# Sam Sample\n\nEngineer · Python, Go · Leeds, UK\nsam@example.com · github.com/sam-sample\n\n"
+           "## Summary\n\n" + "Engineer who builds example platforms for many teams and runs them in production. " * 7
+           + "\n\n## Skills\n\n"
+           + "".join(f"- **Area {i}:** Python, Go, Terraform, Kubernetes, Azure, AWS, GitHub Actions\n" for i in range(6))
+           + "\n## Education\n\n**BSc Examples:** University of Example (fictional), 2009\n\n## Experience\n\n"
+           + "".join(ROLE.format(n=n) for n in range(7)) + "Example extra words.\n")
 
 
 class HtmlTest(IsolatedTestCase):
@@ -53,7 +60,7 @@ class HtmlTest(IsolatedTestCase):
         self.assertNotIn("<script>", page)
 
     def test_a_plain_cv_without_front_matter(self) -> None:
-        self.assertIn("<h2>Alex Example", cvpdf.cv_html(CV))
+        self.assertIn('<h2 class="name"><span>Alex</span> <span>Example</span></h2>', cvpdf.cv_html(CV))
         self.assertIn("<title>fallback</title>", cvpdf.cv_html("no heading here", "fallback"))
 
     def test_the_dashboard_still_shows_links_as_text(self) -> None:
@@ -64,6 +71,85 @@ class HtmlTest(IsolatedTestCase):
         self.assertEqual(cvpdf.page_note(1), "1 page")
         self.assertEqual(cvpdf.page_note(2), "2 pages")
         self.assertIn("WARNING, over 2", cvpdf.page_note(3))
+
+
+# A made-up CV in the shape of a real one: the name, header lines with " · " items, "## " sections,
+# roles as "### Title · Company · Dates" headings.
+HEADED_CV = """# Sam Sample
+
+Platform Engineer · Python, Kubernetes · Leeds, UK
+GitHub: github.com/sam-sample · Mobile: +44 7700 900456 · Email: sam@example.com
+
+## Summary
+
+Engineer who builds example platforms.
+
+## Experience
+
+### Platform Engineer · Example Widgets (fictional) · Jan 2020 – Present
+- Built example pipelines.
+
+## Projects
+
+### Example tool · personal project, 2025 · Python
+- Wrote an example tool.
+
+## Skills
+
+- **Languages:** Python, Go
+
+## Education & Training
+
+**BSc Examples:** University of Example (fictional), 2012
+"""
+
+
+class LayoutTest(IsolatedTestCase):
+    def test_header_parts_in_reading_order(self) -> None:
+        page = cvpdf.cv_layout(HEADED_CV)
+        self.assertIn('<h2 class="name"><span>Sam</span> <span>Sample</span></h2>', page)
+        self.assertIn('<p class="title">Platform Engineer</p>', page)
+        self.assertIn('<p class="focus">Python • Kubernetes</p>', page)
+        self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
+                      "GitHub: github.com/sam-sample</p>", page, "location, mobile, email, LinkedIn, GitHub")
+        order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="contact"',
+                                         'class="side"', 'class="main"')]
+        self.assertEqual(order, sorted(order), "the contact block comes after the title lines, before the columns")
+
+    def test_sections_split_into_two_columns(self) -> None:
+        page = cvpdf.cv_layout(HEADED_CV)
+        side, main = page.split('<div class="main">')
+        for heading in ("Summary", "Skills", "Education &amp; Training"):
+            self.assertIn(f"<h3>{heading}</h3>", side)
+        for heading in ("Experience", "Projects"):
+            self.assertIn(f"<h3>{heading}</h3>", main)
+        self.assertEqual(page.count('<section class="block">'), 5)
+
+    def test_role_lines(self) -> None:
+        page = cvpdf.cv_layout(HEADED_CV)
+        self.assertIn('<p class="role"><strong>Platform Engineer</strong> <span class="when">Jan 2020 – Present</span>'
+                      '</p><p class="org">Example Widgets (fictional)</p>', page)
+        self.assertIn('<p class="role"><strong>Example tool</strong> <span class="when">personal project / 2025</span>'
+                      '</p><p class="org">Python</p>', page, "the part with a year is the dates, wherever it is")
+        self.assertIn("<p><strong>BSc Examples:</strong> University of Example (fictional), 2012</p>", page,
+                      "a bold label followed by text stays a paragraph")
+        example = cvpdf.cv_layout(CV)
+        self.assertIn('<p class="title">Cloud Platform Engineer</p>', example, 'a role after " — " in the name')
+        self.assertIn('<p class="role"><strong>Senior Platform Engineer</strong> <span class="when">2019–2024</span>'
+                      '</p><p class="org">Brightwater Widgets (fictional)</p>', example)
+
+    def test_words_kept(self) -> None:
+        def words(text: str) -> list[str]:
+            return sorted(re.findall(r"[a-z0-9]+", re.sub(r"<[^>]+>|&\w+;", " ", text).lower()))
+        source = re.sub(r"[#*·—-]", " ", HEADED_CV)
+        self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source), "every word kept, none added")
+
+    def test_escaped_and_without_a_name_heading(self) -> None:
+        page = cvpdf.cv_layout("# <b>Sam</b> Sample\n\n<i>x</i> · sam@example.com\n\n## Summary\n\n<script>\n")
+        self.assertNotIn("<b>", page)
+        self.assertNotIn("<script>", page)
+        self.assertIn("&lt;b&gt;Sam&lt;/b&gt;", page)
+        self.assertEqual(cvpdf.cv_layout("No heading.\n\n- a point\n"), "<p>No heading.</p><ul><li>a point</li></ul>")
 
 
 class FallbackTest(IsolatedTestCase):

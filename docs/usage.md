@@ -271,8 +271,10 @@ asked for in the Applications Assistant box and saved as the next version. Telli
 ### PDF of a tailored CV
 
 Every saved version also gets a PDF beside it, `CV_<Company>_<RoleShort>_<DDMMYY>_<n>.pdf`, made
-from one committed template (`prep/cv_template.html`): A4, one column, a common font and real,
-selectable text with no tables or images, so applicant tracking systems parse it as written. A
+from one committed template (`prep/cv_template.html`): A4, the name large in deep pine with the
+contact block top right, then a narrow column (summary, skills, education…) beside a wide one
+(experience, projects), real selectable text in a system font with no tables or images. Contact
+details come from the lines under `# Name` (for example `Mobile: … · Email: … · LinkedIn: …`). A
 normal CV fits two pages; the page count is printed and a longer one gets a warning. The
 panel's Tailored CV card has **PDF** next to the latest version.
 `python -m prep.cli tailor pdf APP [--version N]` makes or remakes one, and

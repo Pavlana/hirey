@@ -33,6 +33,12 @@ def _inline(text: str, links: bool = False) -> str:
     return "".join(out)
 
 
+def render_inline(text: str, links: bool = False) -> str:
+    """One line of Markdown (no block markup) as escaped HTML: `code`, **bold**, *italic* and, with
+    `links`, http(s) and mailto links."""
+    return _inline(text, links)
+
+
 def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', links: bool = False,
                     breaks: bool = False) -> str:
     """Headings, bullet lists, paragraphs, ``` fenced code blocks, `code`, **bold** and *italic*; with

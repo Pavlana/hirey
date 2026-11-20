@@ -69,6 +69,14 @@ class RulesTest(IsolatedTestCase):
         self.assertEqual(run_check(CLEAN.replace("https://www.linkedin.com/in/alex-example/",
                                                  "[LinkedIn](linkedin.com/in/alex-example)")), [])
 
+    def test_phone_with_trunk_zero_and_digits_in_links(self) -> None:
+        master = MASTER.replace("+44 7700 900123", "+44 (0) 7700 900123")
+        self.assertEqual(run_check(CLEAN, master=master), [], '"+44 (0) 7700…" is the number "+44 7700…"')
+        slug = "linkedin.com/in/alex-example-123456789"
+        self.assertEqual(run_check(CLEAN.replace("linkedin.com/in/alex-example/", slug),
+                                   master=MASTER.replace("linkedin.com/in/alex-example/", slug)), [],
+                         "the digits of a LinkedIn address are no phone number")
+
     def test_contacts_from_the_facts_bank(self) -> None:
         facts = ("# Facts\n\n## Contact\n- Name: Alex Example\n- Email: alex.new@example.org\n- Phone:\n"
                  "- GitHub: https://github.com/alex-example\n\n## Tools\n- Email: not@example.org\n")
