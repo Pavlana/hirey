@@ -136,6 +136,10 @@ class LayoutTest(IsolatedTestCase):
         self.assertEqual(page.count('<section class="block">'), 4)
         self.assertIn("<h3>Skills</h3><ul><li><strong>Languages</strong><ul><li>Python</li><li>Go</li></ul></li></ul>",
                       side, "a skills group: its name, then one item per bullet")
+        bullets = cvpdf.cv_layout(HEADED_CV.replace("Engineer who builds example platforms.",
+                                                    "- **Lead:** example → platform\n- **Next:** example role"))
+        self.assertIn('<section class="summary"><ul><li><strong>Lead:</strong> example → platform</li>'
+                      "<li><strong>Next:</strong> example role</li></ul></section>", bullets, "a bulleted summary")
         no_summary = cvpdf.cv_layout(HEADED_CV.replace("## Summary", "## Interests"))
         self.assertIn('<div class="about"></div>', no_summary, "no summary: the right side stays empty")
 
