@@ -194,8 +194,9 @@ def _split_items(text: str) -> list[str]:
 
 def skills(text: str) -> list[tuple[str, list[str]]]:
     """The skills section as (theme, skills) groups, in CV order. The section is the first heading
-    containing "skill"; inside it a "- **Theme:** a, b; c" line, a "Theme: a, b" line or a "### Theme"
-    sub-heading starts a group, and plain lines (a flat comma list) go to "Skills"."""
+    containing "skill"; inside it a "- **Theme:** a, b; c" line, a "Theme: a, b" line, a "### Theme"
+    sub-heading or a "- **Theme**" bullet with nothing after it (its items then indented "  - a"
+    sub-bullets) starts a group, and plain lines (a flat comma list) go to the current group, else "Skills"."""
     groups: list[tuple[str, list[str]]] = []
     level = None
     theme = None
@@ -214,6 +215,9 @@ def skills(text: str) -> list[tuple[str, list[str]]]:
         if not stripped:
             continue
         m = _THEMED.match(stripped)
+        if m and m.group("bold") and not m.group("rest"):  # "- **Theme**": its items follow as sub-bullets
+            theme = m.group("bold").strip().rstrip(":").strip()
+            continue
         if m and m.group("rest"):
             name = (m.group("bold") or m.group("plain")).strip().rstrip(":").strip()
             groups.append((name, _split_items(m.group("rest"))))

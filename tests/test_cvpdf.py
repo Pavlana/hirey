@@ -30,7 +30,9 @@ ROLE = ("### Senior Engineer · Example Widgets {n} (fictional) · Jan 2010 – 
 LONG_CV = ("# Sam Sample\n\nEngineer · Python, Go · Leeds, UK\nsam@example.com · github.com/sam-sample\n\n"
            "## Summary\n\n" + "Engineer who builds example platforms for many teams and runs them in production. " * 7
            + "\n\n## Skills\n\n"
-           + "".join(f"- **Area {i}:** Python, Go, Terraform, Kubernetes, Azure, AWS, GitHub Actions\n" for i in range(6))
+           + "".join(f"- **Area {i}**\n" + "".join(f"  - {s}\n" for s in ("Python", "Go", "Terraform", "Kubernetes",
+                                                                         "Azure", "AWS", "GitHub Actions"))
+                     for i in range(6))
            + "\n## Education\n\n**BSc Examples:** University of Example (fictional), 2009\n\n## Experience\n\n"
            + "".join(ROLE.format(n=n) for n in range(7)) + "Example extra words.\n")
 
@@ -96,7 +98,9 @@ Engineer who builds example platforms.
 
 ## Skills
 
-- **Languages:** Python, Go
+- **Languages**
+  - Python
+  - Go
 
 ## Education & Training
 
@@ -110,20 +114,30 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<h2 class="name"><span>Sam</span> <span>Sample</span></h2>', page)
         self.assertIn('<p class="title">Platform Engineer</p>', page)
         self.assertIn('<p class="focus">Python • Kubernetes</p>', page)
-        self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
-                      "GitHub: github.com/sam-sample</p>", page, "location, mobile, email, LinkedIn, GitHub")
+        self.assertIn('<p class="contact">Leeds, UK<br>+44 7700 900456<br>sam@example.com<br>'
+                      "github.com/sam-sample</p>", page,
+                      "location, mobile, email, LinkedIn, GitHub")
+        self.assertIn('<div class="about"><section class="summary"><p>Engineer who builds example platforms.</p>'
+                      "</section></div>", page, "the summary text top right, without its heading")
         order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="contact"',
-                                         'class="side"', 'class="main"')]
-        self.assertEqual(order, sorted(order), "the contact block comes after the title lines, before the columns")
+                                         'class="summary"', 'class="side"', 'class="main"')]
+        self.assertEqual(order, sorted(order), "name, title lines, contact, summary, then the columns")
 
     def test_sections_split_into_two_columns(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
-        side, main = page.split('<div class="main">')
-        for heading in ("Summary", "Skills", "Education &amp; Training"):
+        head, cols = page.split('<div class="cols">')
+        side, main = cols.split('<div class="main">')
+        self.assertNotIn("<h3>Summary</h3>", page)
+        self.assertIn('<section class="summary">', head)
+        for heading in ("Skills", "Education &amp; Training"):
             self.assertIn(f"<h3>{heading}</h3>", side)
         for heading in ("Experience", "Projects"):
             self.assertIn(f"<h3>{heading}</h3>", main)
-        self.assertEqual(page.count('<section class="block">'), 5)
+        self.assertEqual(page.count('<section class="block">'), 4)
+        self.assertIn("<h3>Skills</h3><ul><li><strong>Languages</strong><ul><li>Python</li><li>Go</li></ul></li></ul>",
+                      side, "a skills group: its name, then one item per bullet")
+        no_summary = cvpdf.cv_layout(HEADED_CV.replace("## Summary", "## Interests"))
+        self.assertIn('<div class="about"></div>', no_summary, "no summary: the right side stays empty")
 
     def test_role_lines(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
@@ -141,8 +155,10 @@ class LayoutTest(IsolatedTestCase):
     def test_words_kept(self) -> None:
         def words(text: str) -> list[str]:
             return sorted(re.findall(r"[a-z0-9]+", re.sub(r"<[^>]+>|&\w+;", " ", text).lower()))
-        source = re.sub(r"[#*·—-]", " ", HEADED_CV)
-        self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source), "every word kept, none added")
+        source = re.sub(r"[#*·—-]", " ", HEADED_CV.replace("## Summary\n", ""))
+        source = re.sub(r"\b(Mobile|Email|GitHub): ", "", source)
+        self.assertEqual(words(cvpdf.cv_layout(HEADED_CV)), words(source),
+                         "every word kept (but the summary's heading and the contact labels), none added")
 
     def test_escaped_and_without_a_name_heading(self) -> None:
         page = cvpdf.cv_layout("# <b>Sam</b> Sample\n\n<i>x</i> · sam@example.com\n\n## Summary\n\n<script>\n")

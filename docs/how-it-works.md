@@ -320,24 +320,26 @@
    copy blocks Undo Interested. Tailored files are agent-written: never pay.
    PDF: `prep/cvpdf.py` turns a version's Markdown into a PDF beside it, same name with `.pdf`
    (`CV_Globex_FDE_210926_2.pdf`, gitignored like every `*.pdf`). The front matter is dropped, the
-   body goes through `prep/md.py` (the dashboard's escaped Markdown subset: headings, lists, paragraphs, ``` code blocks, `code`, bold, italic; here with http(s) and
+   body goes through `prep/md.py` (the dashboard's escaped Markdown subset: headings, lists with one level of indented sub-bullets, paragraphs, ``` code blocks, `code`, bold, italic; here with http(s) and
    mailto links kept), is grouped by `cvpdf.cv_layout` and goes into the committed template
-   `prep/cv_template.html`. Layout: the name large on two lines (Helvetica Neue Bold, uppercase),
-   then the title line and a focus line ("A • B • C"), then the contact block; below, a narrow
-   column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: summary, skills, education…)
-   and a wide one (experience, projects, anything else). `cvpdf.masthead` sorts the " · " items of
+   `prep/cv_template.html`. Layout: a header with, on the left, the name on two lines (Helvetica Neue Bold,
+   uppercase), the title line, a focus line ("A • B • C", when there is one) and the contact block,
+   one item per line; on the right, the text of the first section named like `cvpdf.SUMMARY_WORDS`
+   (summary, profile, about), without its heading. Below, a narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
+   wide one (experience, projects, anything else). Skills groups (`- **Group**` with indented
+   `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns, at 8.5pt. `cvpdf.masthead` sorts the " · " items of
    the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
    label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
-   the order location, mobile, email, LinkedIn, GitHub; the first other item is the title (or a role
+   the order location, mobile, email, LinkedIn, GitHub, shown as values only (labels dropped); the first other item is the title (or a role
    after " — " in the name line), the rest, split at commas, the focus line. A role, written as
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
    title, the dates (the first later part with a year or "Present") and the company line. Words are
    kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
-   column. Black on white; deep pine (#233421) on the name, the section headings and their rules; a
+   column. Black on white; the name in pink (#e85a80), section headings and rules in slate (#59656f); a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
    tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
-   read) is name, title, focus, contact, narrow column, wide column; the contact block is only shown
-   top right by a CSS grid. A narrow-column section that does not fit moves whole to the next page.
+   read) is name, title, focus, contact, summary, narrow column, wide column; a CSS grid puts the
+   summary beside the name. A narrow-column section that does not fit moves whole to the next page.
    WeasyPrint
    renders it (the only third-party library, `requirements.txt`, imported only here). `tailor save`
    makes the PDF of the version it saves and prints the page count, with a warning above two
@@ -460,7 +462,8 @@
    copies it to `cv-history/_draft.md`, then `cli cv save --note "…" [--to MSG]` writes it (with
    `--to`, checked first, the reply answers that CV message). `cv restore`, `cv diff`, `cv history`,
    `cv skills` and `cv show` complete it. Skills: the section under the first heading containing
-   "skill"; `- **Theme:** a, b; c` lines (or `### Theme`) are groups. Only recorded version names
+   "skill"; `- **Theme:** a, b; c` lines, `### Theme`, or a `- **Theme**` bullet with indented `  - item`
+   sub-bullets are groups. Only recorded version names
    resolving inside private_dir are read. Notes and CV text are never logged. With the panel open the
    Applications Assistant box's "About my CV" sends `topic=cv` (`agent_messages.topic`, carried by the reply), tagged
    "My CV", pinged as `/ask cv <id>`; a message with no application, job or topic is general.

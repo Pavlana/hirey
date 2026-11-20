@@ -47,6 +47,12 @@ class SkillsTest(IsolatedTestCase):
         self.assertEqual(cvfile.skills(plain), [("Cloud", ["Azure", "AWS"])])
         self.assertEqual(cvfile.skills("# Name\n\nNo such section.\n"), [])
 
+    def test_group_bullets_with_sub_bullets(self) -> None:
+        grouped = ("## Skills\n\n- **AI**\n  - RAG\n  - Example agents (fictional)\n- **Cloud:**\n  - Azure\n"
+                   "- **Languages:** Python, Go\n\n## Education\n\n- BSc\n")
+        self.assertEqual(cvfile.skills(grouped), [("AI", ["RAG", "Example agents (fictional)"]),
+                                                  ("Cloud", ["Azure"]), ("Languages", ["Python", "Go"])])
+
 
 class RenderTest(IsolatedTestCase):
     def test_bold_italic_and_escaping(self) -> None:
@@ -56,6 +62,11 @@ class RenderTest(IsolatedTestCase):
         self.assertIn("<li><strong>x:</strong> &lt;script&gt;alert(1)&lt;/script&gt;</li>", out)
         self.assertNotIn("<script>", out)
         self.assertEqual(web.render_markdown("2 * 3 * 4"), "<p>2 * 3 * 4</p>")  # spaced stars stay
+
+    def test_sub_bullets(self) -> None:
+        out = web.render_markdown("- **AI**\n  - RAG <x>\n  - Agents\n- Plain\n\n  - after a gap\nText\n  - b")
+        self.assertEqual(out, "<ul><li><strong>AI</strong><ul><li>RAG &lt;x&gt;</li><li>Agents</li></ul></li>"
+                              "<li>Plain</li></ul><ul><li>after a gap</li></ul><p>Text</p><ul><li>b</li></ul>")
 
     def test_markdown_code(self) -> None:
         out = web.render_markdown("Before\n```python\n# a comment, not a heading\n    x = **y** < 2\n- not a list\n```\n"

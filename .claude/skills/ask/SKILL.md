@@ -252,8 +252,9 @@ every tailored CV file with its path.
    text as a version first and replaces `cv.md` atomically. Start a draft:
    `python -m prep.cli cv draft` prints its path (a fresh copy of `cv.md`).
 2. Edit the draft only. Make exactly the change asked for and keep the rest as it is (headings,
-   order, the `- **Theme:** a, b` skills lines that the panel shows as chips; put a new skill on
-   the fitting theme's line).
+   order, the skills groups that the panel shows as chips, either `- **Theme:** a, b` lines or a
+   `- **Theme**` bullet with one indented `  - item` sub-bullet per skill; put a new skill in the
+   fitting theme, in the shape the CV already uses).
    - **Never invent experience.** Add what the user states in their own words; rephrase, reorder
      and cut. A claim the user did not make (years, employers, tools, numbers) is a question, not
      an edit.
