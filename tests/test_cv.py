@@ -179,14 +179,14 @@ class CliTest(CvTestCase):
         code, out, _ = self.run_cli("cv", "show")
         self.assertIn("saved as v3", out)
 
-    def test_save_refuses_a_missing_or_unchanged_draft(self) -> None:
+    def test_save_refuses_a_missing_draft_and_skips_an_unchanged_one(self) -> None:
         code, _, err = self.run_cli("cv", "save", "--note", "x")
         self.assertEqual(code, 2)
         self.assertIn("cv draft", err)
         self.run_cli("cv", "draft")
-        code, _, err = self.run_cli("cv", "save", "--note", "x")
-        self.assertEqual(code, 2)
-        self.assertIn("nothing changed", err)
+        code, out, _ = self.run_cli("cv", "save", "--note", "x")
+        self.assertEqual(code, 0)
+        self.assertIn("No changes, nothing saved", out)
         self.assertEqual(db.cv_versions(self.conn), [])
 
     def test_cv_messages_in_the_thread(self) -> None:
@@ -257,6 +257,19 @@ class PanelTest(WebTestCase):
         self.assertIn('href="/?cv=1" data-open-panel aria-current="true">My CV</a>', body)
         body = self.get("/?cv=1&sel=cv")[2]  # ticked: My CV is what the next message is about
         self.assertIn('<input type="hidden" name="about" value="cv"><span class="about-name">My CV</span>', body)
+
+    def test_only_the_current_version_shows_and_older_ones_fold(self) -> None:
+        self.write(EDITED, "Added Rust")
+        self.write(CV, "Back to <Go>")
+        history = self.panel("/?cv=1")
+        history = history[history.index('id="cv-history"'):]
+        shown, older = history.split('<details class="older-versions">')
+        self.assertIn('<li class="is-current"><span class="mono version-name">v3</span>', shown)
+        self.assertNotIn(">v2<", shown)
+        self.assertIn("<summary>Older versions <span class=\"count\">2</span></summary>", older)
+        self.assertLess(older.index(">v2<"), older.index(">v1<"))  # newest first
+        self.assertIn('aria-label="Restore v1"', older)  # restore still works from the fold
+        self.assertIn("History <span class=\"count\">3</span>", history)
 
     def test_cv_and_job_panels_exclude_each_other(self) -> None:
         body = self.get("/?cv=1&app=1")[2]

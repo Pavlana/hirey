@@ -145,13 +145,16 @@ def restore(conn: sqlite3.Connection, private_dir: Path, version_id: int) -> dic
     return write_cv(conn, private_dir, text, f"Restored v{version_id} ({version['created_at'][:10]})")
 
 
-def save_draft(conn: sqlite3.Connection, private_dir: Path, note: str, path: Path | None = None) -> dict:
+def save_draft(conn: sqlite3.Connection, private_dir: Path, note: str, path: Path | None = None) -> dict | None:
     """Write the agent's edited copy (the draft unless `path`) to cv.md through write_cv; the
-    draft is removed once saved."""
+    draft is removed once saved. None (nothing saved, the draft kept) when it is the same as cv.md."""
     source = path or draft_path(private_dir)
     if not source.is_file():
         raise LookupError(f"no file at {source}; run python -m prep.cli cv draft first")
-    result = write_cv(conn, private_dir, source.read_text(encoding="utf-8"), note)
+    text = source.read_text(encoding="utf-8")
+    if text == read_cv(private_dir):
+        return None
+    result = write_cv(conn, private_dir, text, note)
     if path is None:
         source.unlink()
     return result

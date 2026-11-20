@@ -162,6 +162,7 @@ class CliTest(IsolatedTestCase):
         out = self.run_cli("tailor", "path", str(self.app), "--copy")[1]
         self.assertEqual(out.splitlines()[0], str(self.path(2)))
         self.assertEqual(self.path(2).read_text(encoding="utf-8"), TAILORED)
+        write(self.path(2), TAILORED + "\n- Azure security first.\n")
         out = self.save("--to", str(msg), note="v2: Azure security first.")[1]
         self.assertIn(f"v2 ({self.path(2).name}) for #{self.app}; the note is in the thread as the reply to message {msg}",
                       out)
@@ -172,6 +173,22 @@ class CliTest(IsolatedTestCase):
         code, _, err = self.run_cli("cv", "sent", str(self.app), "CV_Nope_X_010126_1")
         self.assertEqual(code, 2)
         self.assertIn("no tailored CV", err)
+
+    def test_an_unchanged_copy_is_not_saved_as_a_version(self) -> None:
+        self.run_cli("tailor", "path", str(self.app), "--role-short", "Eng")
+        write(self.path(1), TAILORED)
+        self.save()
+        self.run_cli("tailor", "path", str(self.app), "--copy")
+        write(self.path(2), self.path(2).read_text(encoding="utf-8").replace('job = ', 'job  = ', 1))  # front matter only
+        code, out, _ = self.save("--to", "7", note="same text")
+        self.assertEqual(code, 0)
+        self.assertIn(f"No changes, nothing saved: {self.path(2).name} is the same as v1 ({self.path(1).name}). "
+                      "Message 7 is still waiting", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            self.assertEqual([v["version"] for v in db.tailored_versions(conn, self.app)], [1])
+        self.assertTrue(self.path(2).is_file(), "nothing is deleted")
+        write(self.path(2), TAILORED + "\n- one more line\n")
+        self.assertIn("Saved tailored CV v2", self.save()[1])
 
     def test_save_prints_the_word_count_and_warns_when_long(self) -> None:
         self.run_cli("tailor", "path", str(self.app), "--role-short", "Eng")
