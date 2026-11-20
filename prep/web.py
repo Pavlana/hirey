@@ -104,6 +104,7 @@ MESSAGES = {
     "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
     "mock_started": "Mock interview asked for. The assistant's first question shows in the Applications Assistant box.",
     "notes_saved": "Notes saved.",
+    "employer_saved": "Employer kind saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "brief_queued": "Brief queued. The assistant writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
@@ -694,6 +695,17 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     return {"redirect": _here(app_id)}
 
 
+def set_employer_kind(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The panel's employer select: product, client, or "" for unknown (stored as NULL)."""
+    app_id = _app_id(conn, form)
+    kind = form.get("employer_kind") or ""
+    if kind and kind not in db.EMPLOYER_KINDS:
+        raise BadRequest("Pick product, client or unknown.")
+    db.update_application(conn, app_id, employer_kind=kind or None)
+    log.info("employer kind of application %s set to %s from the dashboard", app_id, kind or "unknown")
+    return {"redirect": _here(app_id)}
+
+
 def save_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
     """The Notes card's Save: replace the notes (empty clears them) unless they changed since the form
     was opened (its `stamp`); then the user's text comes back in the editor beside the current notes."""
@@ -968,6 +980,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/stop": (stop_waiting, "/", "stopped"),
     "/applications/notes": (save_notes, "/", "notes_saved"),
+    "/applications/employer": (set_employer_kind, "/", "employer_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
     "/tasks/done": (complete_task, "/", "task_done"),
@@ -1584,6 +1597,7 @@ def home_filters(query: dict[str, list[str]]) -> dict:
         "cv_cmp": int(compare) if cv and compare.isdigit() and not version else None,
         "stage": stage if stage in STAGE_GROUPS else "",
         "closed": first("closed") == "1",
+        "employer": first("employer") if first("employer") in db.EMPLOYER_KINDS else "",
         "score": offer_score(query),
         "loc": tuple(loc for loc in getjo.LOCATIONS if loc in query.get("loc", [])),
         "q": first("q"),
@@ -1642,6 +1656,8 @@ def home_url(f: dict, **changes: object) -> str:
             pairs.append(("stage", s["stage"]))
         if s["closed"]:
             pairs.append(("closed", "1"))
+        if s.get("employer"):
+            pairs.append(("employer", s["employer"]))
     if s["cv"]:
         pairs.append(("cv", "1"))
         if s["cv_v"] is not None:
@@ -2028,6 +2044,38 @@ def list_order(rows: list[dict]) -> list[dict]:
     return sorted(rows, key=key)
 
 
+EMPLOYER_LABELS = {"product": "Product", "client": "Client"}
+EMPLOYER_RANK = {"product": 0, None: 1, "client": 2}  # within a stage: product, unknown, then client
+
+
+def employer_rows(rows: list[dict], f: dict) -> list[dict]:
+    """The pipeline's rows for the employer filter (product, client, or all when unset)."""
+    return [r for r in rows if r["app"]["employer_kind"] == f["employer"]] if f["employer"] else rows
+
+
+def employer_order(rows: list[dict]) -> list[dict]:
+    """Rows already in list_order, regrouped product → unknown → client (a stable sort keeps the order inside)."""
+    return sorted(rows, key=lambda r: EMPLOYER_RANK.get(r["app"]["employer_kind"], 1))
+
+
+def _employer_badge(kind: str | None) -> str:
+    """A small Product / Client label; nothing while unknown."""
+    if kind not in EMPLOYER_LABELS:
+        return ""
+    title = "In-house product work" if kind == "product" else "Client delivery: consultancy or agency"
+    return f'<span class="emp-kind emp-{kind}" title="{title}">{EMPLOYER_LABELS[kind]}</span>'
+
+
+def _employer_filter(f: dict) -> str:
+    """All · Product · Client next to Show closed (links, so they work without the script)."""
+    links = []
+    for kind, label in (("", "All"), ("product", "Product"), ("client", "Client")):
+        on = f["employer"] == kind
+        links.append(f'<a class="seg-btn{" is-active" if on else ""}" href="{h(home_url(f, employer=kind))}" '
+                     f'data-employer="{kind or "all"}"{CURRENT if on else ""}>{label}</a>')
+    return f'<nav class="seg" aria-label="Filter by employer">{"".join(links)}</nav>'
+
+
 def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
               query: dict[str, list[str]]) -> tuple[str, str, str]:
     """The landing page. Left: a switch between the pipeline (grouped by stage, with a stage strip
@@ -2074,7 +2122,8 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     elif not rows:
         body = _empty("No applications yet.", "Mark a job Interested in New offers, or use /applied.")
     else:
-        body = _stage_strip(rows, f) + _app_list(rows, f)
+        mine = employer_rows(rows, f)
+        body = _stage_strip(mine, f) + _app_list(mine, f)
     switch = _view_switch(f, open_count, offers) + (_skipped_toggle(f) if f["view"] == "offers" else "")
     list_card = (f'<section class="card card-pipeline card-list" data-view="{f["view"]}"><header class="card-head">{switch}'
                  f'</header><div class="card-body">{body}</div></section>')
@@ -2209,7 +2258,7 @@ def _stage_strip(rows: list[dict], f: dict) -> str:
         toggle = (f'<a class="view-btn{" is-active" if f["closed"] else ""}" href="{h(href)}" data-closed-toggle>'
                   f'{"Hide closed" if f["closed"] else "Show closed"}</a>')
     return (f'<div class="stage-strip"><nav class="stage-pills" aria-label="Filter by stage">{"".join(pills)}</nav>'
-            f'{toggle}</div>')
+            f'<span class="strip-end">{_employer_filter(f)}{toggle}</span></div>')
 
 
 def _app_list(rows: list[dict], f: dict) -> str:
@@ -2222,7 +2271,7 @@ def _app_list(rows: list[dict], f: dict) -> str:
         shown = [r for r in rows if r["group"] != "closed" or f["closed"]]
     bodies = []
     for status in (*PIPELINE_STAGES, *CLOSED_LANE):
-        mine = list_order([r for r in shown if r["app"]["status"] == status])
+        mine = employer_order(list_order([r for r in shown if r["app"]["status"] == status]))
         if not mine:
             continue
         head = (f'<tr class="group-row"><th colspan="6" scope="rowgroup">{h(_status_label(status).capitalize())}'
@@ -2251,7 +2300,7 @@ def _list_row(r: dict, f: dict) -> str:
         more = f' <span class="count" title="{n} comments">+{n - 1}</span>' if n > 1 else ""
         comment_cell = f'<span class="comment-cell"><span class="ellip" title="{h(body)}">{h(body)}</span>{more}</span>'
     closed = f'<span class="chips">{_job_closed_badge()}</span>' if r["closed"] else ""
-    cells = (_sel_tick(f, key, f'{app["company"]} — {app["role"]}'), f'<a href="{h(href)}">{h(app["company"])}</a>',
+    cells = (_sel_tick(f, key, f'{app["company"]} — {app["role"]}'), f'<a href="{h(href)}">{h(app["company"])}</a>{_employer_badge(app["employer_kind"])}',
              f'<span class="clamp" title="{h(app["role"])}">{h(app["role"])}</span>{closed}', stage, next_cell, comment_cell)
     focus = ' class="is-focus"' if app["id"] == f["app"] else ""
     return (f'<tr id="app-{h(app["id"])}" data-href="{h(href)}" data-app="{h(app["id"])}" data-key="{h(key)}"{focus}>'
@@ -2284,11 +2333,11 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
     return (
         f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}" '
         f'data-status="{h(app["status"])}"{busy}>'
-        f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
+        f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}{_employer_badge(app["employer_kind"])}</h2>'
         f'<p class="panel-role">{h(app["role"])}</p>'
         f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
         f'{_job_closed_badge() if r["closed"] else ""}'
-        f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
+        f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p>{_employer_select(app, here)}</div>'
         f'<span class="panel-head-actions">{tick}<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
         'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
@@ -2303,6 +2352,18 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         + _history(conn, app["id"])
         + "</div></aside>"
     )
+
+
+def _employer_select(app: dict, here: str) -> str:
+    """Product / Client / Unknown for the application, saved on change (a Save button without the script)."""
+    current = app["employer_kind"] or ""
+    options = "".join(f'<option value="{v}"{" selected" if v == current else ""}>{label}</option>'
+                      for v, label in (("product", "Product"), ("client", "Client"), ("", "Unknown")))
+    return ('<form method="post" action="/applications/employer" class="inline employer-form" data-ajax="refresh">'
+            f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+            '<label class="muted" for="employer-kind">Employer</label> '
+            f'<select id="employer-kind" name="employer_kind" data-autosubmit>{options}</select>'
+            '<noscript>' + _button("Save", "ghost", "sm") + '</noscript></form>')
 
 
 def _comments_section(conn: sqlite3.Connection, app_id: int) -> str:

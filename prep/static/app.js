@@ -1122,6 +1122,12 @@
     }
   });
 
+  // A select marked data-autosubmit (the panel's Employer) saves on change.
+  document.addEventListener("change", (e) => {
+    const select = e.target.closest?.("select[data-autosubmit]");
+    if (select?.form) select.form.requestSubmit();
+  });
+
   document.addEventListener("submit", async (e) => {
     const form = e.target.closest("form[data-ajax]");
     if (!form || !window.fetch) return;

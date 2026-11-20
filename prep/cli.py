@@ -106,6 +106,8 @@ def parse_day(value: str) -> str:
 
 def _app_line(app: dict) -> str:
     line = f"#{app['id']} {app['company']} — {app['role']} [{db.status_label(app['status'])}]"
+    if app.get("employer_kind"):
+        line += f" ({app['employer_kind']})"
     if app.get("next_action"):
         line += f" next: {app['next_action']}"
         if app.get("next_action_date"):
@@ -332,6 +334,8 @@ def cmd_update(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         "pay": args.pay,
     }
     fields = {k: v for k, v in fields.items() if v is not None}
+    if args.employer_kind:
+        fields["employer_kind"] = None if args.employer_kind == "unknown" else args.employer_kind
     if not (fields or args.status or args.next_action):
         raise SystemExit("error: nothing to update")
     if db.get_application(conn, args.app_id) is None:
@@ -1984,6 +1988,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--next-date", type=parse_day, help="due date of the --next-action task")
     p.add_argument("--last-contact", type=parse_day)
     p.add_argument("--tier", choices=db.TIERS)
+    p.add_argument("--employer-kind", choices=(*db.EMPLOYER_KINDS, "unknown"),
+                   help="product (in-house product work) or client (consultancy, agency, client delivery); "
+                        "unknown clears it")
     p.add_argument("--puzzle-round", choices=db.PUZZLE_ROUND)
     p.add_argument("--contact")
     p.add_argument("--notes")

@@ -24,6 +24,8 @@ APPLICATION_STATUSES = (
 # pulling out of a live process.
 CLOSED_STATUSES = ("offer", "rejected", "withdrawn", "no_response", "skipped")
 TIERS = ("A", "B", "C")
+# applications.employer_kind: in-house product work or client delivery (consultancy, agency); NULL = unknown.
+EMPLOYER_KINDS = ("product", "client")
 APPLICATION_TYPES = ("contract", "permanent")
 PUZZLE_ROUND = ("yes", "no", "unknown")
 TASK_KINDS = ("apply", "prep", "drill", "admin")
@@ -485,7 +487,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # notes_updated_at: when notes last changed (any writer), with microseconds; the panel's Notes form
     # carries it so a save over an addition made meanwhile is refused. NULL until the first change.
     "applications": {"cv_sent": "TEXT", "cv_sent_version": "INTEGER", "cv_sent_at": "TEXT", "role_short": "TEXT",
-                     "notes_updated_at": "TEXT"},
+                     "notes_updated_at": "TEXT", "employer_kind": "TEXT"},
     # A message about a getjo job not yet tracked (an offer panel's "About" tick); the agent's reply
     # carries it too. Interested moves these messages to the new application and keeps the id.
     # topic: "cv" for a message about the master CV (no application or job); the reply carries it.
@@ -507,7 +509,7 @@ MIGRATIONS: dict[str, dict[str, str]] = {
 APPLICATION_FIELDS = (
     "getjo_job_id", "company", "role", "link", "tier", "type", "source", "date_applied",
     "status", "last_contact", "next_action", "next_action_date", "puzzle_round", "pay",
-    "contact", "notes", "role_short",
+    "contact", "notes", "role_short", "employer_kind",
 )
 
 
@@ -631,6 +633,7 @@ def _validate_application(fields: dict) -> None:
         raise ValueError(f"unknown application fields: {', '.join(sorted(unknown))}")
     _check("status", fields.get("status"), APPLICATION_STATUSES)
     _check("tier", fields.get("tier"), TIERS)
+    _check("employer_kind", fields.get("employer_kind"), EMPLOYER_KINDS)
     _check("type", fields.get("type"), APPLICATION_TYPES)
     _check("puzzle_round", fields.get("puzzle_round"), PUZZLE_ROUND)
     for name in ("date_applied", "last_contact", "next_action_date"):
@@ -2153,11 +2156,11 @@ def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
 
 def board_applications(conn: sqlite3.Connection) -> list[dict]:
     """Every application for the Applications page, oldest first: id, company, role, link,
-    tier, status, date_applied, getjo_job_id, the tailored CV sent (file name, version and time) and since (the day of its last stage
+    tier, status, date_applied, getjo_job_id, employer_kind, the tailored CV sent (file name, version and time) and since (the day of its last stage
     change, as last_change_day). Never pay."""
     rows = conn.execute(
         """
-        SELECT a.id, a.company, a.role, a.link, a.tier, a.status, a.date_applied, a.getjo_job_id,
+        SELECT a.id, a.company, a.role, a.link, a.tier, a.status, a.date_applied, a.getjo_job_id, a.employer_kind,
                a.cv_sent, a.cv_sent_version, a.cv_sent_at,
                substr(COALESCE((SELECT MAX(changed_at) FROM status_history WHERE application_id = a.id),
                                a.date_applied, a.created_at), 1, 10) AS since
