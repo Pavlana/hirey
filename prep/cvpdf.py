@@ -1,9 +1,9 @@
 """A CV (Markdown: cv.md or a tailored copy) as a PDF: Markdown -> HTML (prep/md.py, `cv_layout` and the
 committed template prep/cv_template.html, standard library) -> PDF (WeasyPrint, the one third-party library).
 
-The layout: the name large on two lines, then the title line and a focus line, then the contact block
-(shown top right); below, a narrow column (summary, skills, education...) and a wide one (experience,
-projects...). The CV's words are kept as written, only grouped: no heading is renamed.
+The layout: a header with the name on two lines, the title line and a focus line on the left, and the
+summary with the contact line under it on the right; below, a narrow column (skills, education...)
+and a wide one (experience, projects...). The CV's words are kept as written, only grouped: no heading is renamed.
 
 The PDF goes next to the Markdown file, same name with .pdf. WeasyPrint is imported only here and
 only when a PDF is made, so the rest of the app runs without it. When this interpreter cannot load it
@@ -55,7 +55,9 @@ def cv_title(body: str, fallback: str) -> str:
 
 
 # "## " sections that go in the narrow column (matched by a word in the heading); the rest go in the wide one
-SIDE_WORDS = ("summary", "profile", "about", "skills", "expertise", "tools", "education", "training",
+# the first narrow-column section named like this is shown in the header, top right
+SUMMARY_WORDS = ("summary", "profile", "about")
+SIDE_WORDS = SUMMARY_WORDS + ("skills", "expertise", "tools", "education", "training",
               "courses", "certification", "languages", "awards", "interests")
 # a header item that is contact detail: a label, an email, a link or a phone number (or a _LOCATION)
 _LABEL = re.compile(r"^(location|address|mobile|phone|tel|email|e-mail|linkedin|github|web|website)\s*:", re.I)
@@ -79,11 +81,12 @@ def _contact_rank(item: str) -> int:
     return next((n for n, rx in enumerate(_CONTACT_ORDER) if rx.search(item)), len(_CONTACT_ORDER))
 
 
-def masthead(name_line: str, lines: list[str]) -> str:
-    """The header: the name (first word, then the rest, on two lines), the title line, the focus line
-    ("A • B • C"), any longer sentence, then the contact block. `lines` are the Markdown lines between
-    "# Name" and the first "## " section; their " · "-separated items are sorted into those parts. A
-    role after " — " in the name line is the title."""
+def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
+    """The header: on the left the name (first word, then the rest, on two lines), the title line, the
+    focus line ("A • B • C") and any longer sentence; on the right `summary` (the summary section's
+    HTML, if any) and under it the contact line. `lines` are the Markdown lines between "# Name" and
+    the first "## " section; their " · "-separated items are sorted into those parts. A role after
+    " — " in the name line is the title. Reading order: name, title, focus, summary, contact."""
     name, _, role = name_line.lstrip("#").strip().partition(" — ")
     items = [i.strip() for line in lines for i in line.split(" · ") if i.strip()]
     contact = sorted((i for i in items if _LABEL.search(i) or _CONTACT.search(i) or _LOCATION.match(i)),
@@ -94,16 +97,18 @@ def masthead(name_line: str, lines: list[str]) -> str:
     title = role.strip() or (rest.pop(0) if rest else "")
     focus = [f.strip() for i in rest for f in i.split(",") if f.strip()]
     first, _, last = name.partition(" ")
-    out = ['<header class="mast">',
+    out = ['<header class="mast"><div class="who">',
            f'<h2 class="name"><span>{render_inline(first)}</span> <span>{render_inline(last)}</span></h2>']
     if title:
         out.append(f'<p class="title">{render_inline(title)}</p>')
     if focus:
         out.append('<p class="focus">' + " • ".join(render_inline(f) for f in focus) + "</p>")
     out += [f'<p class="note">{render_inline(n, links=True)}</p>' for n in notes]
-    if contact:  # after the title lines in reading order; the template's grid shows it top right
-        out.append('<p class="contact">' + "<br>".join(render_inline(c, links=True) for c in contact) + "</p>")
-    out.append("</header>")
+    out.append('</div><div class="about">' + summary)
+    if contact:
+        out.append('<p class="contact">' + '<span class="sep"> · </span>'.join(
+            f"<span>{render_inline(c, links=True)}</span>" for c in contact) + "</p>")
+    out.append("</div></header>")
     return "".join(out)
 
 
@@ -134,22 +139,27 @@ def _roles(section: str) -> str:
 
 
 def cv_layout(body: str) -> str:
-    """The CV's Markdown (no front matter) as the page's HTML: the header, then the sections in two
-    columns. A CV without a "# Name" heading is rendered as it is, in one column."""
+    """The CV's Markdown (no front matter) as the page's HTML: the header (with the summary section),
+    then the other sections in two columns. A CV without a "# Name" heading is rendered as it is, in
+    one column."""
     lines = body.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("# ")), None)
     if start is None:
         return render_markdown(body, empty="", links=True)
     end = next((i for i, line in enumerate(lines) if line.startswith("## ")), len(lines))
     before = render_markdown("\n".join(lines[:start]), empty="", links=True)
-    head = masthead(lines[start], [line for line in lines[start + 1:end] if line.strip()])
-    side, main = [], []
+    summary, side, main = "", [], []
     for part in re.split(r"(?=<h3>)", render_markdown("\n".join(lines[end:]), empty="", links=True)):
         if not part:
             continue
-        heading = re.match(r"<h3>(.*?)</h3>", part)
-        to_side = heading is not None and any(w in heading.group(1).lower() for w in SIDE_WORDS)
+        found = re.match(r"<h3>(.*?)</h3>", part)
+        heading = found.group(1).lower() if found else ""
+        if not summary and any(w in heading for w in SUMMARY_WORDS):
+            summary = f'<section class="summary">{part}</section>'
+            continue
+        to_side = any(w in heading for w in SIDE_WORDS)
         (side if to_side else main).append(f'<section class="block">{_roles(part)}</section>')
+    head = masthead(lines[start], [line for line in lines[start + 1:end] if line.strip()], summary)
     return (before + head + '<div class="cols"><div class="side">' + "".join(side)
             + '</div><div class="main">' + "".join(main) + "</div></div>")
 

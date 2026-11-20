@@ -30,7 +30,9 @@ ROLE = ("### Senior Engineer · Example Widgets {n} (fictional) · Jan 2010 – 
 LONG_CV = ("# Sam Sample\n\nEngineer · Python, Go · Leeds, UK\nsam@example.com · github.com/sam-sample\n\n"
            "## Summary\n\n" + "Engineer who builds example platforms for many teams and runs them in production. " * 7
            + "\n\n## Skills\n\n"
-           + "".join(f"- **Area {i}:** Python, Go, Terraform, Kubernetes, Azure, AWS, GitHub Actions\n" for i in range(6))
+           + "".join(f"- **Area {i}**\n" + "".join(f"  - {s}\n" for s in ("Python", "Go", "Terraform", "Kubernetes",
+                                                                         "Azure", "AWS", "GitHub Actions"))
+                     for i in range(6))
            + "\n## Education\n\n**BSc Examples:** University of Example (fictional), 2009\n\n## Experience\n\n"
            + "".join(ROLE.format(n=n) for n in range(7)) + "Example extra words.\n")
 
@@ -96,7 +98,9 @@ Engineer who builds example platforms.
 
 ## Skills
 
-- **Languages:** Python, Go
+- **Languages**
+  - Python
+  - Go
 
 ## Education & Training
 
@@ -110,20 +114,30 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<h2 class="name"><span>Sam</span> <span>Sample</span></h2>', page)
         self.assertIn('<p class="title">Platform Engineer</p>', page)
         self.assertIn('<p class="focus">Python • Kubernetes</p>', page)
-        self.assertIn('<p class="contact">Leeds, UK<br>Mobile: +44 7700 900456<br>Email: sam@example.com<br>'
-                      "GitHub: github.com/sam-sample</p>", page, "location, mobile, email, LinkedIn, GitHub")
-        order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="contact"',
-                                         'class="side"', 'class="main"')]
-        self.assertEqual(order, sorted(order), "the contact block comes after the title lines, before the columns")
+        sep = '<span class="sep"> · </span>'
+        self.assertIn(f'<p class="contact"><span>Leeds, UK</span>{sep}<span>Mobile: +44 7700 900456</span>{sep}'
+                      f"<span>Email: sam@example.com</span>{sep}<span>GitHub: github.com/sam-sample</span></p>", page,
+                      "location, mobile, email, LinkedIn, GitHub")
+        self.assertIn('<div class="about"><section class="summary"><h3>Summary</h3>'
+                      "<p>Engineer who builds example platforms.</p></section>", page, "the summary, top right")
+        order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="summary"',
+                                         'class="contact"', 'class="side"', 'class="main"')]
+        self.assertEqual(order, sorted(order), "name, title lines, summary, contact, then the columns")
 
     def test_sections_split_into_two_columns(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
-        side, main = page.split('<div class="main">')
-        for heading in ("Summary", "Skills", "Education &amp; Training"):
+        head, cols = page.split('<div class="cols">')
+        side, main = cols.split('<div class="main">')
+        self.assertIn("<h3>Summary</h3>", head)
+        for heading in ("Skills", "Education &amp; Training"):
             self.assertIn(f"<h3>{heading}</h3>", side)
         for heading in ("Experience", "Projects"):
             self.assertIn(f"<h3>{heading}</h3>", main)
-        self.assertEqual(page.count('<section class="block">'), 5)
+        self.assertEqual(page.count('<section class="block">'), 4)
+        self.assertIn("<h3>Skills</h3><ul><li><strong>Languages</strong><ul><li>Python</li><li>Go</li></ul></li></ul>",
+                      side, "a skills group: its name, then one item per bullet")
+        no_summary = cvpdf.cv_layout(HEADED_CV.replace("## Summary", "## Interests"))
+        self.assertIn('<div class="about"><p class="contact">', no_summary, "no summary: the contact line alone")
 
     def test_role_lines(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)

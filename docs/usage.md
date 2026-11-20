@@ -275,8 +275,8 @@ asked for in the Applications Assistant box and saved as the next version. Telli
 ### PDF of a tailored CV
 
 Every saved version also gets a PDF beside it, `CV_<Company>_<RoleShort>_<DDMMYY>_<n>.pdf`, made
-from one committed template (`prep/cv_template.html`): A4, the name large in deep pine with the
-contact block top right, then a narrow column (summary, skills, education…) beside a wide one
+from one committed template (`prep/cv_template.html`): A4, the name in deep pine with the
+summary and contact line beside it, then a narrow column (skills, education…) beside a wide one
 (experience, projects), real selectable text in a system font with no tables or images. Contact
 details come from the lines under `# Name` (for example `Mobile: … · Email: … · LinkedIn: …`). A
 normal CV fits two pages; the page count is printed and a longer one gets a warning. The
@@ -351,7 +351,8 @@ already being written still arrives, marked "after cancel".
 
 **My CV** in the Applications header opens the master CV (`private_dir/cv.md`) in the side panel
 (`/?cv=1`; Esc and ✕ close it like a job panel): the skills as chips grouped by theme (one group
-per `- **Theme:** a, b; c` line of the Skills section), the CV itself, and its **History**: every
+per `- **Theme:** a, b; c` line of the Skills section, or per `- **Theme**` bullet with its items as
+indented `  - item` sub-bullets), the CV itself, and its **History**: every
 saved version with its date and a one-line note of what changed, each with **Open**, **Compare**
 (a line diff against the current CV) and **Restore**. Restore keeps the text it replaces as a
 version, so the toast's **Undo** brings it back.

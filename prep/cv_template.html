@@ -7,8 +7,8 @@
   A CV as a PDF (prep/cvpdf.py fills in the title and the body: cvpdf.cv_layout's escaped HTML, a
   header, then a narrow and a wide column). Real text in a system sans (Helvetica Neue, Arial
   fallback; no font file), selectable, ligatures off, no tables, images, headers or footers. The
-  reading order is the HTML order: name, title, focus, contact, narrow column, wide column. Black on
-  white; deep pine (#233421, 13.9:1 on white) on the name, the section headings and their rules. A4.
+  reading order is the HTML order: name, title, focus, summary, contact, narrow column, wide
+  column. Black on white; deep pine (#233421, 13.9:1 on white) on the name, the section headings and their rules. A4.
 -->
 <style>
 :root { --pine: #233421; --ink: #111; --text: #1e1e1e; --grey: #6b6b6b; }
@@ -22,25 +22,27 @@ html {
   font-kerning: normal;
 }
 body { margin: 0; }
-/* the header: name, title, focus, contact in reading order; the grid puts the contact top right */
-.mast { margin: 0 0 12pt 0; display: grid; grid-template-columns: 1fr auto; }
-.mast > * { grid-column: 1; }
+/* the header: name, title, focus on the left; the summary and the contact line under it on the right,
+   lined up with the wide column below */
+.mast { margin: 0 0 12pt 0; display: grid; grid-template-columns: 37% 63%; }
 .name {
-  grid-row: 1;
   color: var(--pine);
   font-weight: 700;
-  font-size: 42pt;
-  line-height: 0.86;
-  letter-spacing: -0.05em;
+  font-size: 34pt;
+  line-height: 0.88;
+  letter-spacing: -0.04em;
   text-transform: uppercase;
   margin: 0;
-  padding-top: 4pt;
+  padding-top: 2pt;
 }
 .name span { display: block; }
-.contact { grid-column: 2; grid-row: 1; align-self: end; white-space: nowrap; margin: 0 0 1pt 0; font-size: 9pt; line-height: 1.35; }
 .title, .focus { margin: 1pt 0 0 0; text-transform: uppercase; color: var(--ink); }
 .title { margin-top: 7pt; }
 .focus { word-spacing: 1.5pt; }
+.summary p { margin: 0 0 3pt 0; }
+.contact { margin: 4pt 0 0 0; font-size: 9pt; color: var(--ink); }
+.contact span { white-space: nowrap; }
+.contact .sep { color: var(--grey); }
 .note { margin: 3pt 0 0 0; color: var(--grey); }
 /* two columns: the narrow one floats left, the wide one runs beside it and on past it */
 .side { float: left; width: 33%; }
@@ -73,6 +75,10 @@ ul { margin: 1pt 0 4pt 0; padding-left: 0; list-style: none; }
 li { margin: 0 0 1pt 0; padding-left: 9pt; text-indent: -9pt; break-inside: avoid; }
 .main li::before { content: "•\2002"; }
 .side li { padding-left: 0; text-indent: 0; margin-bottom: 2pt; }
+/* a skills group: its name, then one item per bullet in two tight columns */
+.side li > ul { columns: 2; column-gap: 6pt; margin: 1pt 0 3pt 0; }
+.side li li { margin: 0; line-height: 1.22; padding-left: 7pt; text-indent: -7pt; break-inside: avoid; }
+.side li li::before { content: "•\2002"; color: var(--grey); }
 p:has(+ ul) { break-after: avoid; }
 strong { font-weight: 700; color: var(--ink); }
 a { color: var(--text); text-decoration: none; }

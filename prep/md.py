@@ -39,15 +39,20 @@ def render_inline(text: str, links: bool = False) -> str:
     return _inline(text, links)
 
 
+def _item(text: str, sub: list[str], links: bool) -> str:
+    inner = "<ul>" + "".join(f"<li>{_inline(i, links)}</li>" for i in sub) + "</ul>" if sub else ""
+    return f"<li>{_inline(text, links)}{inner}</li>"
+
+
 def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', links: bool = False,
                     breaks: bool = False) -> str:
-    """Headings, bullet lists, paragraphs, ``` fenced code blocks, `code`, **bold** and *italic*; with
-    `links`, also [text](url) links
+    """Headings, bullet lists (with one level of sub-bullets, indented under a bullet), paragraphs, ```
+    fenced code blocks, `code`, **bold** and *italic*; with `links`, also [text](url) links
     (the dashboard leaves them as text). With `breaks`, a line break inside a paragraph stays one
     (<br>; typed notes) instead of joining the lines. `empty` is the HTML for a text with nothing in it."""
     out: list[str] = []
     para: list[str] = []
-    items: list[str] = []
+    items: list[tuple[str, list[str]]] = []  # each bullet with its indented sub-bullets
 
     def flush() -> None:
         if para:
@@ -55,7 +60,7 @@ def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', li
             out.append(f"<p>{body}</p>")
             para.clear()
         if items:
-            out.append("<ul>" + "".join(f"<li>{_inline(i, links)}</li>" for i in items) + "</ul>")
+            out.append("<ul>" + "".join(_item(i, sub, links) for i, sub in items) + "</ul>")
             items.clear()
 
     code: list[str] | None = None  # the lines of an open ``` block
@@ -79,7 +84,10 @@ def render_markdown(text: str, empty: str = '<p class="muted">No notes.</p>', li
         elif stripped[:2] in ("- ", "* "):
             if para:
                 flush()
-            items.append(stripped[2:].strip())
+            if items and line[:2] in ("  ", "\t"):  # indented under the bullet above: a sub-bullet
+                items[-1][1].append(stripped[2:].strip())
+            else:
+                items.append((stripped[2:].strip(), []))
         else:
             if items:
                 flush()
