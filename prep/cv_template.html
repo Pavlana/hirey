@@ -29,7 +29,7 @@ body { margin: 0; }
 .name {
   color: var(--name);
   font-weight: 700;
-  font-size: 34pt;
+  font-size: 32pt;
   line-height: 0.88;
   letter-spacing: -0.04em;
   text-transform: uppercase;
@@ -40,12 +40,14 @@ body { margin: 0; }
 .title, .focus { margin: 1pt 0 0 0; text-transform: uppercase; color: var(--ink); }
 .title { margin-top: 7pt; font-weight: 700; }
 .focus { word-spacing: 1.5pt; }
-.summary { padding-top: 3pt; }
+/* the summary starts level with the title line: the name's two lines (2 x 32pt x 0.88), its
+   2pt padding and the title's 7pt margin */
+.summary { padding-top: 65.3pt; }
 .summary p { margin: 0 0 3pt 0; }
 /* a summary written as list items: no bullet mark, each line starts with its bold lead-in; a
    wrapped line is indented under it */
 .summary ul { margin: 0; }
-.summary li { margin: 0 0 2pt 0; padding-left: 8pt; text-indent: -8pt; }
+.summary li { font-size: 9pt; margin: 0 0 2pt 0; padding-left: 8pt; text-indent: -8pt; }
 .contact { margin: 5pt 0 0 0; font-size: 9pt; line-height: 1.3; color: var(--ink); white-space: nowrap; }
 .note { margin: 3pt 0 0 0; color: var(--grey); }
 /* two columns: the narrow one floats left, the wide one runs beside it and on past it */
@@ -71,6 +73,8 @@ p { margin: 0 0 4pt 0; orphans: 2; widows: 2; }
 .role { margin: 6pt 0 0 0; break-after: avoid; }
 h3 + .role { margin-top: 0; }
 .role strong { text-transform: uppercase; color: var(--ink); }
+/* a job or project title (a role with a company line) in the name's pink; breaks stay black */
+.job strong { color: var(--name); }
 .when { white-space: nowrap; margin-left: 6pt; font-style: italic; text-transform: uppercase; color: var(--grey); }
 .side .when { display: block; margin: 1pt 0 0 0; }
 .org { font-weight: 700; color: #3a3a3a; margin: 0 0 1pt 0; break-after: avoid; }

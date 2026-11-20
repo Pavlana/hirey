@@ -115,7 +115,8 @@ def masthead(name_line: str, lines: list[str], summary: str = "") -> str:
 def _role(title: str, when: str, org: str) -> str:
     when_html = f' <span class="when">{when.replace(", ", " / ")}</span>' if when else ""
     org_html = f'<p class="org">{org}</p>' if org else ""
-    return f'<p class="role"><strong>{title}</strong>{when_html}</p>{org_html}'
+    kind = "role job" if org else "role"  # a job or project (it has a company line), not a break
+    return f'<p class="{kind}"><strong>{title}</strong>{when_html}</p>{org_html}'
 
 
 def _role_heading(match: re.Match) -> str:
