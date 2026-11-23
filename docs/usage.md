@@ -156,7 +156,9 @@ charts are server-rendered SVG):
     applications sent from them.
 - **Learn** (`/learn`; the nav shows the number of cards to do): "X done · Y to do" and the next
   interview (company, stage, day) under the title, then one tile per track: a cover colour with a
-  progress ring, the title, chapters and cards, and "X done / Y". A track opens its first card to
+  progress ring, the title, chapters and cards, and "X done / Y". Under the tracks, the **Learn
+  Assistant** box for general messages, not about one card (for example "start a mock recruiter
+  call"). A track opens its first card to
   do (`?track=SLUG`; any card is `?card=ID`). The card view keeps the tracks above it as a compact
   row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Learn Assistant** on the
   left, the card on the right, with the same divider as Applications (its
@@ -397,7 +399,9 @@ they arrive:
 ### Learn Assistant box
 
 The Learn page's **Learn Assistant** box is a study partner for the open card: one conversation for all of
-Learn, each message tagged with the card that was open (a link back to it). Typical messages:
+Learn, each message tagged with the card that was open (a link back to it). The same box sits under the
+tracks on the Learn overview; a message sent there is general (tagged "general", no card), and its reply
+shows in the same conversation. Typical messages:
 
 - A question about the card ("explain this more simply", "give me an example"). The agent answers in
   plain English from the card, its **Learn** sources (it may open those links) and general knowledge,
@@ -429,7 +433,8 @@ with ids only: `/learn-ask <card id> <message id>`. Without one the message wait
 hook and `/today` report it, and `/learn-ask` answers it in any Claude Code session. Learn messages
 never show in the Applications Assistant box.
 
-Resend and Cancel work here as in the Applications Assistant box.
+Resend and Cancel work here as in the Applications Assistant box. While a message waits, **Stop** on the
+waiting line cancels every waiting Learn message (never an Applications one), on the overview and in a card.
 
 ### Learn Assistant (optional)
 

@@ -123,6 +123,7 @@ MESSAGES = {
     "cancel_late": "It was no longer waiting: answered or cancelled meanwhile.",
     "stopped": "Stopped. Waiting messages and this job's queued work are cancelled; ask or queue them again any time.",
     "learn_resent": "Sent to the Learn Assistant again.",
+    "learn_stopped": "Stopped. Waiting Learn Assistant messages are cancelled; ask again any time.",
     "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
 }
 
@@ -947,6 +948,15 @@ def cancel_learn_message(settings: Settings, conn: sqlite3.Connection, form: dic
     return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
 
 
+def stop_learn(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Stop, on the Learn Assistant box's waiting line: every Learn message still waiting is cancelled
+    (never an Applications one); rows are kept, marked cancelled. Nothing is sent to the assistant."""
+    card_id, back = _learn_back(conn, form)
+    msgs = db.cancel_waiting_messages(conn, learn=True)
+    log.info("learn stop: %d message(s) cancelled", len(msgs))
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+
+
 def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
     """GET /learn/thread?card=ID for polling: whether a Learn Assistant message is still waiting, the
     message count (a reply arrived) and the conversation's HTML (the open card marked)."""
@@ -995,6 +1005,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/learn/add-note": (add_reply_to_notes, "/learn", "learn_note_added"),
     "/learn/resend": (resend_learn_message, "/learn", "learn_resent"),
     "/learn/cancel": (cancel_learn_message, "/learn", "learn_cancelled"),
+    "/learn/stop": (stop_learn, "/learn", "learn_stopped"),
 }
 
 
@@ -1230,7 +1241,8 @@ def boards_table(settings: Settings, apps: list[dict]) -> str:
 
 
 # --- Learn ------------------------------------------------------------------------------------
-# /learn: the tracks grid. /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
+# /learn: the tracks grid and, under it, the Learn Assistant box for general messages (no card).
+# /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
 # Notes (this card's note, or with &notes=all the general notebook: prep/learnnotes.py) and the Prep
 # agent (the Learn conversation with the Learn Assistant) on the left, a divider, and the card on the right.
 
@@ -1254,7 +1266,9 @@ def learn_page(settings: Settings, conn: sqlite3.Connection, today: str,
     count = learn.counts(conn)
     subtitle = f"{count['done']} done · {count['todo']} to do · {_next_interview(conn, today)}"
     if card_id is None:
-        return "Learn", subtitle, _tracks_grid(learn.list_tracks(conn), bool(raw_track))
+        return "Learn", subtitle, (_tracks_grid(learn.list_tracks(conn), bool(raw_track))
+                                   + _card("Learn Assistant", _learn_agent(conn, settings, None),
+                                           cls="learn-agent learn-general"))
     try:
         card = learn.get_card(conn, card_id)
     except LookupError as e:
@@ -1405,15 +1419,23 @@ def _check_form(card_id: int) -> str:
 LEARN_MESSAGES = 60  # the latest Learn Assistant messages shown
 
 
-def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int) -> str:
-    """The Learn Assistant box: the Learn conversation and a message form that carries the open card."""
-    return (f'<div class="learn-chat" id="learn-chat" data-card="{h(card_id)}">{_learn_thread(conn, settings, card_id)}'
-            '<form method="post" action="/learn/message" class="ask" data-ajax="learn">'
-            f'<input type="hidden" name="card_id" value="{h(card_id)}">'
-            f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
-            'placeholder="Ask about this card, \u201cquiz me on chapter 2\u201d, or \u201cexplain it more simply\u201d…" '
+def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int | None) -> str:
+    """The Learn Assistant box: the Learn conversation and a message form that carries the open card;
+    with no card (the tracks overview) the message is general."""
+    if card_id is None:
+        hidden, ask = "", ("Ask anything about prep: \u201cstart a mock recruiter call\u201d, "
+                           "\u201cquiz me on system design\u201d…")
+        foot = "A general message, not about one card. The Learn Assistant replies here."
+    else:
+        hidden = f'<input type="hidden" name="card_id" value="{h(card_id)}">'
+        ask = "Ask about this card, \u201cquiz me on chapter 2\u201d, or \u201cexplain it more simply\u201d…"
+        foot = "Sent with this card. The Learn Assistant replies here."
+    return (f'<div class="learn-chat" id="learn-chat" data-card="{h(card_id or "")}">'
+            f'{_learn_thread(conn, settings, card_id)}'
+            f'<form method="post" action="/learn/message" class="ask" data-ajax="learn">{hidden}'
+            f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required placeholder="{h(ask)}" '
             'aria-label="Message to the Learn Assistant"></textarea>'
-            '<div class="ask-foot"><span class="muted">Sent with this card. The Learn Assistant replies here.</span>'
+            f'<div class="ask-foot"><span class="muted">{h(foot)}</span>'
             + _button("Send", size="sm") + "</div></form></div>")
 
 
@@ -1470,15 +1492,19 @@ def _learn_thread(conn: sqlite3.Connection, settings: Settings, card_id: int | N
         f'<div class="msg-body">{_linkify(m["body"])}</div>{actions(m)}</li>'
         for m in messages)
     pending = bool(db.pending_messages(conn, topic=db.LEARN))
+    stop = ('<form method="post" action="/learn/stop" class="inline thread-stop" data-ajax="learn">'
+            f'{back}<button class="btn btn-secondary btn-sm" title="Stop waiting: cancel the waiting messages">'
+            'Stop</button></form>')
     if not messages:
-        state = ('<p class="muted thread-empty">No messages yet. Ask about this card, or say '
-                 '\u201cquiz me on chapter 1\u201d.</p>')
+        state = ('<p class="muted thread-empty">No messages yet. '
+                 + ("Ask about this card, or say " if card_id is not None else "Ask anything, or say ")
+                 + '\u201cquiz me on chapter 1\u201d.</p>')
     elif pending and settings.prep_assistant_task:
-        state = ('<p class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 "Learn Assistant is working…</p>")
+        state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
+                 f"<span>Learn Assistant is working…</span>{stop}</div>")
     elif pending:
-        state = ('<p class="thread-state" role="status">Waiting for the Learn Assistant: run /learn-ask in a Claude Code '
-                 "session (no Learn Assistant task is set).</p>")
+        state = ('<div class="thread-state" role="status"><span>Waiting for the Learn Assistant: run /learn-ask in a '
+                 f"Claude Code session (no Learn Assistant task is set).</span>{stop}</div>")
     else:
         state = ""
     return (f'<div class="thread" data-learn-thread{" data-pending" if pending else ""}>'
