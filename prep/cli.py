@@ -1021,7 +1021,8 @@ def _print_eval_step(conn: sqlite3.Connection, settings: Settings, private_dir: 
     print(f"  master CV fit: {fit['score']}/5 ({fit['file_path']})" if fit else "  master CV fit: none yet")
     print(f"  file: {cveval.eval_file(version)}")
     print("  rubric (the AI check section of the /research skill): grounding of every changed or added claim,")
-    print("    the CV fit rubric on this version, and the six-second skim of the top third of page one.")
+    print("    the CV fit rubric on this version, the six-second skim of the top third of page one, and the")
+    print("    editorial pass (redundant, repeated or off-style wording; a look each, never a block).")
     print(f"  then: python -m prep.cli tailor eval {app['id']}")
     if job:
         _print_job_description(settings, app)
@@ -2193,7 +2194,7 @@ def build_parser() -> argparse.ArgumentParser:
     t = tsub.add_parser("pdf", help="make the PDF next to a version's file (same name, .pdf) and check it again; needs WeasyPrint")
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest version")
-    t = tsub.add_parser("eval", help="store the AI check (grounding, fit, skim) of a version from its .eval.md file")
+    t = tsub.add_parser("eval", help="store the AI check (grounding, fit, skim, editorial) of a version from its .eval.md file")
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest")
     t.add_argument("--file", help="default: the version's file with .eval.md")

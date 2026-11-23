@@ -402,17 +402,22 @@
    subagent, a separate pass from the one that wrote the CV. The agent writes
    `cv-tailored/<version file stem>.eval.md` (TOML front matter: `version`, `fit_score` and
    `skim_score` 1-5, `skim_why`, `[[claims]]` with `quote`, `source` cv.md / facts / style / none
-   and `note`, `[[must_haves]]` with `term` and `covered`; rubric in the skill) and runs
+   and `note`, `[[must_haves]]` with `term` and `covered`, `[[editorial]]` with `quote`, `issue` and
+   `suggestion`; rubric in the skill) and runs
    `tailor eval APP [--version N] [--file PATH]`. `cveval.read_eval` validates it and
    `cveval.findings` maps it with fixed rules, source "ai": a claim with source `none` blocks (its
    line found in the version by the quoted words, so model line numbers are never trusted; `save`
    refuses the file when such a quote is not in the version, since a blocking finding needs its line); must-haves not covered ask for a look, except terms the version's front
    matter already lists under `keywords` or `gaps` (the rule checks handle those); a `fit_score`
    below the master CV's `cv_fits.score` for the same job asks for a look (compared in code); a
-   `skim_score` of `cveval.LOW_SKIM` (2) or less asks for a look. The agent's notes are dropped from
+   `skim_score` of `cveval.LOW_SKIM` (2) or less asks for a look; each editorial entry (wording that
+   is true but sloppy: redundancy inside a line, a fact said twice, wording against `_style.md`, a
+   title, date or name that differs from cv.md) asks for a look on its quoted line, never blocks, and
+   `save` refuses the file when its quote is not in the version or its suggestion leaves out a
+   front matter `keywords` term the quoted words hold (`cveval.dropped_keywords`). The agent's notes are dropped from
    a finding when they mention pay. `db.save_cv_eval` stores them through `save_cv_check` (merged
    with the rule findings into one verdict; a rule re-check keeps them) with a `summary` (JSON
-   column added by MIGRATIONS: fit, master fit, skim and why, claim and must-have counts), and
+   column added by MIGRATIONS: fit, master fit, skim and why, claim, must-have and editorial counts), and
    closes the `cv_eval` request only when that version is still the latest, so a version saved
    while the check ran is checked next. `db.eval_state` is done, pending or none (versions saved
    before AI checks). The CLI's check line and the card's verdict carry "AI check pending" until it
