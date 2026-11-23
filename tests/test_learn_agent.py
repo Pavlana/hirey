@@ -172,6 +172,91 @@ class LearnBoxTest(LearnTestCase):
         self.assertEqual(self.get("/learn/thread?card=x")[0], 400)
 
 
+class LearnOverviewBoxTest(LearnTestCase):
+    """The Learn Assistant box on the tracks overview (/learn): general messages, no card."""
+
+    def test_overview_shows_the_general_box(self) -> None:
+        body = self.get("/learn")[2]
+        self.assertIn('<nav class="tracks" aria-label="Tracks">', body)
+        self.assertIn('class="card learn-agent learn-general"', body)
+        self.assertIn('<div class="learn-chat" id="learn-chat" data-card="">', body)
+        self.assertIn('action="/learn/message" class="ask" data-ajax="learn">', body)
+        self.assertIn("A general message, not about one card.", body)
+        self.assertNotIn('name="card_id"', body)
+        self.assertNotIn("/learn/check", body)  # Check my answer belongs to a card
+        self.assertIn("No messages yet. Ask anything", body)
+
+    def test_overview_box_without_tracks(self) -> None:
+        with self.conn() as conn:
+            conn.execute("DELETE FROM card_source_done")
+            conn.execute("DELETE FROM cards")
+            conn.execute("DELETE FROM chapters")
+            conn.execute("DELETE FROM tracks")
+            conn.commit()
+        body = self.get("/learn")[2]
+        self.assertIn("No tracks yet.", body)
+        self.assertIn('id="learn-chat"', body)
+
+    def test_send_from_the_overview_is_general(self) -> None:
+        status, reply = self.post_json("/learn/message", {"body": "Start a mock <recruiter> call for Acme"})
+        self.assertEqual(status, 200)
+        with self.conn() as conn:
+            msg = db.thread(conn, topic=db.LEARN)[-1]
+            self.assertEqual([m["id"] for m in db.pending_messages(conn, topic=db.LEARN)], [msg["id"]])
+            self.assertEqual(db.pending_messages(conn), [])  # not in the Applications queue
+        self.assertEqual((msg["card_id"], msg["topic"], msg["status"]), (None, db.LEARN, "pending"))
+        self.ping.assert_called_once_with(self.settings, None, msg["id"])
+        self.assertEqual(reply["redirect"], "/learn")
+        self.assertIn("Start a mock &lt;recruiter&gt; call for Acme", reply["html"])
+        self.assertIn('<span class="msg-about">general</span>', reply["html"])
+        self.assertIn('action="/learn/stop"', reply["html"])
+        status, headers, _ = self.post("/learn/message", {"body": "hi"}, FORM)
+        self.assertEqual((status, headers["Location"]), (303, "/learn?msg=learn_sent"))
+
+    def test_reply_shows_on_the_overview(self) -> None:
+        msg = self.ask(None, "Quiz me on anything")
+        self.assertTrue(json.loads(self.get("/learn/thread?card=")[2])["pending"])
+        self.answer(msg, "First question: what is a TTL?")
+        reply = json.loads(self.get("/learn/thread?card=")[2])
+        self.assertFalse(reply["pending"])
+        self.assertIn("First question: what is a TTL?", reply["html"])
+        body = self.get("/learn")[2]
+        self.assertIn("First question: what is a TTL?", body)
+        self.assertIn('action="/learn/add-note"', body)
+
+    def test_card_view_keeps_its_card_box(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        self.assertIn('<div class="learn-chat" id="learn-chat" data-card="1">', body)
+        self.assertIn("Sent with this card.", body)
+        self.assertNotIn("learn-general", body)
+
+
+class LearnStopTest(LearnTestCase):
+    def test_stop_cancels_waiting_learn_messages_only(self) -> None:
+        self.assertNotIn('action="/learn/stop"', self.get("/learn")[2])
+        a = self.ask(None, "Mock recruiter call")
+        b = self.ask(1, "Explain TTL")
+        with self.conn() as conn:
+            apps = db.add_message(conn, None, "Which tasks need me?")
+        for page in ("/learn", "/learn?card=1"):
+            self.assertIn('action="/learn/stop"', self.get(page)[2])
+        status, reply = self.post_json("/learn/stop", {})
+        self.assertEqual(status, 200)
+        self.assertIn("Stopped", reply["message"])
+        self.assertNotIn("data-pending", reply["html"])
+        self.assertNotIn('action="/learn/stop"', reply["html"])
+        with self.conn() as conn:
+            got = {m: db.get_message(conn, m)["status"] for m in (a, b, apps)}
+        self.assertEqual(got, {a: "cancelled", b: "cancelled", apps: "pending"})
+        self.assertFalse(json.loads(self.get("/learn/thread")[2])["pending"])
+        self.ping.assert_not_called()
+
+    def test_stop_from_a_card_returns_to_it(self) -> None:
+        self.ask(1, "Explain TTL")
+        status, headers, _ = self.post("/learn/stop", {"card_id": "1"}, FORM)
+        self.assertEqual((status, headers["Location"]), (303, "/learn?card=1&msg=learn_stopped"))
+
+
 class LearnActionsTest(LearnTestCase):
     def save_answer(self, text: str) -> None:
         key = learnnotes.answer_key(1)

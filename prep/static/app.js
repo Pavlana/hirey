@@ -773,8 +773,8 @@
       } catch { /* the server restarted or is busy: try again */ }
       if (Date.now() - me.started > POLL_FOR_MS) {
         learnPoll = null;
-        const state = learnChat()?.querySelector(".thread-state");
-        if (state) state.textContent = "Still waiting. The reply shows here when the Learn Assistant answers; reload to check.";
+        const state = learnChat()?.querySelector(".thread-state > span:not(.spinner)"); // Stop stays on the line
+        if (state) state.textContent = "Still waiting. The reply shows here when the Learn Assistant answers; reload to check, or Stop.";
         return;
       }
       me.timer = setTimeout(tick, POLL_MS);

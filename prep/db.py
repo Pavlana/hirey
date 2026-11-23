@@ -2414,14 +2414,15 @@ def cancel_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -
         raise ValueError(f"message {msg_id} was answered meanwhile")
 
 
-def cancel_waiting_messages(conn: sqlite3.Connection) -> list[int]:
+def cancel_waiting_messages(conn: sqlite3.Connection, learn: bool = False) -> list[int]:
     """Stop in the Applications Assistant box: every Applications message still waiting (pending or
-    claimed, never a Learn one) is cancelled with cancel_message. One answered meanwhile is skipped.
-    Returns the ids cancelled."""
+    claimed, never a Learn one) is cancelled with cancel_message. With `learn` (Stop in the Learn
+    Assistant box) every waiting Learn message instead, never an Applications one. One answered
+    meanwhile is skipped. Returns the ids cancelled."""
     done = []
-    for m in pending_messages(conn):
+    for m in pending_messages(conn, topic=LEARN if learn else None):
         try:
-            cancel_message(conn, m["id"])
+            cancel_message(conn, m["id"], learn=learn)
         except ValueError:
             continue  # answered between the read and the update
         done.append(m["id"])
