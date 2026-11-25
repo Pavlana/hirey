@@ -1,4 +1,4 @@
-"""The AI check of a tailored CV version: grounding, fit and a six-second skim, written by the agent in a
+"""The AI check of a tailored CV version: grounding, fit, a six-second skim and an editorial pass, written by the agent in a
 separate pass from the one that wrote the CV, then turned into findings here with fixed rules.
 
 Every tailor save queues it (agent_requests kind cv_eval; db.save_tailored_cv). `research next` prints
@@ -16,12 +16,17 @@ the packet; the agent writes `cv-tailored/<version file stem>.eval.md` with TOML
     [[must_haves]]                       # the job's must-have requirements
     term = "Kubernetes"
     covered = true
+    [[editorial]]                        # wording that is true but sloppy (redundant, repeated, off-style)
+    quote = "words copied from the tailored CV line"
+    issue = "what is wrong with the wording"
+    suggestion = "the better wording"
 
 `save` maps it to findings with source "ai" (db.save_cv_eval merges them into the verdict): a claim with
 source "none" blocks (`save` refuses one whose quote is not in the CV, since a blocking finding needs
 its exact line); a must-have not covered asks for a look (unless the tailored file's front matter
 already lists it under `keywords` or `gaps`, which the rule checks handle); a fit score below the master
-CV's fit for the same job asks for a look; a skim score of 2 or less asks for a look. Claims are found
+CV's fit for the same job asks for a look; a skim score of 2 or less asks for a look; an editorial entry asks for a look, never blocks (`save` refuses
+one whose quote is not in the CV, or whose suggestion drops a `keywords` term the quoted words hold). Claims are found
 in the CV by their quoted words, so a finding's line number comes from the file, not from the model.
 Nothing here is logged.
 """
@@ -86,6 +91,16 @@ def read_eval(path: Path) -> dict:
         if not isinstance(term, str) or not term.strip() or not isinstance(covered, bool):
             raise ValueError(f"must-have {i} needs a term and covered = true or false")
         must_haves.append({"term": term.strip(), "covered": covered})
+    editorial = []
+    for i, e in enumerate(_tables(data, "editorial"), 1):
+        quote, issue, suggestion = e.get("quote"), e.get("issue"), e.get("suggestion")
+        if not isinstance(quote, str) or not quote.strip():
+            raise ValueError(f"editorial {i} needs a quote: words copied from the tailored CV line")
+        if not isinstance(issue, str) or not issue.strip():
+            raise ValueError(f"editorial {i} needs an issue: what is wrong with the wording")
+        if not isinstance(suggestion, str) or not suggestion.strip():
+            raise ValueError(f"editorial {i} needs a suggestion: the better wording")
+        editorial.append({"quote": quote.strip(), "issue": issue.strip(), "suggestion": suggestion.strip()})
     checked_at = data.get("checked_at")
     return {
         "version": version,
@@ -95,6 +110,7 @@ def read_eval(path: Path) -> dict:
         "skim_why": skim_why.strip(),
         "claims": claims,
         "must_haves": must_haves,
+        "editorial": editorial,
     }
 
 
@@ -141,6 +157,11 @@ def findings(review: dict, cv_text: str, master_fit: int | None) -> list[dict]:
     if master_fit is not None and review["fit_score"] < master_fit:
         out.append(cvcheck._finding("fit", "look", f"Fit {review['fit_score']}/5 is below the master CV's "
                                     f"{master_fit}/5 for this job"))
+    for e in review["editorial"]:
+        n, line = locate(e["quote"], lines)
+        issue, suggestion = _safe(e["issue"]), _safe(e["suggestion"])
+        message = "Editorial" + (f": {issue}" if issue else "") + (f"; suggest: {suggestion}" if suggestion else "")
+        out.append(cvcheck._finding("editorial", "look", message, n, line or e["quote"]))
     if review["skim_score"] <= LOW_SKIM:
         why = _safe(review["skim_why"])
         out.append(cvcheck._finding("skim", "look", f"Six-second skim {review['skim_score']}/5" + (f": {why}" if why else "")))
@@ -158,7 +179,21 @@ def summary(review: dict, master_fit: int | None) -> dict:
         "unsourced": sum(1 for c in review["claims"] if c["source"] == "none"),
         "must_haves": len(review["must_haves"]),
         "covered": sum(1 for m in review["must_haves"] if m["covered"]),
+        "editorial": len(review["editorial"]),
     }
+
+
+def dropped_keywords(review: dict, cv_text: str) -> list[tuple[int, list[str]]]:
+    """Editorial entries whose suggestion leaves out a must-have term (front matter `keywords`) that
+    their quoted words hold, as (entry number, terms)."""
+    keywords = cvcheck._terms(cvcheck.front_matter(cv_text), "keywords") or []
+    out = []
+    for i, e in enumerate(review["editorial"], 1):
+        quote, suggestion = f" {_plain(e['quote'])} ", f" {_plain(e['suggestion'])} "
+        terms = [k for k in keywords if _plain(k) and f" {_plain(k)} " in quote and f" {_plain(k)} " not in suggestion]
+        if terms:
+            out.append((i, terms))
+    return out
 
 
 def save(conn: sqlite3.Connection, app_id: int, version: int, path: Path) -> dict:
@@ -178,15 +213,25 @@ def save(conn: sqlite3.Connection, app_id: int, version: int, path: Path) -> dic
     if lost:  # a blocking finding needs its exact line
         raise ValueError(f"unsourced claim {', '.join(map(str, lost))}: the quote is not in v{version}; "
                          "copy the words exactly from the CV line")
+    lost = [i for i, e in enumerate(review["editorial"], 1) if locate(e["quote"], lines)[0] is None]
+    if lost:
+        raise ValueError(f"editorial {', '.join(map(str, lost))}: the quote is not in v{version}; "
+                         "copy the words exactly from the CV line")
+    dropped = dropped_keywords(review, text)
+    if dropped:
+        raise ValueError("an editorial suggestion must keep the job's exact keywords: "
+                         + "; ".join(f"editorial {i} drops {', '.join(terms)}" for i, terms in dropped))
     db.save_cv_eval(conn, app_id, version, findings(review, text, master_fit), summary(review, master_fit))
     return db.cv_check(conn, app_id, version)
 
 
 def summary_line(found: dict | None) -> str:
-    """One line for the CLI and the panel: "fit 4/5 (master CV 3/5) · skim 4/5 · 9 claims, 1 unsourced"."""
+    """One line for the CLI and the panel: "fit 4/5 (master CV 3/5) · skim 4/5 · 9 claims, 1 unsourced
+    · 3/4 must-haves · 2 editorial" (the editorial count only when there are some)."""
     s = (found or {}).get("summary")
     if not s:
         return ""
     master = f" (master CV {s['master_fit']}/5)" if s.get("master_fit") is not None else ""
     return (f"fit {s['fit']}/5{master} · skim {s['skim']}/5 · {s['claims']} claims, {s['unsourced']} unsourced"
-            f" · {s['covered']}/{s['must_haves']} must-haves")
+            f" · {s['covered']}/{s['must_haves']} must-haves"
+            + (f" · {s['editorial']} editorial" if s.get("editorial") else ""))

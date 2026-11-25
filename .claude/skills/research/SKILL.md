@@ -25,7 +25,7 @@ Run every command from the repo root.
    - company: one line on what it does and the tier set
    - CV fit: the score and the top gaps
    - tailored CV: the version saved and how many questions went to the thread
-   - AI check: the verdict and how many lines are flagged
+   - AI check: the verdict and how many lines are flagged (editorial ones included)
    - when a save printed "both results in": the Interested application now has a "Review
      research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
@@ -295,6 +295,11 @@ note = "Experience, second role, first bullet"           # where it comes from, 
 [[must_haves]]                 # each must-have requirement of the job
 term = "Kubernetes"            # in the posting's wording
 covered = true                 # stated truthfully in the summary or a recent bullet
+
+[[editorial]]                  # wording that is true but sloppy, one table each (none is fine)
+quote = "LLM APIs, Model API A, Model API B"   # words copied exactly from the version
+issue = "A general term next to its own examples"
+suggestion = "LLM APIs (Model API A, Model API B)"   # keeps the job's exact keyword
 +++
 
 Free notes (optional).
@@ -316,6 +321,19 @@ Free notes (optional).
   a recruiter see in six seconds that this person fits this role? 5: the job's title and two or
   three must-haves are there; 3: the right field but the role is not obvious; 1: it reads as a
   different job. One line of why.
+- **Editorial**: read the version as an editor, after the three steps above. True but sloppy
+  wording is an entry; a grounding problem stays a claim. Look for:
+  - redundancy or overlap inside one line or group: a general term next to its own specific
+    examples (a category next to two named members of it), or two items that mean the same;
+  - the same fact or skill said twice in different places (summary and a bullet, two bullets,
+    a bullet and the skills list) where once is enough;
+  - wording that goes against `_style.md`: a banned word, or a phrase other than the agreed one;
+  - a title, date, employer or product name that differs from `cv.md`.
+  Each entry asks for a look, never blocks. Quote the version's words exactly (`tailor eval` refuses
+  an entry whose quote is not in the version), say the issue in a few words and give the better
+  wording. The suggestion keeps the job's exact keywords (the version's front matter `keywords`):
+  merge the examples under the keyword rather than drop it; `tailor eval` refuses a suggestion that
+  leaves out a keyword its quote holds. Matters of taste with no rule behind them are not entries.
 - No pay anywhere in the file.
 
 `tailor eval` maps the file to findings with fixed rules (an unsourced claim blocks; a must-have

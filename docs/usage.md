@@ -95,7 +95,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 |            | `python -m prep.cli brief next` / `brief save (--job ID \| APP)` / `brief show (--job ID \| APP)` / `brief queue (--job ID \| APP) [--redo]` | Job briefs: claim the oldest waiting one, store it (text on stdin), print it, or ask for one |
 | `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks and queues the AI check |
 |            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file |
-|            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim) from its `.eval.md` file |
+|            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim, editorial) from its `.eval.md` file |
 | `/ask`     | `python -m prep.cli thread show [APP \| --job ID \| --message MSG \| --cv] [--claim]` / `thread reply [APP] --to MSG` / `thread pending` | The Applications Assistant box: a thread with its context (no id: the whole search; `--job`: an offer not yet tracked; `--message`: a comparison), the reply (text on stdin or `--file`), the messages waiting |
 |            | `python -m prep.cli review [--all]`                                  | Read-only: the top 3 open tasks in review order (`--all`: every open task) |
 |            | `python -m prep.cli task edit ID [--title T] [--due D \| --no-due]` / `task delete ID` | Change or delete a task |
@@ -296,7 +296,10 @@ once (pages, contacts, placeholders, pay, dates, other companies, the job's keyw
 Every save also queues an AI check, done by the agent in a separate pass from the one that wrote
 the CV: every changed or added claim traced to `cv.md`, the facts bank or the agreed wording
 (an unsourced claim blocks), the CV fit rubric on the tailored copy compared with the master CV's
-fit, and a six-second skim of the top of page one. The card shows one verdict (Ready, Look at
+fit, a six-second skim of the top of page one, and an editorial pass (a general term next to its
+own examples, the same fact said twice, wording against the agreed wording or its banned words,
+titles, dates and names that differ from `cv.md`; each a look with a suggested wording that keeps
+the job's keywords). The card shows one verdict (Ready, Look at
 these lines, Blocked), "AI check pending" until the AI check is in, then its scores.
 `python -m prep.cli tailor eval APP` stores the agent's result. The facts bank holds true facts
 that `cv.md` leaves out: copy `cv-facts.example.md` to `private_dir/cv-facts.md` (or set

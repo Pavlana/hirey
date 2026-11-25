@@ -22,9 +22,28 @@ KUBERNETES_LINE = OFFSET + 14  # "- Ran Kubernetes clusters."
 
 
 def eval_text(version: int = 1, fit: int = 4, skim: int = 4, skim_why: str = "Title and AI pipelines up top",
-              claims: str = "", must_haves: str = "") -> str:
+              claims: str = "", must_haves: str = "", editorial: str = "") -> str:
     return (f'+++\nversion = {version}\nchecked_at = 2026-01-21\nfit_score = {fit}\nskim_score = {skim}\n'
-            f'skim_why = "{skim_why}"\n{claims}{must_haves}+++\n\n## Notes\nFree text.\n')
+            f'skim_why = "{skim_why}"\n{claims}{must_haves}{editorial}+++\n\n## Notes\nFree text.\n')
+
+
+# A made-up tailored CV with wording that is true but sloppy: a general term next to its own examples in
+# the skills line (a job keyword), and a word the agreed wording bans.
+EDITED = (CLEAN.replace('keywords = ["Terraform"', 'keywords = ["LLM APIs", "Terraform"')
+          .replace("- Terraform, Kubernetes, Python", "- LLM APIs, Acme Model API, Globex Model API, Python")
+          .replace("- Built a shared deployment pipeline.", "- Spearheaded a shared deployment pipeline."))
+PIPELINE_LINE = OFFSET + 10  # "- Spearheaded a shared deployment pipeline."
+SKILLS_LINE = OFFSET + 17    # "- LLM APIs, Acme Model API, Globex Model API, Python"
+
+
+def editorial(quote: str, issue: str, suggestion: str) -> str:
+    return f'[[editorial]]\nquote = "{quote}"\nissue = "{issue}"\nsuggestion = "{suggestion}"\n'
+
+
+REDUNDANT = editorial("LLM APIs, Acme Model API, Globex Model API", "a general term next to its own examples",
+                      "LLM APIs (Acme Model API, Globex Model API)")
+BANNED = editorial("Spearheaded a shared deployment pipeline", "spearheaded is a banned word in the agreed wording",
+                   "Built a shared deployment pipeline")
 
 
 SOURCED = ('[[claims]]\nquote = "builds delivery pipelines for AI teams"\nsource = "cv.md"\n'
@@ -64,6 +83,20 @@ class ParseTest(IsolatedTestCase):
             with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
                 self.read(text)
 
+    def test_reads_editorial_entries(self) -> None:
+        found = self.read(eval_text(editorial=REDUNDANT))
+        self.assertEqual(found["editorial"], [{"quote": "LLM APIs, Acme Model API, Globex Model API",
+                                               "issue": "a general term next to its own examples",
+                                               "suggestion": "LLM APIs (Acme Model API, Globex Model API)"}])
+        self.assertEqual(self.read(eval_text())["editorial"], [], "editorial is optional")
+        for text, why in (
+            (editorial("", "x", "y"), "editorial 1 needs a quote"),
+            (editorial("x", "", "y"), "editorial 1 needs an issue"),
+            ('[[editorial]]\nquote = "x"\nissue = "y"\n', "editorial 1 needs a suggestion"),
+        ):
+            with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
+                self.read(eval_text(editorial=text))
+
     def test_eval_file_sits_beside_its_version(self) -> None:
         self.assertEqual(cveval.eval_file(Path("/p/cv-tailored/CV_Globex_FDE_101126_2.md")),
                          Path("/p/cv-tailored/CV_Globex_FDE_101126_2.eval.md"))
@@ -95,6 +128,17 @@ class FindingsTest(IsolatedTestCase):
         self.assertIn("Fit 3/5 is below the master CV's 4/5", messages)
         self.assertIn("Six-second skim 2/5: Page one opens with an unrelated role", messages)
         self.assertEqual(self.findings(master_fit=None, fit=1), [], "no master fit: nothing to compare")
+
+    def test_editorial_entries_ask_for_a_look_on_their_line(self) -> None:
+        review = cveval.read_eval(write(self.tmp / "x.eval.md", eval_text(editorial=REDUNDANT + BANNED)))
+        found = cveval.findings(review, EDITED, 4)
+        self.assertEqual([(f["check"], f["severity"], f["line"]) for f in found],
+                         [("editorial", "look", PIPELINE_LINE), ("editorial", "look", SKILLS_LINE)])
+        self.assertEqual(found[0]["message"], "Editorial: spearheaded is a banned word in the agreed wording; "
+                                              "suggest: Built a shared deployment pipeline")
+        self.assertEqual(found[1]["text"], "- LLM APIs, Acme Model API, Globex Model API, Python")
+        self.assertIn("suggest: LLM APIs (Acme Model API, Globex Model API)", found[1]["message"])
+        self.assertEqual(cveval.summary(review, 4)["editorial"], 2)
 
     def test_never_shows_pay(self) -> None:
         text = CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £123,456")
@@ -133,6 +177,7 @@ class StorageTest(IsolatedTestCase):
         db.save_cv_check(self.conn, self.app, 1, "rules", [], ["Summary: 1 line reworded"])
         found = self.save_eval(1, self.v1, claims=UNSOURCED)
         self.assertEqual(found["verdict"], "blocked", "unsourced claims block")
+        self.assertEqual(found["summary"]["editorial"], 0)
         self.assertEqual(found["summary"]["unsourced"], 2)
         self.assertEqual(found["changes"], ["Summary: 1 line reworded"])
         db.save_cv_check(self.conn, self.app, 1, "rules", [{"check": "pages", "severity": "look", "line": None,
@@ -166,6 +211,31 @@ class StorageTest(IsolatedTestCase):
             cveval.save(self.conn, self.app, 1, write(self.tmp / "x.eval.md", eval_text(version=2)))
         with self.assertRaisesRegex(LookupError, "no tailored CV v3"):
             cveval.save(self.conn, self.app, 3, write(self.tmp / "x.eval.md", eval_text(version=3)))
+
+    def test_editorial_findings_look_and_never_block(self) -> None:
+        write(self.v1, EDITED)
+        db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        self.assertEqual(self.save_eval(1, self.v1, claims=SOURCED)["verdict"], "ready",
+                         "no editorial entries: the verdict is unchanged")
+        found = self.save_eval(1, self.v1, claims=SOURCED, editorial=REDUNDANT + BANNED)
+        self.assertEqual((found["verdict"], [f["check"] for f in found["findings"]]), ("look", ["editorial"] * 2))
+        self.assertTrue(cveval.summary_line(found).endswith(" · 0/0 must-haves · 2 editorial"))
+
+    def test_editorial_quote_must_be_in_the_version(self) -> None:
+        write(self.v1, EDITED)
+        db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        with self.assertRaisesRegex(ValueError, "editorial 2: the quote is not in v1"):
+            self.save_eval(1, self.v1, editorial=REDUNDANT + editorial("Led a team of nine", "x", "y"))
+        self.assertIsNone(db.cv_check(self.conn, self.app, 1), "nothing stored")
+
+    def test_editorial_suggestion_keeps_the_job_keywords(self) -> None:
+        write(self.v1, EDITED)
+        db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        drops = editorial("LLM APIs, Acme Model API, Globex Model API", "a general term next to its own examples",
+                          "Acme Model API, Globex Model API")
+        with self.assertRaisesRegex(ValueError, "keep the job's exact keywords: editorial 1 drops LLM APIs"):
+            self.save_eval(1, self.v1, editorial=drops)
+        self.assertIsNone(db.cv_check(self.conn, self.app, 1))
 
     def test_master_fit_is_compared(self) -> None:
         db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
@@ -278,6 +348,18 @@ class PanelTest(WebTestCase):
         self.assertIn("AI check: fit 4/5 · skim 2/5 · 2 claims, 2 unsourced", panel)
         self.assertIn("Skim: Opens with &lt;old&gt; roles", panel)
         self.assertIn('<li class="finding-block">No source in cv.md', panel)
+
+    def test_card_shows_editorial_findings_as_look(self) -> None:
+        path = write(research.tailored_file(self.tmp / "private", "Massive Dynamic Example", "AISE", TODAY, 1), EDITED)
+        with self.conn() as conn:
+            db.save_tailored_cv(conn, self.MDE, str(path), "v1")
+            db.save_cv_check(conn, self.MDE, 1, "rules", [])
+            cveval.save(conn, self.MDE, 1, write(cveval.eval_file(path), eval_text(editorial=REDUNDANT)))
+        panel = self.panel()
+        self.assertIn('<span class="badge badge-warning">Look at these lines</span>', panel)
+        self.assertIn("· 1 editorial", panel)
+        self.assertIn('<li class="finding-look">Editorial: a general term next to its own examples; '
+                      'suggest: LLM APIs (Acme Model API, Globex Model API)', panel)
 
 
 class SettingsTest(IsolatedTestCase):

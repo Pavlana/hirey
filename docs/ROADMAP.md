@@ -111,6 +111,6 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
 - Agent box: one conversation with the standing assistant, about one job, several (a
   comparison), the master CV or the whole search (`/ask`).
 - Tailored CV: one copy of the CV per job, saved as versions, with a PDF, rule checks and an AI
-  check (grounding, fit, skim).
+  check (grounding, fit, skim, editorial).
 - Job briefs: a short summary of a job description at the top of its panel.
 - Master CV history: changes through the agent only, saved versions, diff and restore.
