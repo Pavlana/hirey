@@ -39,30 +39,34 @@ separate project that scores public job posts.
 ```mermaid
 flowchart TD
     user(["User"])
-    browser["Browser<br/>dashboard on 127.0.0.1:8765"]
-    web["prep.web<br/>dashboard server"]
-    dev3["dev3<br/>dev3 message"]
-    agents["Standing agents in dev3<br/>Applications Assistant · Research worker<br/>Communication worker · Learn Assistant"]
-    skills["Claude Code skills<br/>.claude/skills"]
-    cli["prep.cli<br/>commands"]
-    db[("prep.db<br/>SQLite, WAL")]
-    priv[("private_dir<br/>gitignored files")]
-    getjo[("getjo<br/>jobs.db and repo")]
-    gh["GitHub<br/>public code, CI"]
+    subgraph outside["Outside"]
+        getjo[("getjo, read only<br/>jobs.db and repo")]
+        gh["GitHub<br/>public code, CI"]
+    end
+    subgraph mac["On this Mac"]
+        browser["Browser<br/>127.0.0.1:8765 only"]
+        web["prep.web<br/>dashboard server"]
+    end
+    subgraph data["Data"]
+        db[("prep.db<br/>SQLite, WAL")]
+        priv[("private_dir<br/>gitignored files")]
+    end
+    subgraph agents["Agents"]
+        dev3["dev3 message"]
+        standing["Standing agents, dev3 tasks:<br/>Applications Assistant · Research worker<br/>Communication worker · Learn Assistant"]
+        skills["Claude Code skills<br/>python -m prep.cli"]
+    end
 
     user -->|"clicks, messages"| browser
-    user -->|"chats in a session"| agents
+    user -->|"chats in a session"| standing
     browser <-->|"HTTP, same origin"| web
     web -->|"ping: ids only"| dev3
-    dev3 -->|"prompt in the agent's pane"| agents
-    agents -->|"run"| skills
-    skills -->|"python -m prep.cli"| cli
-    web <-->|"read, write"| db
-    cli <-->|"claim, save, reply"| db
-    web <-->|"notes, CV restore, files"| priv
-    cli <-->|"CV, research, notes"| priv
-    web -->|"read only"| getjo
-    cli -->|"read only"| getjo
+    dev3 -->|"prompt in the agent's pane"| standing
+    standing -->|"run"| skills
+    web <-->|"rows; notes, CV restore, files"| data
+    data <-->|"claim, save, reply; CV, research, notes"| skills
+    getjo -->|"jobs, read only"| web
+    getjo -->|"jobs and code, read only"| skills
     gh -.->|"code only"| skills
 ```
 
