@@ -205,7 +205,8 @@ class EndpointTest(WebTestCase):
         self.assertIn("Waiting for the Applications Assistant: run /ask", body)
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 42})
         _, _, body = self.get(f"/?app={ACME}")
-        self.assertIn("Applications Assistant is working…", body)
+        self.assertIn("→ Applications Assistant", body)
+        self.assertNotIn("Waiting for the Applications Assistant: run /ask", body)
 
     def test_linkify_escapes_and_keeps_only_http_links(self) -> None:
         html = web._linkify('see https://x.example/a?b=1&c="<img>" and javascript:alert(1), (https://y.example/p).')

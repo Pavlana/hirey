@@ -1207,6 +1207,76 @@
     if (focusRow) focusRow.scrollIntoView({ block: "nearest" });
   }
 
+  // --- Workers sidebar -------------------------------------------------------------------
+  // Rows are <details>, so the popover opens without this script. Here: one popover open at a time,
+  // anchored next to its row; Esc or a click outside closes it (focus back on the row). The rows are
+  // polled from /workers.json every WORKERS_POLL_MS while the tab is visible (not while a popover holds
+  // focus), and a long item finished after the page was drawn gets a toast with a link to it.
+  const WORKERS_POLL_MS = 15000;
+  const workersBox = document.querySelector("[data-workers]");
+  const seenRuns = new Set();
+  function openPops() { return [...document.querySelectorAll(".worker-pop[open]")]; }
+  function placePop(details) {
+    const pop = details.querySelector(".popover");
+    const row = details.querySelector("summary");
+    if (!pop || !row) return;
+    const r = row.getBoundingClientRect();
+    pop.style.top = `${Math.max(8, Math.min(r.top - 8, window.innerHeight - pop.offsetHeight - 8))}px`;
+  }
+  function swapWorkers(html, { keepOpen = true } = {}) {
+    const list = workersBox?.querySelector(".worker-list");
+    if (!list || typeof html !== "string") return;
+    const open = keepOpen ? openPops().map((d) => d.closest("[data-worker]")?.dataset.worker) : [];
+    list.innerHTML = html; // server-built and escaped
+    open.forEach((key) => {
+      const d = list.querySelector(`[data-worker="${CSS.escape(key || "")}"] .worker-pop`);
+      if (d) { d.open = true; placePop(d); }
+    });
+  }
+  if (workersBox) {
+    document.addEventListener("toggle", (e) => {
+      const d = e.target;
+      if (!(d instanceof HTMLDetailsElement) || !d.classList.contains("worker-pop") || !d.open) return;
+      openPops().forEach((o) => { if (o !== d) o.open = false; });
+      placePop(d);
+    }, true);
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const d = openPops()[0];
+      if (!d) return;
+      d.open = false;
+      d.querySelector("summary")?.focus();
+    });
+    document.addEventListener("click", (e) => {
+      openPops().forEach((d) => { if (!d.contains(e.target)) d.open = false; });
+    });
+    window.addEventListener("resize", () => openPops().forEach(placePop));
+    let since = workersBox.dataset.since || "";
+    const tick = async () => {
+      if (document.visibilityState === "visible" && window.fetch
+          && !openPops().some((d) => d.contains(document.activeElement) && document.activeElement.tagName !== "SUMMARY")) {
+        try {
+          const query = new URLSearchParams({ since, here: location.pathname + location.search });
+          const res = await fetch(`/workers.json?${query}`, { headers: { Accept: "application/json" }, credentials: "same-origin" });
+          const reply = await res.json();
+          if (reply.ok) {
+            swapWorkers(reply.html);
+            const sum = workersBox.querySelector(".workers-sum");
+            if (sum) sum.textContent = reply.summary;
+            (reply.finished || []).forEach((f) => {
+              if (seenRuns.has(f.id)) return;
+              seenRuns.add(f.id);
+              toast(f.text, { action: { label: "Open", run: () => { location.href = f.href; } } });
+            });
+            since = reply.now || since;
+          }
+        } catch { /* the server restarted or is busy: try again */ }
+      }
+      setTimeout(tick, WORKERS_POLL_MS);
+    };
+    setTimeout(tick, WORKERS_POLL_MS);
+  }
+
   // --- forms without a reload --------------------------------------------------------
   // POST urlencoded (what the server parses) and ask for JSON. Anything that is not a JSON
   // reply (403/404/413 come back as plain text) becomes a generic error.
@@ -1334,7 +1404,7 @@
     const mode = form.dataset.ajax;
     try {
       if (form.hasAttribute("data-save-answer")) await saveAnswer(); // Check my answer: the latest text
-      const data = new URLSearchParams(new FormData(form));
+      const data = new URLSearchParams(new FormData(form, e.submitter)); // the button pressed counts (Stop: Back to queue)
       if (mode === "thread") { // the panel open now (Stop clears its queued work; replies keep its waiting line)
         const panel = document.getElementById("panel");
         data.delete("panel_app"); data.delete("panel_job");
@@ -1392,6 +1462,10 @@
         form.closest("details")?.removeAttribute("open");
         applyChatFilter();
         watchThread();
+        toast(reply.message);
+      } else if (mode === "workers") {
+        // Stop in a worker's popover: the rows come back from the server; the popover closes.
+        swapWorkers(reply.html, { keepOpen: false });
         toast(reply.message);
       } else if (mode === "source") {
         // A Learn source's tick: swap in the server-built, escaped Learn box (ticks and count), keep focus.

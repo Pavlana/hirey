@@ -37,7 +37,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from prep import assistant, prices as price_list
-from prep.config import REPO_ROOT, Settings, worker_task
+from prep.config import REPO_ROOT, Settings, worker_tasks
 
 log = logging.getLogger("prep.usage")
 
@@ -360,7 +360,7 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
             return "Applications Assistant"
         if seq is not None and mine and seq == settings.prep_assistant_task:
             return "Learn Assistant"
-        if seq is not None and mine and seq == worker_task(settings, "research"):
+        if seq is not None and mine and seq in worker_tasks(settings, "research"):
             return "Research worker"
         if info.get("task_type") == "coordinator" or (seq is not None and mine and seq == settings.coordinator_task):
             return "Coordinator"

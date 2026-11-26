@@ -224,9 +224,43 @@
    the Applications Assistant. Its questions (a tailored CV's note) are posted in the Applications
    Assistant box, and the user's answers there go to the Applications Assistant (`/ask`), so the
    conversation stays in one place. With a worker set, the SessionStart line says research and briefs
-   belong to it. The panel's queued work names its handler and since when
-   ("Tailored CV (Research worker, queued Nov 26, 14:02)", "started …" once claimed; `web._work_label`),
-   and the Usage tab counts the worker's turns as "Research worker".
+   belong to it. The panel's queued work and the box's waiting messages carry a short tag naming their
+   handler ("Tailored CV → Research worker", "→ Comms worker"; `web._work_label`, `web._route_tag`); who
+   does what and since when lives in the Workers sidebar (below). The Usage tab counts the workers' turns
+   as "Research worker".
+
+   Several workers on one route. A route may list several seqs (`research = [71, 72]`, env "71,72";
+   `config.worker_tasks`, one `(route, seq)` pair each in `Settings.workers`; `worker_task` is the
+   first). `assistant.pick` gives each new item to the first worker with no open run and nothing
+   assigned waiting (`db.busy_workers`), else round-robin (an in-memory turn per route). The dashboard
+   records the choice on the item before the ping: `agent_requests.worker` (one choice per application,
+   so its research, fit and tailoring stay together; `assistant.route_requests`), `brief_requests.worker`
+   and `agent_messages.worker` (draft requests). `research next` and `brief next` take the claiming
+   worker's own or unassigned items first, then another worker's waiting ones. Claims stay atomic
+   (below), so two workers never take the same item.
+
+   Runs and the Workers sidebar. Every claim records the claiming session's seq (`cli.me()`: the
+   `DEV3_TASK_SEQ` dev3 sets in each task; NULL outside dev3) on the item and opens a row in `runs`
+   (`db._start_run`: source request | brief | message, the item, worker, kind, application or job or
+   card, queued and started times). `db.sync_runs` closes open runs from the item's own state, so the
+   existing finish paths stay as they were: done (done, or answered), blocked (`agent_requests` and
+   `brief_requests` status `blocked` with `reason`, set by `research block` / `brief block`; a few
+   words, pay refused), stopped (cancelled, or Stop) and lapsed (the item went back to pending or was
+   claimed again after its lease). `prep/workers.py` builds each configured worker's row: Research per
+   seq, Applications (`assistant_task`), Communication per comms seq, Learn (`prep_assistant_task`); a
+   state (working: an open run; stuck: an open run past its lease, or a blocked last run within 12 h;
+   else idle), a short line, its open runs, its waiting items (`db.waiting_items`, by assigned worker,
+   else the route's first worker, else the Applications Assistant) and its last 5 runs. Only kinds,
+   company or job names, card ids, times and blocked reasons: never message text or pay. `web.workers_section`
+   draws it in every page's sidebar as `<details>` rows, so the popover (Now with Open job and Stop,
+   Queued, Last runs) works without the script; app.js anchors it, closes it on Esc or a click outside,
+   and polls `GET /workers.json` every 15 s while the tab is visible. The JSON also lists long items
+   (research, CV fit, tailored CV, AI check, brief, draft) finished since the page was drawn, for a
+   toast with a link. **Stop** (`POST /workers/stop`, `db.stop_worker`) ends only that worker's open
+   runs: each item it still holds is cancelled, or with "Back to queue" set pending, unassigned and
+   sent to the next free worker (`web._ping_requeued`). The worker's terminal is not touched.
+   `/metrics/runs` (`web.runs_page`, a third Metrics tab) lists runs newest first with filters by
+   worker and result.
 
    Recruiter communication (`comms`, paste-in only). **Draft a reply** (a folded form in the application
    panel, the job offer panel and under the Applications Assistant box for the whole search) posts

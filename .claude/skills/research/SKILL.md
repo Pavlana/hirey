@@ -35,7 +35,26 @@ place; the answers there are handled by `/ask`.
    - when a save printed "both results in": the Interested application now has a "Review
      research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
-If another session has already claimed the work, leave it alone.
+If another session has already claimed the work, leave it alone. With several Research workers
+(`research = [71, 72]`), each `research next` takes the work the dashboard sent to this worker first
+(each claim records this task's seq from DEV3_TASK_SEQ), then unassigned work, then another worker's
+waiting work; claims are atomic, so two workers never do the same item.
+
+## When a step cannot be done: block it
+
+When a step cannot be done at all (no job posting or description for a CV fit or tailored CV, a
+company that cannot be identified, a brief with no description), do not leave it claimed and do
+not skip it silently. Mark it blocked with a short reason; the Workers sidebar and Run history show it:
+
+```bash
+python -m prep.cli research block <app id> --kind cv_fit --reason "no posting"   # one kind
+python -m prep.cli research block <app id> --reason "company not found"         # every open request
+python -m prep.cli brief block --job JOB_ID --reason "no description"
+```
+
+The reason is a few words (at most 200 characters, never pay). Then go on with the next item. If the
+user can unblock it (a link to the posting, say), say so in one line in the reply; a new click on
+Research / CV fit / Tailor CV queues it again.
 
 ## Job briefs (`/research briefs`)
 

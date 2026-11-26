@@ -19,18 +19,25 @@ Today `research` takes company research, CV fit, tailored CVs, AI CV checks and 
 other thread message (/ask) and anything unmapped stays with the Applications Assistant, which also gets
 the /reply pings when no comms worker is set.
 
+A route may list several workers (`research = [71, 72]`): pick() sends each new item to the first one
+with nothing claimed or waiting, else round-robin, and the dashboard records that choice on the item
+(assign_requests, assign_briefs, assign_message) before the ping, so each worker's `research next` takes
+its own work first. Claims stay atomic, so two workers never take the same item.
+
 Each message ping's time and outcome is kept in memory (last_ping), so the dashboard can offer
 Resend at once after a failed ping, or after RESEND_AFTER seconds without a reply.
 """
 
 import logging
+import sqlite3
 import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
 
-from prep.config import REPO_ROOT, Settings, worker_task
+from prep import db
+from prep.config import REPO_ROOT, Settings, worker_task, worker_tasks
 
 log = logging.getLogger("prep.assistant")
 TIMEOUT = 15
@@ -56,6 +63,44 @@ APPLICATIONS_ASSISTANT = "Applications Assistant"
 ROUTES = {"research": "research", "cv_fit": "research", "tailor": "research", "cv_eval": "research",
           "brief": "research", "comms": "comms"}
 WORKER_NAMES = {"research": "Research worker", "comms": "Comms worker"}
+
+
+_TURNS: dict[str, int] = {}  # route -> the last round-robin turn, this process only
+_TURNS_LOCK = threading.Lock()
+
+
+def pick(settings: Settings, conn: sqlite3.Connection, route: str, exclude: tuple[int, ...] = ()) -> int | None:
+    """The worker seq on `route` that gets the next item: the first with no claimed or assigned waiting
+    item, else the next in turn. `exclude` is skipped while another is left (Stop's Back to queue)."""
+    seqs = [s for s in worker_tasks(settings, route) if s not in exclude] or list(worker_tasks(settings, route))
+    if len(seqs) < 2:
+        return seqs[0] if seqs else None
+    busy = db.busy_workers(conn)
+    idle = next((s for s in seqs if s not in busy), None)
+    if idle is not None:
+        return idle
+    with _TURNS_LOCK:
+        turn = _TURNS[route] = _TURNS.get(route, -1) + 1
+    return seqs[turn % len(seqs)]
+
+
+def route_requests(settings: Settings, conn: sqlite3.Connection, requests: list[dict],
+                   exclude: tuple[int, ...] = ()) -> list[dict]:
+    """Choose a worker for each application's new requests (one per application, so its research, fit and
+    tailoring stay together), record it on the requests and in each dict's "worker". Requests whose route
+    has no worker are left to target(). Returns `requests`."""
+    chosen: dict[tuple[int, str], int | None] = {}
+    for r in requests:
+        route = ROUTES.get(r.get("kind", "research"))
+        if not route or not worker_tasks(settings, route):
+            continue
+        key = (int(r["application_id"]), route)
+        if key not in chosen:
+            chosen[key] = pick(settings, conn, route, exclude)
+            db.assign_requests(conn, [x["id"] for x in requests if int(x["application_id"]) == key[0]
+                                      and ROUTES.get(x.get("kind", "research")) == route], chosen[key])
+        r["worker"] = chosen[key]
+    return requests
 
 
 def target(settings: Settings, kind: str) -> tuple[int | None, str]:
@@ -91,7 +136,7 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
     kinds: dict[tuple[int, int], set[str]] = {}
     for r in requests:
         kind = r.get("kind", "research")
-        seq = target(settings, kind)[0]
+        seq = r.get("worker") or target(settings, kind)[0]
         if seq:
             kinds.setdefault((int(r["application_id"]), int(seq)), set()).add(kind)
     return [[dev3, "message", "--task", f"seq:{seq}", *project,
@@ -101,7 +146,7 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
 
 
 def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str, job: bool = False,
-                topic: str | None = None, kind: str = "ask") -> list[str]:
+                topic: str | None = None, kind: str = "ask", seq: int | None = None) -> list[str]:
     """The `dev3 message` argument list for a new message: ids only, never its text. A message about
     a job offer not yet tracked (`job`) is sent as `/ask job <message id>` (the getjo job id stays out
     of the command), one about the master CV (`topic` "cv") as `/ask cv <message id>`, one about the
@@ -122,36 +167,36 @@ def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: s
         about = about if about == "job" or about.isdigit() else "general"
         subject = {"job": "Draft a reply on a job offer", "general": "Draft a reply"}.get(
             about, f"Draft a reply on application {about}")
-        return [dev3, "message", "--task", f"seq:{int(target(settings, 'comms')[0])}", *project,
+        return [dev3, "message", "--task", f"seq:{int(seq or target(settings, 'comms')[0])}", *project,
                 "--subject", subject, f"/reply {about} {int(message_id)}"]
     return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
             "--subject", subject, f"/ask {about} {int(message_id)}"]
 
 
-def brief_command(settings: Settings, count: int, dev3: str) -> list[str]:
+def brief_command(settings: Settings, count: int, dev3: str, seq: int | None = None) -> list[str]:
     """The `dev3 message` argument list for newly queued job briefs: a count and no job ids (`brief next`
-    lists them)."""
+    lists them). `seq`: the worker pick() chose, else whoever handles briefs."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
-    return [dev3, "message", "--task", f"seq:{int(target(settings, 'brief')[0])}", *project,
+    return [dev3, "message", "--task", f"seq:{int(seq or target(settings, 'brief')[0])}", *project,
             "--subject", f"{int(count)} job brief{'s' if count != 1 else ''} queued", "/research briefs"]
 
 
-def notify_briefs(settings: Settings, count: int) -> int:
-    """Send `/research briefs` to whoever handles briefs; returns 1 if delivered. Never raises."""
+def notify_briefs(settings: Settings, count: int, seq: int | None = None) -> int:
+    """Send `/research briefs` to `seq` or whoever handles briefs; returns 1 if delivered. Never raises."""
     if not target(settings, "brief")[0] or count < 1:
         return 0
     dev3 = dev3_path(settings)
     if dev3 is None:
         log.warning("a task for briefs is set but the dev3 CLI was not found (set dev3_bin); briefs stay queued")
         return 0
-    return _send([brief_command(settings, count, dev3)])
+    return _send([brief_command(settings, count, dev3, seq)])
 
 
-def notify_briefs_in_background(settings: Settings, count: int) -> threading.Thread | None:
+def notify_briefs_in_background(settings: Settings, count: int, seq: int | None = None) -> threading.Thread | None:
     """notify_briefs() in a daemon thread, so a page load never waits for dev3."""
     if not target(settings, "brief")[0] or count < 1:
         return None
-    thread = threading.Thread(target=notify_briefs, args=(settings, count), daemon=True)
+    thread = threading.Thread(target=notify_briefs, args=(settings, count, seq), daemon=True)
     thread.start()
     return thread
 
@@ -179,7 +224,7 @@ def message_target(settings: Settings, kind: str = "ask") -> int | None:
 
 
 def notify_message(settings: Settings, app_id: int | None, message_id: int, job: bool = False,
-                   topic: str | None = None, kind: str = "ask") -> int:
+                   topic: str | None = None, kind: str = "ask", seq: int | None = None) -> int:
     """Send `/ask <app id | job | cv | general> <message id>` (or `/reply …` for a draft request, `kind`
     "comms"); returns 1 if delivered. Never raises."""
     if not message_target(settings, kind):
@@ -188,7 +233,7 @@ def notify_message(settings: Settings, app_id: int | None, message_id: int, job:
     if dev3 is None:
         log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
         return _record(message_id, 0)
-    return _record(message_id, _send([ask_command(settings, app_id, message_id, dev3, job, topic, kind)]))
+    return _record(message_id, _send([ask_command(settings, app_id, message_id, dev3, job, topic, kind, seq)]))
 
 
 def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3: str) -> list[str]:
@@ -248,11 +293,11 @@ def notify_in_background(settings: Settings, requests: list[dict]) -> threading.
 
 def notify_message_in_background(settings: Settings, app_id: int | None, message_id: int,
                                  job: bool = False, topic: str | None = None,
-                                 kind: str = "ask") -> threading.Thread | None:
+                                 kind: str = "ask", seq: int | None = None) -> threading.Thread | None:
     """notify_message() in a daemon thread, so the Send button never waits for dev3."""
     if not message_target(settings, kind):
         return None
-    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job, topic, kind),
+    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job, topic, kind, seq),
                               daemon=True)
     thread.start()
     return thread

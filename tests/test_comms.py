@@ -130,8 +130,8 @@ class DashboardTest(ResendCancelBase):
             msg = db.thread(conn)[-1]
         self.assertEqual((msg["comms"], msg["channel"], msg["application_id"]), ("reply", "email", ACME))
         assistant.notify_message_in_background.assert_called_once_with(self.settings, ACME, msg["id"], job=False,
-                                                                        kind="comms")
-        self.assertIn("Comms worker is working", reply["html"])
+                                                                        kind="comms", seq=72)
+        self.assertIn("→ Comms worker", reply["html"])
         self.assertIn('class="msg-channel msg-channel-email">Email</span>', reply["html"])
 
     def test_post_is_validated(self) -> None:

@@ -45,6 +45,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_CONTEXT_WARN_TOKENS": "",
             "PREP_WORKER_RESEARCH": "",
             "PREP_WORKER_COMMS": "",
+            "DEV3_TASK_SEQ": "",  # claims record no worker unless a test sets one
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()

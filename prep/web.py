@@ -41,7 +41,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes,
-                  research, stats, usage)
+                  research, stats, usage, workers)
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -131,6 +131,9 @@ MESSAGES = {
     "learn_quote_noted": "Added to this card's notes.",
     "learn_explain_asked": "Asked the Learn Assistant for an explainer. It shows under the card when it is written.",
     "learn_refresh_asked": "Asked the Learn Assistant to refresh the explainer.",
+    "worker_stopped": "Stopped. That worker's item is cancelled; queue it again any time.",
+    "worker_requeued": "Stopped. The item is back in the queue for the next free worker.",
+    "worker_idle": "That worker was not holding anything (it finished meanwhile).",
 }
 
 SECURITY_HEADERS = [
@@ -253,6 +256,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return learn_thread_json(settings, query, today)
     if path == "/learn/explainer":
         return explainer_page(settings, query)
+    if path == "/workers.json":
+        return workers_json(settings, query, today)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
         "/metrics": lambda s, c, t: metrics_page(s, c, t, query),
@@ -260,6 +265,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
         "/learn": lambda s, c, t: learn_page(s, c, t, query),
+        "/metrics/runs": lambda s, c, t: runs_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
@@ -271,9 +277,10 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
             return _text(404, "Not found.")
         offers = new_offer_count(settings, conn, _now(today), offer_score(query))
         cards_todo = learn.counts(conn)["todo"]
+        side = workers_section(settings, conn, path)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    return _page(200, title, subtitle, notice + content, path if path in ("/metrics", "/learn") else "/", offers,
-                 head[0] if head else "", cards_todo)
+    active = "/metrics" if path.startswith("/metrics") else path if path == "/learn" else "/"
+    return _page(200, title, subtitle, notice + content, active, offers, head[0] if head else "", cards_todo, side)
 
 
 OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers view of Applications
@@ -326,7 +333,7 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
         except (ValueError, LookupError) as e:
             raise BadRequest(str(e)) from e
         # Interested, Move to Interested or a Research / CV fit click may have queued agent work.
-        assistant.notify_in_background(settings, db.requests_since(conn, mark))
+        assistant.notify_in_background(settings, assistant.route_requests(settings, conn, db.requests_since(conn, mark)))
     if "redirect" in extra:  # the ticked jobs (sel in the form's return) stay ticked where it goes next
         extra["redirect"] = _with_sel(extra["redirect"], form.get("return"))
     if as_json:
@@ -637,8 +644,11 @@ def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, toda
     about, job = db.message_subject(conn, msg_id)
     log.info("draft request %s (%s, %s) added (application %s, job %s)", msg_id, kind, channel, about,
              bool(job))  # never the text
+    seq = assistant.pick(settings, conn, "comms")
+    if seq:
+        db.assign_message(conn, msg_id, seq)
     assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None,
-                                           kind="comms")
+                                           kind="comms", seq=seq)
     return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
@@ -670,9 +680,14 @@ def resend_message(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     msg = db.reopen_message(conn, msg.get("id", 0))
     about, job = db.message_subject(conn, msg["id"])
     log.info("message %s sent to the assistant again", msg["id"])
+    chosen = None
+    if kind == "comms":  # with several comms workers, another one than the one that stalled when it can
+        chosen = assistant.pick(settings, conn, "comms", exclude=(msg["worker"],) if msg.get("worker") else ())
+        if chosen:
+            db.assign_message(conn, msg["id"], chosen)
     if not assistant.notify_message(settings, about, msg["id"], job=about is None and job is not None,
-                                    topic=msg["topic"], kind=kind):
-        raise _unreachable(_handler_name(settings, kind), seq)
+                                    topic=msg["topic"], kind=kind, seq=chosen):
+        raise _unreachable(_handler_name(settings, kind), chosen or seq)
     return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
@@ -722,7 +737,10 @@ def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, st
     created = db.queue_brief(conn, job_id, force=bool(db.job_briefs(conn, {job_id})))
     log.info("job brief %s from the dashboard", "queued" if created else "already queued")
     if created:
-        assistant.notify_briefs_in_background(settings, 1)
+        seq = assistant.pick(settings, conn, "research")
+        if seq:
+            db.assign_briefs(conn, [job_id], seq)
+        assistant.notify_briefs_in_background(settings, 1, seq)
 
 
 def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -1137,6 +1155,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
 # Each returns (title, subtitle, HTML content). Only columns that are shown are read; never pay.
 
 METRICS_TABS = (("usage", "Usage"), ("applications", "Applications"))
+RUNS_TAB = ("/metrics/runs", "Runs")  # its own page (Run history), shown as a third Metrics tab
 TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
 COST_SHADES = {"Cache read": "s4", "Cache write": "s6", "Output": "s8", "Input": "s10"}
 ESTIMATE_NOTE = "Estimated at API prices. Your Claude subscription is billed differently."
@@ -1173,7 +1192,8 @@ def metrics_page(settings: Settings, conn: sqlite3.Connection, today: str,
                  query: dict[str, list[str]]) -> tuple[str, str, str, str]:
     """/metrics: Usage (Claude Code tokens, prep/usage.py) and Applications (search numbers) tabs."""
     f = metrics_filters(query)
-    tabs = _switch("Metrics", [(metrics_url(f, tab=t), name, f["tab"] == t) for t, name in METRICS_TABS])
+    tabs = _switch("Metrics", [(metrics_url(f, tab=t), name, f["tab"] == t) for t, name in METRICS_TABS]
+                   + [(*RUNS_TAB, False)])
     if f["tab"] == "applications":
         return "Metrics", f"Job search · {today}", applications_tab(settings, conn, today), tabs
     return "Metrics", f"Claude Code tokens · {today}", usage_tab(settings, conn, today, f), tabs
@@ -2418,7 +2438,10 @@ def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, ope
     added = db.queue_missing_briefs(conn, wanted)
     if added:
         log.info("%d job brief(s) queued", len(added))
-        assistant.notify_briefs_in_background(settings, len(added))
+        seq = assistant.pick(settings, conn, "research")
+        if seq:
+            db.assign_briefs(conn, added, seq)
+        assistant.notify_briefs_in_background(settings, len(added), seq)
     return {**db.job_briefs(conn), "open": {r["getjo_job_id"] for r in db.open_briefs(conn)}}
 
 
@@ -3132,7 +3155,7 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         f'data-job="{h(m["getjo_job_id"] or "")}" data-topic="{h(m["topic"] or "")}" '
         f'data-targets="{h(" ".join(t["key"] for t in targets.get(m["id"], [])))}">'
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
-        + about(m) + _channel_tag(m) + flags.get(m["id"], "")
+        + about(m) + _channel_tag(m) + flags.get(m["id"], "") + _route_tag(settings, m, m["id"] in flags)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
         f'<div class="msg-body">{_linkify(m["body"])}</div>' + _draft_box(m)
         + (_wait_actions(m, "/applications", "thread", "",
@@ -3144,13 +3167,10 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
     waiting_msgs = db.pending_messages(conn)
     waiting = len(waiting_msgs)
     pending = waiting > 0
-    lapsed = sum(1 for m in waiting_msgs if db.claim_lapsed(m))
     work = _panel_work(settings, conn, app_id, job_id)
-    # who is working: the Comms worker when every waiting message is a draft request it handles
-    comms_seq, comms_name = assistant.target(settings, "comms")
+    # someone is pinged: the Comms worker when every waiting message is a draft request it handles
     drafts_only = pending and all(m.get("comms") for m in waiting_msgs)
-    handler = comms_name if drafts_only and comms_seq else "Applications Assistant"
-    has_handler = bool(comms_seq if drafts_only else settings.assistant_task)
+    has_handler = bool(assistant.target(settings, "comms")[0] if drafts_only else settings.assistant_task)
     stop = ""
     if pending or work:
         ctx = (f'<input type="hidden" name="panel_app" value="{h(app_id)}">' if app_id is not None
@@ -3159,22 +3179,15 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
                 f'<input type="hidden" name="return" value="/">{ctx}'
                 '<button class="btn btn-secondary btn-sm" title="Stop waiting: cancel the waiting messages'
                 + (" and this job's queued work" if work else "") + '">Stop</button></form>')
-    count = f" ({waiting} waiting)" if waiting else ""
-    doing = f'Working on {h(" · ".join(work))}…' if work else ""
-    if pending and has_handler and lapsed == waiting:
-        noun = "message" if lapsed == 1 else "messages"
-        state = ('<div class="thread-state thread-stalled" role="status">'
-                 f'<span>No reply in {db.MESSAGE_CLAIM_MINUTES} min: the {handler} took {lapsed} {noun} '
-                 f'but has not answered. Resend, or Stop.{" " + doing if doing else ""}</span>{stop}</div>')
-    elif pending and has_handler:
-        state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 f'<span>{handler} is working…{count}{" " + doing if doing else ""}</span>{stop}</div>')
-    elif pending:
+    # Short tags only: who does what and since when lives in the Workers sidebar.
+    tags = ([f"{waiting} waiting"] if waiting else []) + work
+    line = h(" · ".join(tags))
+    if pending and not has_handler:
         state = ('<div class="thread-state" role="status"><span>Waiting for the Applications Assistant: run /ask in a Claude Code '
-                 f'session (no Applications Assistant task is set).{count}</span>{stop}</div>')
-    elif work:
+                 f'session (no Applications Assistant task is set). {line}</span>{stop}</div>')
+    elif pending or work:
         state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 f'<span>{doing}</span>{stop}</div>')
+                 f'<span>{line}</span>{stop}</div>')
     elif not messages:
         state = '<p class="muted thread-empty">No messages yet.</p>'
     else:
@@ -3211,10 +3224,20 @@ def _draft_box(m: dict) -> str:
             '<span class="muted">Paste it in LinkedIn or your mail app and send it yourself.</span></div></div>')
 
 
+def _route_tag(settings: Settings, m: dict, flagged: bool) -> str:
+    """"→ Comms worker" on a user message still waiting: where it went (details in the Workers sidebar).
+    None on a message already flagged (no reply in 30 min, no reply yet) or one no task handles."""
+    if m["author"] != "user" or m["status"] not in db.WAITING or flagged:
+        return ""
+    kind = "comms" if m.get("comms") else "ask"
+    if not assistant.message_target(settings, kind):
+        return ""
+    return f'<span class="msg-route">→ {h(_handler_name(settings, kind))}</span>'
+
+
 def _panel_work(settings: Settings, conn: sqlite3.Connection, app_id: int | None, job_id: str | None) -> list[str]:
     """What the open panel waits for: its application's queued agent requests and its job's open brief
-    request, each with who handles it and since when ("Tailored CV (Research worker, queued Nov 26, 14:02)").
-    Empty without a panel."""
+    request, each as a short tag with who handles it ("Tailored CV → Research worker"). Empty without a panel."""
     labels = []
     if app_id is not None:
         labels = [_work_label(settings, r["kind"], db.REQUEST_LABELS.get(r["kind"], r["kind"]), r)
@@ -3226,13 +3249,10 @@ def _panel_work(settings: Settings, conn: sqlite3.Connection, app_id: int | None
 
 
 def _work_label(settings: Settings, kind: str, label: str, row: dict) -> str:
-    """A queued item with its handler (assistant.target: a worker or the Applications Assistant) and since
-    when: "started" from a live claim, else "queued" from the request time. Plain text (escaped by the caller)."""
+    """A queued item and its handler (assistant.target: a worker or the Applications Assistant), e.g.
+    "Tailored CV → Research worker". Plain text (escaped by the caller)."""
     seq, name = assistant.target(settings, kind)
-    who = name if seq else "no assistant task set: run /research"
-    when = (f"started {_local_time(row['claimed_at'])}" if row.get("claimed") and row.get("claimed_at")
-            else f"queued {_local_time(row['requested_at'])}")
-    return f"{label} ({who}, {when})"
+    return f"{label} → {name}" if seq else f"{label} (no assistant task set: run /research)"
 
 
 def _cancelled_cls(m: dict) -> str:
@@ -3409,8 +3429,229 @@ def tailored_pdf(settings: Settings, query: dict[str, list[str]], today: str) ->
 # Helpers that take plain values escape them; parameters documented as HTML are trusted
 # fragments built by other helpers.
 
+
+# --- Workers sidebar, popover and run history -----------------------------------------------------
+# prep/workers.py says what each worker does; this draws it. The rows are <details>: the popover opens
+# without the script; app.js anchors it, closes it on Esc / a click outside and polls /workers.json.
+
+STATE_LABELS = {"working": "working", "idle": "idle", "stuck": "needs a look"}
+RESULT_MARKS = {"done": ("✓", "done"), "blocked": ("!", "blocked"), "stopped": ("✕", "stopped"),
+                "lapsed": ("↺", "lapsed")}
+
+
+def _clock(stamp: str | None) -> str:
+    """A stored UTC time as local "14:05" today, else "Nov 25, 14:05"."""
+    when = workers.parse(stamp)
+    if when is None:
+        return ""
+    local = when.astimezone()
+    return local.strftime("%H:%M") if local.date() == datetime.now().astimezone().date() else local.strftime("%b %d, %H:%M")
+
+
+def _job_name_lookup(settings: Settings, conn: sqlite3.Connection) -> Callable[[set[str]], dict[str, str]]:
+    return lambda ids: _job_names(settings, conn, ids) if ids else {}
+
+
+def _worker_summary(ws: dict) -> str:
+    return f'{ws["busy"]} busy · {ws["waiting"]} waiting'
+
+
+def _worker_now(w: dict, here: str) -> str:
+    if not w["now"]:
+        return '<p class="pop-empty muted">Nothing claimed.</p>'
+    items = "".join(
+        f'<li><strong>{h(r["label"])}</strong> · {h(r["about"])}{(", " + h(r["role"])) if r.get("role") else ""}'
+        f'<span class="pop-time">started {h(_clock(r["started_at"]))} · {h(r["elapsed"])}</span></li>'
+        for r in w["now"])
+    first = w["now"][0]
+    stop = (f'<details class="stop-confirm"><summary class="btn btn-danger btn-sm">Stop</summary>'
+            f'<form method="post" action="/workers/stop" class="stop-form" data-ajax="workers">'
+            f'<input type="hidden" name="worker" value="{h(w["seq"])}"><input type="hidden" name="return" value="{h(here)}">'
+            f'<span class="muted">Stop {"these items" if len(w["now"]) > 1 else "this item"}?</span>'
+            '<button class="btn btn-secondary btn-sm" name="then" value="requeue" title="Back to the queue for the next free worker">'
+            'Back to queue</button>'
+            '<button class="btn btn-danger btn-sm" name="then" value="cancel" title="Cancel it; queue it again any time">'
+            'Cancel it</button></form></details>')
+    return (f'<ul class="pop-list">{items}</ul><div class="pop-actions">'
+            f'<a class="btn btn-secondary btn-sm" href="{h(first["href"])}">Open job</a>{stop}</div>')
+
+
+def _worker_queue(w: dict) -> str:
+    if not w["queued"]:
+        return '<p class="pop-empty muted">Nothing waiting.</p>'
+    return '<ol class="pop-list">' + "".join(
+        f'<li><a href="{h(q["href"])}">{h(q["label"])} · {h(q["about"])}</a>'
+        f'<span class="pop-time">{h(_clock(q["queued_at"]))}</span></li>' for q in w["queued"]) + "</ol>"
+
+
+def _run_mark(result: str | None) -> str:
+    mark, label = RESULT_MARKS.get(result or "", ("·", "running"))
+    return f'<span class="run-mark run-{h(result or "running")}" title="{h(label)}" aria-label="{h(label)}">{mark}</span>'
+
+
+def _worker_last(w: dict) -> str:
+    if not w["last"]:
+        return '<p class="pop-empty muted">No runs yet.</p>'
+    rows = []
+    for r in w["last"]:
+        tail = f'blocked: {r["reason"]}' if r["result"] == "blocked" and r.get("reason") else r["elapsed"]
+        rows.append(f'<li>{_run_mark(r["result"])} {h(r["label"])} · {h(r["about"])}'
+                    f'<span class="pop-time">{h(tail)}</span></li>')
+    return f'<ul class="pop-list">{"".join(rows)}</ul>'
+
+
+def _worker_rows(ws: dict, here: str) -> str:
+    rows = []
+    for w in ws["workers"]:
+        pop_id = f'pop-{h(w["key"])}'
+        rows.append(
+            f'<li class="worker" data-worker="{h(w["key"])}"><details class="worker-pop">'
+            f'<summary class="worker-row" aria-controls="{pop_id}">'
+            f'<span class="wdot wdot-{h(w["state"])}" title="{h(STATE_LABELS[w["state"]])}"></span>'
+            f'<span class="worker-name">{h(w["name"])}</span>'
+            f'<span class="worker-line"><span class="wl-text">{h(w["line"])}</span>'
+            + (f'<span class="wl-time"> · {h(w["since"])}</span>' if w["since"] else "") + '</span>'
+            f'<span class="sr-only">, {h(STATE_LABELS[w["state"]])}</span></summary>'
+            f'<div class="popover" id="{pop_id}" role="group" aria-label="{h(w["name"])} worker, seq {h(w["seq"])}">'
+            f'<div class="pop-head"><span class="wdot wdot-{h(w["state"])}"></span>'
+            f'<strong>{h(w["name"])} worker</strong><span class="muted">seq {h(w["seq"])}</span></div>'
+            f'<section><h3>Now</h3>{_worker_now(w, here)}</section>'
+            f'<section><h3>Queued · {len(w["queued"])}</h3>{_worker_queue(w)}</section>'
+            f'<section><h3>Last runs</h3>{_worker_last(w)}'
+            f'<a class="pop-more" href="/metrics/runs?{urlencode([("worker", w["seq"])])}">All runs →</a></section>'
+            '</div></details></li>')
+    return "".join(rows)
+
+
+def workers_section(settings: Settings, conn: sqlite3.Connection, here: str = "/") -> str:
+    """The sidebar's WORKERS block (empty when no worker is set): a heading with "N busy · M waiting", one
+    row per worker with its popover, and Run history. data-since: when it was drawn (UTC), so the polling
+    script toasts only work finished after that."""
+    ws = workers.state(settings, conn, _job_name_lookup(settings, conn))
+    if not ws["workers"]:
+        return ""
+    return (f'<section class="workers" data-workers data-since="{h(db.now_iso())}" aria-label="Workers">'
+            f'<div class="workers-head"><h2>Workers</h2><span class="workers-sum">{h(_worker_summary(ws))}</span></div>'
+            f'<ul class="worker-list">{_worker_rows(ws, here)}</ul>'
+            '<a class="workers-runs" href="/metrics/runs">Run history →</a></section>')
+
+
+def workers_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
+    """GET /workers.json[?since=UTC&here=PATH] for the sidebar's poll: the rows' HTML, the summary, the time now
+    (the next poll's since) and the long items finished since `since` (toasts). Kinds, companies and times
+    only: never message text or pay."""
+    since = (query.get("since") or [""])[0]
+    here = (query.get("here") or ["/"])[0]
+    here = here if here.startswith("/") and not here.startswith("//") else "/"
+    stamp = db.now_iso()
+    with closing(_connect(settings, today)) as conn:
+        names = _job_name_lookup(settings, conn)
+        ws = workers.state(settings, conn, names)
+        done = workers.finished(settings, conn, since, names) if workers.parse(since) else []
+    rows = [{"key": w["key"], "name": w["name"], "seq": w["seq"], "state": w["state"], "line": w["line"], "since": w["since"],
+             "queued": len(w["queued"])} for w in ws["workers"]]
+    return _json(200, {"ok": True, "now": stamp, "summary": _worker_summary(ws), "workers": rows,
+                       "html": _worker_rows(ws, here), "finished": done})
+
+
+def stop_worker(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Stop in a worker's popover: its current items (only that worker's) are cancelled, or with
+    then=requeue put back in the queue and sent to the next free worker. The worker's terminal is not
+    touched: whatever it saves later for a cancelled item is still stored."""
+    seq = _int_field(form, "worker")
+    if seq is None or seq not in {w["seq"] for w in workers.configured(settings)}:
+        raise BadRequest("Which worker? (worker: a configured worker's seq)")
+    requeue = form.get("then") == "requeue"
+    stopped = db.stop_worker(conn, seq, requeue=requeue)
+    log.info("worker %s stopped: %d item(s) %s", seq, len(stopped), "requeued" if requeue else "cancelled")
+    if requeue:
+        _ping_requeued(settings, conn, stopped, seq)
+    msg = "worker_idle" if not stopped else "worker_requeued" if requeue else "worker_stopped"
+    return {"msg": msg, "html": _worker_rows(workers.state(settings, conn, _job_name_lookup(settings, conn)),
+                                             form.get("return") or "/")}
+
+
+ACTIONS["/workers/stop"] = (stop_worker, "/", "worker_stopped")
+
+
+def _ping_requeued(settings: Settings, conn: sqlite3.Connection, stopped: list[dict], seq: int) -> None:
+    """Items put back by Stop go to the next free worker (another one than `seq` when there is one)."""
+    reqs = [{"id": int(r["item"]), "application_id": r["application_id"], "kind": r["kind"]}
+            for r in stopped if r["source"] == "request"]
+    if reqs:
+        assistant.notify_in_background(settings, assistant.route_requests(settings, conn, reqs, exclude=(seq,)))
+    briefs = [r["item"] for r in stopped if r["source"] == "brief"]
+    if briefs:
+        chosen = assistant.pick(settings, conn, "research", exclude=(seq,))
+        if chosen:
+            db.assign_briefs(conn, briefs, chosen)
+        assistant.notify_briefs_in_background(settings, len(briefs), chosen)
+    for r in stopped:
+        if r["source"] != "message":
+            continue
+        if r["kind"] == "learn":
+            assistant.notify_learn_in_background(settings, r["card_id"], int(r["item"]))
+            continue
+        about, job = db.message_subject(conn, int(r["item"]))
+        chosen = assistant.pick(settings, conn, "comms", exclude=(seq,)) if r["kind"] == "comms" else None
+        if chosen:
+            db.assign_message(conn, int(r["item"]), chosen)
+        assistant.notify_message_in_background(settings, about, int(r["item"]), job=about is None and job is not None,
+                                               topic=r["topic"], kind="comms" if r["kind"] == "comms" else "ask",
+                                               seq=chosen)
+
+
+def runs_filters(settings: Settings, query: dict[str, list[str]]) -> dict:
+    """worker (a configured seq, else all) and result (RUN_RESULTS or "running", else all)."""
+    raw = (query.get("worker") or [""])[0]
+    seqs = {w["seq"] for w in workers.configured(settings)}
+    result = (query.get("result") or [""])[0]
+    return {"worker": int(raw) if raw.isdigit() and int(raw) in seqs else None,
+            "result": result if result in (*db.RUN_RESULTS, "running") else ""}
+
+
+def runs_url(f: dict, **changes: object) -> str:
+    q = {**f, **changes}
+    return "/metrics/runs" + (f"?{urlencode({k: v for k, v in q.items() if v not in ('', None)})}"
+                              if any(v not in ("", None) for v in q.values()) else "")
+
+
+def runs_page(settings: Settings, conn: sqlite3.Connection, today: str,
+              query: dict[str, list[str]]) -> tuple[str, str, str, str]:
+    """/metrics/runs: one row per run (worker, kind, application, queued, started, finished, duration,
+    result and the blocked reason), newest first, filtered by worker and result."""
+    f = runs_filters(settings, query)
+    tabs = _switch("Metrics", [(metrics_url(metrics_filters({}), tab=t), name, False) for t, name in METRICS_TABS]
+                   + [(*RUNS_TAB, True)])
+    db.sync_runs(conn)
+    configured = workers.configured(settings)
+    names_by_seq = {w["seq"]: f'{w["name"]} · seq {w["seq"]}' for w in configured}
+    job_names = _job_name_lookup(settings, conn)(workers.job_ids(conn))
+    found = db.runs(conn, worker=f["worker"], result=f["result"] or None, limit=500)
+    worker_opts = [(runs_url(f, worker=""), "All workers", f["worker"] is None)] + [
+        (runs_url(f, worker=w["seq"]), w["name"], f["worker"] == w["seq"]) for w in configured]
+    result_opts = [(runs_url(f, result=""), "All results", not f["result"])] + [
+        (runs_url(f, result=r), r.capitalize(), f["result"] == r) for r in (*db.RUN_RESULTS, "running")]
+    filters = (f'<div class="runs-filters">{_switch("Filter by worker", worker_opts)}'
+               f'{_switch("Filter by result", result_opts)}</div>')
+    rows = []
+    for r in found:
+        d = workers._describe(r, job_names, datetime.now().astimezone())
+        who = names_by_seq.get(r["worker"], f"seq {r['worker']}" if r["worker"] else "other session")
+        result = (f'{_run_mark(r["result"])} {h(r["result"] or "running")}'
+                  + (f' <span class="muted">· {h(r["reason"])}</span>' if r.get("reason") else ""))
+        rows.append((h(who), h(d["label"]), f'<a href="{h(d["href"])}">{h(d["about"])}</a>',
+                     _mono(h(_clock(r["queued_at"]))), _mono(h(_clock(r["started_at"]))),
+                     _mono(h(_clock(r["finished_at"]))), _mono(h(d["elapsed"])), result))
+    table = _table(("Worker", "Kind", "About", "Queued", "Started", "Finished", "Duration", "Result"), rows,
+                   "No runs yet. Each time a worker takes an item from the queue, it shows here.")
+    note = ("" if configured else _note("No workers are set: runs by any Claude session still show here "
+                                        "(assistant_task, [workers] in the settings)."))
+    return ("Run history", f"Workers' runs · {today}",
+            note + _card("Runs", filters + table, count=len(found)), tabs)
+
 def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None,
-          actions: str = "", cards_todo: int | None = None) -> Response:
+          actions: str = "", cards_todo: int | None = None, side: str = "") -> Response:
     """The app shell. `offers` is the number of new offers shown next to Applications and `cards_todo`
     the Learn cards to do next to Learn (none when 0 or unknown); `actions` is trusted HTML next to the
     title (Applications' My CV button)."""
@@ -3434,7 +3675,7 @@ def _page(status: int, title: str, subtitle: str, content: str, active: str, off
         f'<body class="theme-{PAGE_THEMES.get(active, "sage")}"><div class="app">'
         '<aside class="sidebar"><a class="brand" href="/"><span class="brand-mark">hy</span>'
         '<span class="brand-name">Hirey</span></a>'
-        f'<nav aria-label="Pages">{nav}</nav>'
+        f'<nav aria-label="Pages">{nav}</nav>{side}'
         '<p class="sidebar-foot"><span class="dot"></span>local only · 127.0.0.1</p></aside>'
         f'<main><header class="page-head"><div class="page-head-row"><h1>{h(title)}</h1>{actions}</div>{sub}</header>'
         f'{content}</main>'
