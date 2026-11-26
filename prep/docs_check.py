@@ -304,8 +304,9 @@ def main(argv: list[str] | None = None) -> int:
         changed = changed_files(ROOT, args.changed)
         reason = args.reason or reason_from(pr_body(args.event or os.environ.get("GITHUB_EVENT_PATH")))
         problems += check_changes(changed, docs_map["rules"], reason)
+        kept = [p for p in changed if (ROOT / p).exists()]  # a deleted file needs no owning page
         problems += [f"{DOCS_MAP}: no rule covers {p}; add it to the map"
-                     for p in unmapped(changed, docs_map["rules"], docs_map["ignore"])]
+                     for p in unmapped(kept, docs_map["rules"], docs_map["ignore"])]
         if reason:
             notes.append(f"Changed-code rule waived: {reason}")
     for line in notes:
