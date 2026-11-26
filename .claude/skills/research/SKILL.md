@@ -297,8 +297,8 @@ by /ask).
 
 ## AI check of a tailored CV → `cv-tailored/<version file>.eval.md`
 
-Every tailor save (here or a revision through /ask) queues it; `research next` prints its packet
-after the new version is saved, never while a new version is still being written. **Run it as a
+The Tailored CV card's AI check button queues it (a save never does); `research next` prints its
+packet for the latest saved version, never while a new version is still being written. **Run it as a
 separate pass**: the user asked for this check to run in its own fresh subagent (Agent tool), so
 always spawn one, hand it only that packet and this section, and do not tell it what was tailored
 or why. A model that just wrote the CV does not judge its own claims
