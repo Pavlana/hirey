@@ -141,6 +141,16 @@ PAY_PATTERN = re.compile(r"[£$€¥]|\b\d+(?:[.,]\d+)?\s?k\b|\b(?:salary|salari
 # A finding's source says which checker wrote it: "rules" (prep/cvcheck.py) or "ai" (prep/cveval.py).
 CHECK_VERDICTS = ("ready", "look", "blocked")
 CHECK_SEVERITIES = ("block", "look")
+# The search gate (prep/search.py): each criterion is yes / no / unknown; pay only pass / fail / unknown,
+# never a figure. A company check's interviews: yes = no puzzle-style rounds (passes), no = puzzle rounds.
+GATE_VALUES = ("yes", "no", "unknown")
+PAY_GATE = ("pass", "fail", "unknown")
+VERDICTS = ("strong", "possible", "drop", "unknown")
+COMPANY_KINDS = ("product", "consultancy", "unknown")
+CONTRACTS = ("permanent", "contract", "unknown")
+CHECK_SOURCES = ("import", "agent", "user")
+SCREEN_FIELDS = ("role_family", "level", "team", "location", "pay", "builds_agents", "evals", "contract")
+MAX_CHECK_NOTE = 300
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -352,6 +362,58 @@ CREATE TABLE IF NOT EXISTS brief_requests (
     done_at      TEXT
 );
 
+-- The search gate's company data, one row per company (company_slug). Imported from a researched
+-- company list (`companies import`), written by the Research worker's company check (`company check`) or
+-- set by the user (Held: checking interviews). Values are GATE_VALUES, VERDICTS, COMPANY_KINDS; note is a
+-- short line on the interview style, never pay.
+CREATE TABLE IF NOT EXISTS company_checks (
+    slug        TEXT PRIMARY KEY,
+    company     TEXT NOT NULL,
+    verdict     TEXT NOT NULL DEFAULT 'unknown',
+    sector_ok   TEXT NOT NULL DEFAULT 'unknown',
+    interviews  TEXT NOT NULL DEFAULT 'unknown',
+    kind        TEXT NOT NULL DEFAULT 'unknown',
+    note        TEXT,
+    source      TEXT NOT NULL,          -- import / agent / user (who set it last)
+    agent_checked_at TEXT,              -- when the Research worker last checked it (once per company)
+    checked_at  TEXT NOT NULL
+);
+
+-- Other names a company is listed under in getjo ("Elsevier" for "RELX (Elsevier, ...)"): alias slug -> slug.
+CREATE TABLE IF NOT EXISTS company_aliases (
+    alias TEXT PRIMARY KEY,
+    slug  TEXT NOT NULL
+);
+
+-- The Research worker's screen of one job (written with its job brief): SCREEN_FIELDS, each GATE_VALUES,
+-- except pay (PAY_GATE: never the figure) and contract (CONTRACTS).
+CREATE TABLE IF NOT EXISTS job_screens (
+    getjo_job_id  TEXT PRIMARY KEY,
+    role_family   TEXT NOT NULL DEFAULT 'unknown',
+    level         TEXT NOT NULL DEFAULT 'unknown',
+    team          TEXT NOT NULL DEFAULT 'unknown',
+    location      TEXT NOT NULL DEFAULT 'unknown',
+    pay           TEXT NOT NULL DEFAULT 'unknown',
+    builds_agents TEXT NOT NULL DEFAULT 'unknown',
+    evals         TEXT NOT NULL DEFAULT 'unknown',
+    contract      TEXT NOT NULL DEFAULT 'unknown',
+    screened_at   TEXT NOT NULL
+);
+
+-- The jobs shown in a week's Top 5 (week: its Monday). Kept after the user acts on them, so Pipeline
+-- stats can count how many were applied to; company, title and score are copied for when getjo drops it.
+CREATE TABLE IF NOT EXISTS top_picks (
+    week         TEXT NOT NULL,
+    getjo_job_id TEXT NOT NULL,
+    rank         INTEGER NOT NULL,
+    why          TEXT,
+    company      TEXT,
+    title        TEXT,
+    score        INTEGER,
+    picked_at    TEXT NOT NULL,
+    PRIMARY KEY (week, getjo_job_id)
+);
+
 -- One row per time a session took a queued item (a request, a job brief or a user message): who took it
 -- (worker: the dev3 task seq from DEV3_TASK_SEQ, NULL for a session outside dev3), when, and how it ended.
 -- result is NULL while it runs; sync_runs() closes it from the item's state: done (done or answered),
@@ -474,7 +536,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
                        "source_id": "INTEGER"},
     # worker: as on agent_messages. reason: why a worker marked it blocked (`research block`, `brief block`).
     "agent_requests": {"worker": "INTEGER", "reason": "TEXT"},
-    "brief_requests": {"worker": "INTEGER", "reason": "TEXT"},
+    # screen_asked: 1 once a done brief was queued again only for its job screen (Top 5), so that happens once.
+    "brief_requests": {"worker": "INTEGER", "reason": "TEXT", "screen_asked": "INTEGER NOT NULL DEFAULT 0"},
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
     "tailored_cv_checks": {"summary": "TEXT"},
@@ -2966,3 +3029,139 @@ def waiting_items(conn: sqlite3.Connection) -> list[dict]:
                    "role": m["role"], "queued_at": m["created_at"], "topic": m["topic"], "comms": m["comms"]}
                   for m in pending_messages(conn, topic=topic) if m["status"] == "pending"]
     return sorted(found, key=lambda d: d["queued_at"] or "")
+
+
+# --- search gate: company checks, job screens, Top 5 picks (prep/search.py) -------------------------
+
+def _gate(name: str, value: object, allowed: tuple[str, ...] = GATE_VALUES) -> str:
+    text = str(value if value is not None else "unknown").strip().lower() or "unknown"
+    _check(name, text, allowed)
+    return text
+
+
+def company_check(conn: sqlite3.Connection, company: str) -> dict | None:
+    """The company check for a company name, through its aliases too; None when there is none."""
+    return company_checks(conn).get(company_slug(company))
+
+
+def company_checks(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Every company check by slug, and by each alias slug too."""
+    found = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM company_checks")}
+    for alias, slug in conn.execute("SELECT alias, slug FROM company_aliases"):
+        if slug in found:
+            found.setdefault(alias, found[slug])
+    return found
+
+
+def save_company_check(conn: sqlite3.Connection, company: str, fields: dict, source: str,
+                       aliases: tuple[str, ...] = (), commit: bool = True) -> str:
+    """Store (or update) a company's check: verdict, sector_ok, interviews, kind, note (fields left out keep
+    their value). An alias slug that already names this company is reused. Returns the slug."""
+    _check("source", source, CHECK_SOURCES)
+    existing = company_check(conn, company)
+    slug = existing["slug"] if existing else company_slug(company)
+    row = {"verdict": "unknown", "sector_ok": "unknown", "interviews": "unknown", "kind": "unknown", "note": None,
+           **({k: existing[k] for k in ("verdict", "sector_ok", "interviews", "kind", "note")} if existing else {})}
+    allowed = {"verdict": VERDICTS, "sector_ok": GATE_VALUES, "interviews": GATE_VALUES, "kind": COMPANY_KINDS}
+    for key, value in fields.items():
+        if key == "note":
+            note = (str(value).strip() if value else "") or None
+            if note and len(note) > MAX_CHECK_NOTE:
+                raise ValueError(f"the note is {len(note)} characters; keep it to {MAX_CHECK_NOTE}")
+            if note:
+                check_no_pay(note, "the company check note")
+            row["note"] = note
+        elif key in allowed:
+            row[key] = _gate(key, value, allowed[key])
+        else:
+            raise ValueError(f"unknown company check field {key!r}")
+    stamp = now_iso()
+    conn.execute(
+        "INSERT INTO company_checks (slug, company, verdict, sector_ok, interviews, kind, note, source, "
+        "agent_checked_at, checked_at) VALUES (:slug, :company, :verdict, :sector_ok, :interviews, :kind, :note, "
+        ":source, :agent, :stamp) ON CONFLICT(slug) DO UPDATE SET verdict = excluded.verdict, "
+        "sector_ok = excluded.sector_ok, interviews = excluded.interviews, kind = excluded.kind, note = excluded.note, "
+        "source = excluded.source, agent_checked_at = COALESCE(excluded.agent_checked_at, agent_checked_at), "
+        "checked_at = excluded.checked_at",
+        {**row, "slug": slug, "company": existing["company"] if existing else company, "source": source,
+         "agent": stamp if source == "agent" else None, "stamp": stamp})
+    for alias in aliases:
+        alias_slug = company_slug(alias)
+        if alias_slug != slug:
+            conn.execute("INSERT OR IGNORE INTO company_aliases (alias, slug) VALUES (?, ?)", (alias_slug, slug))
+    if commit:
+        conn.commit()
+    return slug
+
+
+def save_screen(conn: sqlite3.Connection, job_id: str, fields: dict) -> dict:
+    """Store (or replace) a job's screen from the Research worker. Every SCREEN_FIELDS key may be given;
+    a missing one is unknown. Pay is pass / fail / unknown only. Returns the stored values."""
+    unknown = set(fields) - set(SCREEN_FIELDS)
+    if unknown:
+        raise ValueError(f"unknown screen fields: {', '.join(sorted(unknown))} (known: {', '.join(SCREEN_FIELDS)})")
+    row = {}
+    for key in SCREEN_FIELDS:
+        allowed = PAY_GATE if key == "pay" else CONTRACTS if key == "contract" else GATE_VALUES
+        row[key] = _gate(key, fields.get(key), allowed)
+    names = ", ".join(SCREEN_FIELDS)
+    with conn:
+        conn.execute(f"INSERT OR REPLACE INTO job_screens (getjo_job_id, {names}, screened_at) "
+                     f"VALUES (?, {', '.join('?' * len(SCREEN_FIELDS))}, ?)",
+                     (job_id, *(row[k] for k in SCREEN_FIELDS), now_iso()))
+    return row
+
+
+def job_screens(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Every job screen by getjo job id."""
+    return {r["getjo_job_id"]: dict(r) for r in conn.execute("SELECT * FROM job_screens")}
+
+
+def queue_screens(conn: sqlite3.Connection, job_ids: list[str]) -> list[str]:
+    """Queue the brief request (job brief + screen, and a company check when needed) of each job in
+    `job_ids` with no screen yet: a new request when the job never had one, or a done brief queued again
+    once (screen_asked) when its screen is missing. Returns the ids queued now."""
+    screened = set(job_screens(conn))
+    rows = {r["getjo_job_id"]: dict(r) for r in conn.execute("SELECT * FROM brief_requests")}
+    stamp = now_iso()
+    added = []
+    with conn:
+        for job_id in dict.fromkeys(job_ids):
+            if job_id in screened:
+                continue
+            row = rows.get(job_id)
+            if row is None:
+                conn.execute("INSERT OR IGNORE INTO brief_requests (getjo_job_id, requested_at) VALUES (?, ?)",
+                             (job_id, stamp))
+                added.append(job_id)
+            elif row["status"] == "done" and not row["screen_asked"]:
+                conn.execute("UPDATE brief_requests SET status = 'pending', screen_asked = 1, force = 0, "
+                             "requested_at = ?, claimed_at = NULL, done_at = NULL, worker = NULL WHERE getjo_job_id = ?",
+                             (stamp, job_id))
+                added.append(job_id)
+    return added
+
+
+def week_picks(conn: sqlite3.Connection, week: str) -> list[dict]:
+    """The Top 5 picks of the week starting on Monday `week`, by rank."""
+    return [dict(r) for r in conn.execute("SELECT * FROM top_picks WHERE week = ? ORDER BY rank", (week,))]
+
+
+def all_picks(conn: sqlite3.Connection) -> list[dict]:
+    """Every Top 5 pick, oldest week first."""
+    return [dict(r) for r in conn.execute("SELECT * FROM top_picks ORDER BY week, rank")]
+
+
+def add_pick(conn: sqlite3.Connection, week: str, job: dict, why: str) -> None:
+    """Add a job to the week's picks after the last one (a job already picked that week is left alone)."""
+    rank = conn.execute("SELECT COALESCE(MAX(rank), 0) + 1 FROM top_picks WHERE week = ?", (week,)).fetchone()[0]
+    with conn:
+        conn.execute("INSERT OR IGNORE INTO top_picks (week, getjo_job_id, rank, why, company, title, score, picked_at) "
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                     (week, job["id"], rank, why, job.get("company"), job.get("title"), job.get("score"), now_iso()))
+
+
+def drop_pick(conn: sqlite3.Connection, week: str, job_id: str) -> None:
+    """Remove a pick the user never acted on that no longer passes or is no longer open."""
+    with conn:
+        conn.execute("DELETE FROM top_picks WHERE week = ? AND getjo_job_id = ?", (week, job_id))

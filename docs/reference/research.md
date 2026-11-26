@@ -126,7 +126,8 @@ A worker that cannot do a queued item marks it blocked instead of leaving it cla
 
 A short structured summary of a getjo job, written by the agent from the description and shown at
 the top of the job's panel (offers and applications linked to a getjo job), so Interested or Skip is
-decided quickly.
+decided quickly. With a criteria file, the same request also carries the job's screen and, when needed,
+its company check and profile ([search.md](search.md#agent-work)).
 
 ### Format
 

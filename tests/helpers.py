@@ -40,6 +40,8 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_DEV3_BIN": "",
             "PREP_PDF_PYTHON": "",
             "PREP_FACTS_FILE": "",
+            "PREP_CRITERIA_FILE": "",
+            "PREP_TOP_PER_WEEK": "",
             "PREP_WORKER_RESEARCH": "",
             "PREP_WORKER_COMMS": "",
             "DEV3_TASK_SEQ": "",  # claims record no worker unless a test sets one

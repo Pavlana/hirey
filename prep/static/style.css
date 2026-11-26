@@ -474,6 +474,22 @@ main:has(.apps) { max-width: 1880px; }
 .app-list.offer-list .col-role { width: auto; }
 .app-list.offer-list :is(.col-location, .col-skipped) { width: 24%; }
 .app-list.offer-list .col-undo { width: 96px; }
+/* Top 5 this week (New offers): the week's picks, each with its why line; Held, Screening, then More and
+   Filtered out folded. One scroll area inside the list card. */
+.top-view { display: block; }
+.app-list.top-view .col-company { width: 20%; }
+.app-list.top-view :is(.col-location, .col-failed) { width: 16%; }
+.top-view .top-head { display: flex; align-items: baseline; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-4) 0;
+  font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.top-view .top-head small { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.app-list .why { display: block; margin-top: 2px; font-size: 12px; color: var(--text-muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap; }
+.top-line { margin: var(--space-2) 0 0; padding: 0 var(--space-4); font-size: 12.5px; }
+.held-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--space-3); }
+.held-co { display: inline-flex; align-items: center; gap: 4px; }
+.top-more { margin-top: var(--space-2); }
+.top-more > summary { cursor: pointer; padding: var(--space-1) var(--space-4); font-size: 12.5px; color: var(--text-muted); }
+.top-more[open] > summary { color: var(--text); }
 .chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
 /* Open/closed chips read as written ("expires in 4 days"), not title-cased like stage badges. */
 .chips .badge, .panel-sub .badge-warning, .panel-sub .badge-neutral { text-transform: none; }
@@ -515,6 +531,7 @@ main:has(.apps) { max-width: 1880px; }
   .apps-main > .card { display: flex; flex-direction: column; min-height: 0; }
   .apps-main > .card > .card-head { flex: none; }
   .card-pipeline { flex: 0 1 auto; max-height: 45%; }
+  .card-pipeline:has(.top-view) { max-height: 68%; }  /* Top 5: the week's list is the main thing */
   .card-pipeline > .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: var(--space-3); }
   .card-pipeline .stage-strip, .card-pipeline .offer-filters { flex: none; }
   .card-pipeline .app-list.table-wrap { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }

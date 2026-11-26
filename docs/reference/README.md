@@ -11,6 +11,7 @@ commands, endpoints and edge cases. Start from the overview's diagrams, then com
 | --- | --- |
 | [applications.md](applications.md) | getjo matches, open and closed jobs, triage, stages, stage tasks, no response, comments, notes, review order, `/today` |
 | [assistants.md](assistants.md) | standing agents, routing, the `dev3 message` ping, claims and leases, the Applications Assistant box, Resend / Cancel / Stop, drafts, Workers sidebar, run history |
+| [search.md](search.md) | the criteria file, company checks, job screens, the gate, ranking, Top 5 this week and its metric |
 | [research.md](research.md) | the research queue, company profiles, CV fit, tier, blocked work, job briefs, the research file page |
 | [cvs.md](cvs.md) | master CV versions, My CV panel, tailored CV versions, PDF layout, rule check, AI check, verdicts |
 | [practice.md](practice.md) | debriefs, gaps and drill tasks |

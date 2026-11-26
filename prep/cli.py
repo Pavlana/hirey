@@ -59,6 +59,12 @@
     python -m prep.cli brief next | queue (--job ID | APP_ID) [--redo]   (job briefs for the panel)
     python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
     python -m prep.cli brief block (--job ID | APP_ID) --reason "no description"
+    python -m prep.cli screen save --job ID [--file PATH] | show --job ID   (the job's gate answers, TOML on stdin)
+    python -m prep.cli company check --job ID [--file PATH]   (the Research worker's check of the job's company)
+    python -m prep.cli company set NAME --interviews yes|no|unknown   (the user's call on a held company)
+    python -m prep.cli companies import FILE [--dry-run] | list   (a researched company list: JSON/JS or Markdown table)
+    python -m prep.cli top                             (New offers' Top 5 this week: picks, held, screening; fills picks)
+    python -m prep.cli research save --job ID [--file PATH]   (a company profile for a job not tracked yet; no tier)
     python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
     python -m prep.cli cards add [--file PATH]   (a JSON card or list of cards on stdin; all or none)
     python -m prep.cli cards import FILE [--dry-run]   (Markdown: docs/learn-format.md; same track + front updated)
@@ -84,7 +90,8 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes, research
+from prep import (assistant, config, criteria, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes,
+                  research, search)
 from prep.config import ConfigError, Settings, load_settings, worker_task, worker_tasks
 
 log = logging.getLogger("prep")
@@ -1017,6 +1024,10 @@ def _print_job_description(settings: Settings, app: dict) -> None:
 
 
 def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    if getattr(args, "job", None):
+        return _research_save_job(args, settings, conn)
+    if args.app_id is None:
+        raise ValueError("give an application id or --job")
     app = db.get_application(conn, args.app_id)
     if app is None:
         raise LookupError(f"no application with id {args.app_id}")
@@ -1035,6 +1046,39 @@ def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     print(f"Saved company profile {slug} ({profile['researched_at']}{tier}); "
           f"research done for applications {', '.join(map(str, app_ids))}")
     _print_review_tasks(conn, mark)
+    return 0
+
+
+def _job_company(settings: Settings, conn: sqlite3.Connection, job_id: str) -> str:
+    """The company of a getjo job (getjo, else a decision's or application's copy)."""
+    job = _getjo_job_or_none(settings, job_id) or db.job_decisions(conn).get(job_id)
+    if not job or not job.get("company"):
+        raise LookupError(f"no getjo job {job_id}")
+    return job["company"]
+
+
+def _getjo_job_or_none(settings: Settings, job_id: str) -> dict | None:
+    try:
+        with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+            return getjo.get_job(gconn, job_id)
+    except (getjo.GetjoUnavailable, sqlite3.Error):
+        return None
+
+
+def _research_save_job(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """A company profile written before the job is tracked (the Top 5 screen): saved by slug, no tier (the
+    tier belongs to an application)."""
+    company = _job_company(settings, conn, args.job)
+    slug = db.company_slug(company)
+    path = Path(args.file).expanduser() if args.file else research.company_file(_private_dir(settings), slug)
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    profile = research.read_profile(path)
+    profile["company"] = profile["company"] or company
+    app_ids = db.save_company_profile(conn, slug, profile)
+    log.info("company profile %s saved", slug)
+    print(f"Saved company profile {slug} ({profile['researched_at']})"
+          + (f"; research done for applications {', '.join(map(str, app_ids))}" if app_ids else "; no tier set"))
     return 0
 
 
@@ -1083,9 +1127,19 @@ def cmd_brief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     job_id = _brief_job(args, conn)
     if args.brief_cmd == "save":
         text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-        db.save_brief(conn, job_id, text)
-        log.info("job brief saved")  # never the text
-        print(f"Saved the brief of job {job_id}; the panel shows it.")
+        screen, text = _split_screen(text)
+        if screen is not None:
+            db.save_screen(conn, job_id, screen)
+        if text.strip() or screen is None:
+            db.save_brief(conn, job_id, text)
+            log.info("job brief saved")  # never the text
+            print(f"Saved the brief of job {job_id}; the panel shows it.")
+        if screen is not None:
+            _screen_done(conn, job_id)
+            print(f"Saved the screen of job {job_id}.")
+        elif _criteria_or_none(settings) and not db.find_by_job(conn, job_id):
+            print("  no screen block: the job stays out of Top 5 until `python -m prep.cli screen save --job "
+                  f"{job_id}` (format in `brief next`)")
         return 0
     if args.brief_cmd == "block":
         count = db.block_brief(conn, job_id, args.reason)
@@ -1098,6 +1152,73 @@ def cmd_brief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     found = db.job_briefs(conn, {job_id}).get(job_id)
     print(found["brief"] if found else f"No brief for job {job_id} yet.")
     return 0
+
+
+def _split_screen(text: str) -> tuple[dict | None, str]:
+    """(screen fields, rest) when the text starts with a "+++" TOML block, else (None, text)."""
+    if not text.lstrip("\ufeff").lstrip().startswith(research.FENCE):
+        return None, text
+    data, body = research.split_front_matter(text.lstrip())
+    return data, body
+
+
+def _screen_done(conn: sqlite3.Connection, job_id: str) -> None:
+    """A screen saved for a job whose brief exists closes its brief request (a screen-only pass)."""
+    if db.job_briefs(conn, {job_id}):
+        with conn:
+            conn.execute("UPDATE brief_requests SET status = 'done', done_at = ? WHERE getjo_job_id = ? "
+                         "AND status IN ('pending', 'claimed')", (db.now_iso(), job_id))
+
+
+def _criteria_or_none(settings: Settings) -> criteria.Criteria | None:
+    try:
+        return criteria.load(settings)
+    except criteria.CriteriaMissing:
+        return None
+
+
+SCREEN_FORMAT = """  screen (Top 5 gate): put this TOML block before the brief's key facts line (same brief save), each value
+  yes / no / unknown from the ad and the criteria file; unknown when the ad does not say:
+    +++
+    role_family = "yes"      # the criteria's role family (a hands-on AI-building role)
+    level = "yes"            # the criteria's level, judged from the ad (scope, years), not only the title
+    team = "unknown"         # at least the criteria's team size of engineers
+    location = "yes"         # the criteria's location rule
+    pay = "unknown"          # pass / fail / unknown against the criteria's floor: NEVER write the figure
+    builds_agents = "yes"    # builds agents or LLM products (internal customers count)
+    evals = "no"             # evals, quality or guardrails in the role
+    contract = "permanent"   # permanent / contract / unknown
+    +++"""
+
+COMPANY_CHECK_FORMAT = """  company check (once per company; {company} has {state}): look up how {company} interviews engineers
+  (candidate reports, Glassdoor, blogs) and its sector against the criteria file, then:
+    python -m prep.cli company check --job {job} <<'CHECK'
+    verdict = "possible"     # strong / possible / drop / unknown (the criteria's company and sector gates)
+    sector_ok = "yes"        # yes / no / unknown: the criteria's sector gate
+    interviews = "yes"       # yes: no puzzle-style rounds or timed screens; no: LeetCode-style or a timed
+                             #   screen (every job there is dropped); unknown: not enough evidence (held)
+    kind = "product"         # product / consultancy / unknown
+    note = "Take-home and pairing (two 2026 reports)"   # one line, at most 300 characters, no pay
+    CHECK"""
+
+
+def _print_screen_steps(settings: Settings, conn: sqlite3.Connection, job_id: str, company: str) -> None:
+    """The Top 5 parts of a brief packet: the screen, and the company check and profile when missing."""
+    crit = _criteria_or_none(settings)
+    if crit is None or db.find_by_job(conn, job_id):
+        return
+    print(f"\nTop 5 screen (read the criteria first: {crit.path}; its pay floor is only for comparing, never copy it):")
+    print(SCREEN_FORMAT)
+    check = db.company_check(conn, company)
+    if check is None or not check["agent_checked_at"] and check["source"] != "user" and (
+            check["interviews"] == "unknown" or check["verdict"] == "unknown"):
+        state = "no check yet" if check is None else f"interview style {check['interviews']}, verdict {check['verdict']}"
+        print(COMPANY_CHECK_FORMAT.format(company=company, state=state, job=job_id))
+    slug = db.company_slug(company)
+    fresh, _ = research.freshness(db.company_profile(conn, slug), settings.research_max_age_days, db.today_iso())
+    if fresh != "fresh":
+        print(f"  company research ({fresh}): write {research.company_file(_private_dir(settings), slug)} as in the "
+              f"/research skill's Company research (no tier needed), then: python -m prep.cli research save --job {job_id}")
 
 
 def _brief_job(args: argparse.Namespace, conn: sqlite3.Connection) -> str:
@@ -1134,9 +1255,14 @@ def _brief_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     print(f"Job {job_id}: {shown['company']} — {shown['title']}"
           + (f" (application #{tracked['id']})" if tracked else " (new offer, not tracked)"))
     print(f"  location: {shown['location'] or '–'}" + (f" · link: {shown['url']}" if shown["url"] else ""))
-    if db.job_briefs(conn, {job_id}):
-        print("  Redo requested: write the brief again from the description")
-    _print_brief_step(settings, job_id, "this job")
+    request = next((r for r in db.open_briefs(conn, job_id)), {})
+    if db.job_briefs(conn, {job_id}) and request.get("screen_asked") and not request.get("force"):
+        print("  the brief is saved: write only the screen (a brief save with the +++ block and nothing after it)")
+    else:
+        if db.job_briefs(conn, {job_id}):
+            print("  Redo requested: write the brief again from the description")
+        _print_brief_step(settings, job_id, "this job")
+    _print_screen_steps(settings, conn, job_id, shown["company"])
     _print_job_description(settings, {"getjo_job_id": job_id})
     left = len([r for r in db.open_briefs(conn) if not r["claimed"]])
     print(f"\nBriefs still waiting after this one: {left}")
@@ -2049,6 +2175,82 @@ def _get_task(conn: sqlite3.Connection, task_id: int) -> dict:
 
 # --- argument parsing -----------------------------------------------------------
 
+def cmd_screen(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """A job's screen: `save` reads the TOML fields (with or without +++ lines), `show` prints them."""
+    if args.screen_cmd == "save":
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        fields, _ = _split_screen(text)
+        row = db.save_screen(conn, args.job, fields if fields is not None else _toml(text))
+        _screen_done(conn, args.job)
+        log.info("job screen saved")
+        print(f"Saved the screen of job {args.job}: " + ", ".join(f"{k} {v}" for k, v in row.items()))
+        return 0
+    row = db.job_screens(conn).get(args.job)
+    print(", ".join(f"{k} {row[k]}" for k in db.SCREEN_FIELDS) if row else f"No screen for job {args.job} yet.")
+    return 0
+
+
+def _toml(text: str) -> dict:
+    import tomllib
+    try:
+        return tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        raise ValueError(f"not valid TOML: {e}") from e
+
+
+def cmd_company(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """`check --job ID`: the Research worker's company check (TOML on stdin); `set NAME --interviews V`: the
+    user's call on a held company."""
+    if args.company_cmd == "check":
+        company = _job_company(settings, conn, args.job)
+        text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        fields = _toml(text)
+        fields.pop("company", None)
+        slug = db.save_company_check(conn, company, fields, "agent")
+        check = db.company_checks(conn)[slug]
+        log.info("company check %s saved", slug)
+        print(f"Saved the company check of {check['company']}: verdict {check['verdict']}, sector {check['sector_ok']}, "
+              f"interviews {check['interviews']}, {check['kind']}")
+        return 0
+    slug = db.save_company_check(conn, args.name, {"interviews": args.interviews}, "user")
+    print(f"Interviews at {args.name} ({slug}): {args.interviews}")
+    return 0
+
+
+def cmd_companies(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """`import FILE`: a researched company list into company_checks; `list`: every check."""
+    if args.companies_cmd == "import":
+        path = Path(args.file).expanduser()
+        rows = search.parse_company_list(path.read_text(encoding="utf-8"), path.suffix.lower() in (".md", ".txt"))
+        if args.dry_run:
+            print(f"{len(rows)} companies read; nothing saved (dry run)")
+            return 0
+        counts = search.import_companies(conn, rows)
+        log.info("company checks imported: %s", counts)
+        print(f"{counts['saved']} company checks saved, {counts['kept']} kept (checked by the agent or the user)")
+        return 0
+    for c in sorted({c["slug"]: c for c in db.company_checks(conn).values()}.values(), key=lambda c: c["slug"]):
+        print(f"{c['company']}: verdict {c['verdict']} · sector {c['sector_ok']} · interviews {c['interviews']} · "
+              f"{c['kind']} ({c['source']})")
+    return 0
+
+
+def cmd_top(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """The week's Top 5 (filling the picks like the dashboard does), then held and screening counts."""
+    crit = criteria.load(settings)
+    with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
+        jobs = getjo.matches(gconn, db.excluded_job_ids(conn), now=getjo.now_stamp())
+    found = search.board(conn, jobs, crit, db.today_iso(), settings.top_per_week)
+    print(f"Top {settings.top_per_week} for the week of {search.week_start(db.today_iso())}:")
+    for p in found["picks"]:
+        print(f"  {p['rank']}. {p['company']} — {p['title']} ({p['outcome']}): {p['row']['why'] if p['row'] else p['why']}")
+    if not found["picks"]:
+        print("  none yet")
+    print(f"Held: checking interviews: {len(found['held'])} · screening: {len(found['screening'])} · "
+          f"more: {len(found['more'])} · filtered out: {len(found['failed'])}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="python -m prep.cli", description="Hirey commands")
     parser.add_argument("-v", "--verbose", action="store_true", help="log progress to stdout")
@@ -2245,7 +2447,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--kind", choices=db.REQUEST_KINDS)
     r.add_argument("--redo", action="store_true", help="research again even if the profile is fresh")
     r = rsub.add_parser("save", help="store the company profile from companies/<slug>.md")
-    r.add_argument("app_id", type=int)
+    r.add_argument("app_id", type=int, nargs="?")
+    r.add_argument("--job", help="a getjo job not tracked yet (the Top 5 screen): profile only, no tier")
     r.add_argument("--file", help="default: private_dir/companies/<slug>.md")
     r = rsub.add_parser("block", help="mark an application's open requests blocked: the worker cannot do them")
     r.add_argument("app_id", type=int)
@@ -2339,6 +2542,37 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "block":
             t.add_argument("--reason", required=True, help="short, e.g. \"no description\"; no pay")
     p.set_defaults(func=cmd_brief)
+
+    p = sub.add_parser("screen", help="a job's Top 5 screen: the agent's gate answers (yes / no / unknown)")
+    ssub = p.add_subparsers(dest="screen_cmd", required=True)
+    t = ssub.add_parser("save", help="store the screen (TOML on stdin or --file)")
+    t.add_argument("--job", required=True)
+    t.add_argument("--file")
+    t = ssub.add_parser("show", help="print the screen")
+    t.add_argument("--job", required=True)
+    p.set_defaults(func=cmd_screen)
+
+    p = sub.add_parser("company", help="a company's Top 5 check: interview style, sector, verdict")
+    csub = p.add_subparsers(dest="company_cmd", required=True)
+    t = csub.add_parser("check", help="the Research worker's check of a job's company (TOML on stdin or --file)")
+    t.add_argument("--job", required=True)
+    t.add_argument("--file")
+    t = csub.add_parser("set", help="the user's call on a held company's interviews")
+    t.add_argument("name")
+    t.add_argument("--interviews", required=True, choices=db.GATE_VALUES,
+                   help="yes: no puzzle-style rounds (ranked); no: puzzle rounds (dropped); unknown: held")
+    p.set_defaults(func=cmd_company)
+
+    p = sub.add_parser("companies", help="company checks: import a researched list, or list them")
+    csub = p.add_subparsers(dest="companies_cmd", required=True)
+    t = csub.add_parser("import", help="a company list (JSON or JS with a companies list, or a Markdown table)")
+    t.add_argument("file")
+    t.add_argument("--dry-run", action="store_true")
+    csub.add_parser("list", help="every company check")
+    p.set_defaults(func=cmd_companies)
+
+    p = sub.add_parser("top", help="New offers' Top 5 this week (fills the week's picks like the dashboard)")
+    p.set_defaults(func=cmd_top)
 
     p = sub.add_parser("tracks", help="Learn tracks: list (done / total, percent) or add")
     lsub = p.add_subparsers(dest="tracks_cmd", required=True)

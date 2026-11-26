@@ -22,6 +22,8 @@
      "docs": ["docs/reference/learn.md", "docs/learn-format.md"]},
     {"name": "Evals page", "code": ["prep/evals.py"],
      "docs": ["docs/reference/evals.md"]},
+    {"name": "Search: gate, ranking, Top 5", "code": ["prep/criteria.py", "prep/search.py", "criteria.example.md"],
+     "docs": ["docs/reference/search.md", "docs/how-it-works.md"]},
     {"name": "Pipeline stats", "code": ["prep/stats.py", "prep/charts.py"],
      "docs": ["docs/reference/metrics.md"]},
     {"name": "Privacy rules", "code": ["prep/privacy.py", "scripts/pre-commit"],

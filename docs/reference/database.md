@@ -76,13 +76,19 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 | `tailored_cv_checks` | tailored CV version | `verdict`, `findings` (JSON), `changes` (JSON), `summary` (JSON, AI check), `checked_at` |
 | `cv_versions` | master CV version (vN) | `file_name`, `note`, `sha256`, `created_at` |
 | `job_briefs` | getjo job | `brief` (Markdown), `updated_at` |
-| `brief_requests` | getjo job waiting for a brief | `status`, `force`, `worker`, `reason`, times |
+| `brief_requests` | getjo job waiting for a brief | `status`, `force`, `worker`, `reason`, `screen_asked`, times |
+| `company_checks` | company (`slug`) for the search gate | `verdict`, `sector_ok`, `interviews`, `kind`, `note`, `source`, `agent_checked_at` |
+| `company_aliases` | other name of a company | `alias` (slug), `slug` |
+| `job_screens` | getjo job screened for the gate | role family, level, team, location, `pay` (pass / fail / unknown), agents, evals, contract |
+| `top_picks` | job in a week's Top 5 | `week` (Monday), `rank`, `why`, copied company, title, score |
 
 - A partial unique index (`idx_agent_requests_open`) allows one open (pending or claimed) request per
   application and kind, even when two requests race.
 - `brief_requests` exists because `agent_requests` needs an application, which a new offer does not
   have.
-- Details: [research.md](research.md), [cvs.md](cvs.md).
+- Allowed values of the search tables are `db.GATE_VALUES`, `db.PAY_GATE`, `db.VERDICTS`,
+  `db.COMPANY_KINDS`, `db.CONTRACTS` and `db.CHECK_SOURCES`; pay is never a figure.
+- Details: [research.md](research.md), [cvs.md](cvs.md), [search.md](search.md).
 
 ## Conversations
 
@@ -171,6 +177,7 @@ Columns added by `MIGRATIONS`:
 | `applications` | `cv_sent`, `cv_sent_version`, `cv_sent_at`, `role_short`, `notes_updated_at`, `employer_kind` |
 | `agent_messages` | `getjo_job_id`, `topic`, `card_id`, `comms`, `channel`, `draft_subject`, `draft_body`, `worker`, `source_id` |
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
+| `brief_requests` | `screen_asked` |
 | `tailored_cv_checks` | `summary` |
 | `cards` | `prompt` |
 

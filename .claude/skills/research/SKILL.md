@@ -77,6 +77,31 @@ Applications Assistant) gets `/research briefs` (a count, no ids).
 
 3. Repeat until it prints "Nothing pending". Reply with one line: how many briefs were written.
 
+### Top 5: the screen and the company check
+
+With a criteria file (`notes/criteria.md` in private_dir, path printed in the packet), a brief request for
+a job not yet tracked is also its **screen** for New offers' Top 5. The packet then prints:
+
+- **The screen**: a `+++` TOML block put before the brief's key facts line in the same `brief save`
+  (or saved alone with `python -m prep.cli screen save --job JOB_ID`). Read the criteria file first and
+  answer each field `yes`, `no` or `unknown` from the ad: role family, level (from the scope and years
+  asked, not only the title), team (at least the criteria's number of engineers), location, builds
+  agents or LLM products, evals in the role, and contract (`permanent` / `contract` / `unknown`).
+  **Pay is only `pass`, `fail` or `unknown`**: compare a stated figure with the floor in the file;
+  unknown when the ad does not state it. Never write a figure, in the screen or anywhere else.
+  When the packet says "the brief is saved: write only the screen", save the block alone.
+- **A company check**, once per company, when the packet asks: how the company interviews engineers
+  (candidate reports, Glassdoor, engineering blogs), its sector against the criteria, a verdict, and
+  product or consultancy. Save it with `python -m prep.cli company check --job JOB_ID` (TOML on stdin,
+  format in the packet). `interviews = "no"` drops every job at that company, so it needs evidence of
+  puzzle-style rounds or a timed online screen; with too little evidence say `unknown` and the user
+  decides with one click.
+- **Company research**, when no fresh profile exists: write `companies/<slug>.md` as in "Company
+  research" below and save it with `python -m prep.cli research save --job JOB_ID` (no tier: the tier
+  belongs to an application).
+
+Nothing here decides for the user: a failed or held job is only hidden from the Top 5 list.
+
 The brief is what the user reads to decide Interested or Skip, so it is short and exact:
 - The first line is the **key facts**: office days or remote, the 2–3 main skills, seniority,
   location, separated by " · ". No heading before it.

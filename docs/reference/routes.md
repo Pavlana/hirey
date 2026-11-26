@@ -75,6 +75,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | POST | `/offers/skip` | skip an offer with a reason and comment | [applications.md](applications.md#new-offers-triage) |
 | POST | `/offers/unskip` | Undo skip | [applications.md](applications.md#new-offers-triage) |
 | POST | `/offers/brief` | Write brief / Redo brief (offers and applications) | [research.md](research.md) |
+| POST | `/offers/interviews` | Held: a company's interview style, yes (ranked) or no (filtered out) | [search.md](search.md#company-checks) |
 | POST | `/offers/apply`, `/matches/apply` | old form actions, no button; record as applied | [applications.md](applications.md#recording-an-application) |
 
 ## Applications Assistant box

@@ -65,11 +65,11 @@ Internal names keep the original name: the Python package `prep`, the settings f
 
 ## Private files (gitignored, never committed)
 
-`cv.md`, `cv-facts.md`, `notes/`, `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `learn/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
+`cv.md`, `cv-facts.md`, `notes/` (including `notes/criteria.md`), `sessions/`, `companies/`, `fit/`, `cv-tailored/`, `cv-history/`, `learn/`, `mock-interview-kit.md`, `stories.md`, `gaps.md`,
 `design-cases.md`, `*.docx`, `*.xlsx`, `*.pdf`, `data/*`, `*.db`, `config/settings.toml`, `.env`,
 `.claude/skills/board/`.
 They live in the folder named by `private_dir`. Committed templates use the `.example` suffix
-(`cv.example.md`, `cv-facts.example.md`, `learn.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
+(`cv.example.md`, `cv-facts.example.md`, `criteria.example.md`, `learn.example.md`, `config/settings.example.toml`). `prep/privacy.py` enforces the list.
 
 ## Layout
 
@@ -80,6 +80,8 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: one column, skills first, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
+             criteria.py (the private criteria file: gates and ranking), search.py (gate, ranking, Top 5 picks,
+             company list import; New offers' Top 5 this week),
              assistant.py (optional dev3 message to a standing agent: /ask, /research, /reply, /learn-ask; picks among several workers),
              workers.py (Workers sidebar and Run history: each worker's state, queue and runs; no message text or pay),
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
@@ -164,6 +166,11 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Master CV (used by /ask, My CV panel): `python -m prep.cli cv show|skills|history|draft`,
   `cv save --note "..." [--to MSG]` (backup first, atomic), `cv restore V`, `cv diff V`;
   `thread show --cv [--claim]`
+- Top 5 this week (used by /research; New offers): `python -m prep.cli top`, `screen save --job ID` (TOML on stdin,
+  or a `+++` block before a brief), `company check --job ID`, `company set NAME --interviews yes|no|unknown`,
+  `companies import FILE` (a researched company list; private), `research save --job ID` (profile, no tier).
+  Criteria: `criteria_file`, default `private_dir/notes/criteria.md` (example: `criteria.example.md`, demo with
+  `PREP_CRITERIA_FILE=$PWD/criteria.example.md`); pay only pass / fail / unknown
 - Job briefs (used by /research and /ask): `python -m prep.cli brief next`, `brief save (--job ID | APP)` (text on
   stdin), `brief show`, `brief queue [--redo]`; `thread show --message MSG` prints a comparison (`/ask compare MSG`)
 - Draft a reply (used by /reply; recruiter messages pasted in, nothing sent): `python -m prep.cli reply show MSG [--claim]`,

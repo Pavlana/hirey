@@ -68,8 +68,13 @@ its messages and queued research would otherwise be sent to them.
 The seed also copies a made-up eval catalogue and runs to `data/example-getjo-repo/`. Add
 `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` to the dashboard command and open `/evals`.
 
+New offers' Top 5 this week needs a criteria file. Add
+`PREP_CRITERIA_FILE=$PWD/criteria.example.md` to the dashboard command (without it, a real
+`notes/criteria.md` in the settings' `private_dir` would be read); the seed adds made-up jobs, company
+checks and job screens from `tests/fixtures/search-example.json` ([search.md](reference/search.md)).
+
 The seed shifts the example dates so the most recent ones fall around today. The example databases
-are built from made-up fixtures in `tests/fixtures/example.json` (fictional companies only) and are
+are built from made-up fixtures in `tests/fixtures/example.json` and `search-example.json` (fictional companies only) and are
 gitignored.
 
 ## Commands
@@ -86,6 +91,8 @@ gitignored.
 | `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
 |            | `python -m prep.cli research block APP [--kind K] --reason R` / `brief block (--job ID \| APP) --reason R` | Mark work the worker cannot do as blocked, with a reason (Workers sidebar, Run history) |
 |            | `python -m prep.cli brief next` / `brief save (--job ID \| APP)` / `brief show (--job ID \| APP)` / `brief queue (--job ID \| APP) [--redo]` | Job briefs: claim the oldest waiting one, store it (text on stdin), print it, or ask for one |
+|            | `python -m prep.cli screen save --job ID` / `company check --job ID` / `research save --job ID` | Top 5: a job's screen, its company's check and profile (TOML or file; [search.md](reference/search.md)) |
+|            | `python -m prep.cli top` / `company set NAME --interviews V` / `companies import FILE` / `companies list` | Top 5 this week; the user's call on a held company; import a researched company list |
 | `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks (the AI check is asked for with the card's button) |
 |            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file |
 |            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim, editorial) from its `.eval.md` file |
@@ -144,7 +151,7 @@ Everyday flow:
 - **Learn**: open a card, say the answer in Your answer, **Check my answer**, read the explainer;
   highlight any text and **✦ Ask about this** sends it to the Learn Assistant.
 
-![New offers with a job brief](screenshots/new-offers.png)
+![New offers: Top 5 this week on example data](screenshots/new-offers.png)
 ![Pipeline stats](screenshots/pipeline-stats.png)
 ![Evals page](screenshots/evals.png)
 ![An evals.run run](screenshots/evals-run.png)

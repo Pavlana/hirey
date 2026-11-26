@@ -44,6 +44,8 @@ it without a shell environment. The committed template is `config/settings.examp
 | `dev3_bin` | absolute path to the dev3 CLI | PATH, then `~/.dev3.0/bin/dev3` |
 | `pdf_python` | a Python with WeasyPrint, for tailored CV PDFs | the running Python |
 | `facts_file` | the facts bank tailored CV claims may trace to | `private_dir/cv-facts.md` |
+| `criteria_file` | the job criteria: gates and ranking for Top 5 ([search.md](search.md#the-criteria-file)) | `private_dir/notes/criteria.md` |
+| `top_per_week` | jobs in the week's Top 5, 1-20 | 5 |
 | `getjo_repo` | getjo's git checkout, read only: the Learn explainers' check and the Evals page | getjo_db's grandparent when it holds `.git` |
 | `[workers]` | routes queued work to worker tasks | unset: everything to `assistant_task` |
 
@@ -71,6 +73,7 @@ comms = 75
 | `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`, `PREP_BRIEF_AUTO_MIN_SCORE` | numbers |
 | `PREP_ASSISTANT_TASK`, `PREP_PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` | assistants |
 | `PREP_PDF_PYTHON`, `PREP_FACTS_FILE` | CV |
+| `PREP_CRITERIA_FILE`, `PREP_TOP_PER_WEEK` | Top 5 |
 | `PREP_WORKER_RESEARCH`, `PREP_WORKER_COMMS` | `[workers]` routes; a list as `"71,72"` |
 
 - Each env var overrides one key.

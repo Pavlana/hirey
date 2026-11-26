@@ -23,6 +23,8 @@ from prep import db, learn
 from prep.config import REPO_ROOT
 
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "example.json"
+SEARCH_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "search-example.json"  # Top 5: more jobs, checks, screens
+EXAMPLE_CRITERIA = REPO_ROOT / "criteria.example.md"
 EXAMPLE_PREP_DB = REPO_ROOT / "data" / "example.db"
 EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
 EVALS_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "evals"
@@ -137,6 +139,28 @@ def build_prep_db(path: Path, data: dict) -> None:
 LATENCY = {"claude-opus-5-5": 9, "claude-sonnet-5-5": 4, "claude-fable-5-1": 16}  # made-up seconds per response
 
 
+def add_search_example(path: Path, data: dict, today: str) -> None:
+    """New offers' Top 5 on made-up data: company checks, job screens, briefs, a skip and last week's picks
+    (`days_before` days back) in the prep.db at `path`."""
+    from prep import search
+    conn = db.connect(path)
+    try:
+        for c in data.get("company_checks", []):
+            db.save_company_check(conn, c["company"], {k: v for k, v in c.items() if k != "company"}, "import")
+        for s in data.get("screens", []):
+            db.save_screen(conn, s["job"], {k: v for k, v in s.items() if k != "job"})
+        for b in data.get("briefs", []):
+            db.save_brief(conn, b["job"], b["brief"])
+        for d in data.get("decisions", []):
+            db.record_decision(conn, {"id": d["job"]}, d["decision"], d.get("reason"))
+        for p in data.get("picks", []):
+            week = search.week_start((date.fromisoformat(today) - timedelta(days=p["days_before"])).isoformat())
+            db.add_pick(conn, week, {"id": p["job"], "company": p["company"], "title": p["title"], "score": p["score"]},
+                        p["why"])
+    finally:
+        conn.close()
+
+
 def build_evals_example(repo: Path) -> None:
     """A stand-in for getjo's checkout with only evals/catalog.json and evals/results/ (made-up runs),
     for the Evals page: PREP_GETJO_REPO=$PWD/data/example-getjo-repo."""
@@ -152,13 +176,17 @@ def main() -> int:
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
     data = load_fixtures()
     data = shift_dates(data, (date.today() - date.fromisoformat(data["_anchor_date"])).days)
-    build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
+    extra = load_fixtures(SEARCH_FIXTURES)
+    extra = shift_dates(extra, (date.today() - date.fromisoformat(extra["_anchor_date"])).days)
+    build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"] + extra["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
+    add_search_example(EXAMPLE_PREP_DB, extra, date.today().isoformat())
     build_evals_example(EXAMPLE_GETJO_REPO)
     log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
     log.info("try: PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
     log.info("or:  PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
     log.info("Evals page on made-up runs: add PREP_GETJO_REPO=$PWD/data/example-getjo-repo")
+    log.info("Top 5 on the example criteria: add PREP_CRITERIA_FILE=$PWD/criteria.example.md")
     return 0
 
 

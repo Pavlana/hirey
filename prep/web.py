@@ -40,9 +40,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, evals, explainers, getjo, learn, learnnotes,
+from prep import (assistant, charts, criteria, cvcheck, cveval, cvfile, cvpdf, db, evals, explainers, getjo, learn, learnnotes,
                   research, stats, workers)
 from prep.md import render_markdown
+from prep import search
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep.web")
@@ -110,6 +111,7 @@ MESSAGES = {
     "notes_saved": "Notes saved.",
     "employer_saved": "Employer kind saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
+    "interviews_set": "Saved. The company's jobs move out of Held: ranked, or filtered out.",
     "brief_queued": "Brief queued. The assistant writes it from the job description; it shows here.",
     "sel_limit": f"Up to {db.MAX_TARGETS} at a time: untick one first.",
     "card_done": "Card done. Here is the next one to do.",
@@ -750,6 +752,19 @@ def _panel_ctx(conn: sqlite3.Connection, form: dict[str, str]) -> tuple[int | No
     return None, (form.get("panel_job") or None)
 
 
+def set_interviews(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
+    """Held: checking interviews: the user's one click on a company whose interview style is unknown. yes: no
+    puzzle-style rounds, its jobs are ranked; no: puzzle rounds, its jobs (and later ones) are filtered out."""
+    company = (form.get("company") or "").strip()
+    value = form.get("interviews")
+    if not company or len(company) > 200:
+        raise BadRequest("company is missing.")
+    if value not in ("yes", "no"):
+        raise BadRequest("interviews must be yes or no.")
+    db.save_company_check(conn, company, {"interviews": value}, "user")
+    log.info("interview style set from the dashboard: %s", value)
+
+
 def queue_brief(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> None:
     """Write brief / Redo brief: queue a job brief for the agent (Redo when one exists) and ping the
     Applications Assistant. A second click while it is open changes nothing."""
@@ -1156,6 +1171,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/employer": (set_employer_kind, "/", "employer_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
+    "/offers/interviews": (set_interviews, "/", "interviews_set"),
     "/tasks/done": (complete_task, "/", "task_done"),
     "/tasks/reopen": (reopen_task, "/", "task_reopened"),
     "/learn/done": (card_done, "/learn", "card_done"),
@@ -1225,7 +1241,25 @@ def applications_tab(settings: Settings, conn: sqlite3.Connection, today: str) -
                 if funnel else _empty(no_apps), cls="card-funnel")
         + _card("Which job boards bring the best matches", boards_table(settings, apps))
         + "</div>"
+        + _card("Top 5: how many were applied to", top_picks_card(conn), cls="card-wide")
     )
+
+
+def top_picks_card(conn: sqlite3.Connection) -> str:
+    """The search's result metric: of every job shown in a week's Top 5, the share applied to, and what
+    happened to the rest (Interested, skipped with the reasons, not acted on yet)."""
+    found = search.pick_stats(conn)
+    if not found["picked"]:
+        return _empty("No Top 5 picks yet.", "New offers fills a week's Top 5 once jobs pass the criteria.")
+    share = f"{found['share']:.0%}"
+    rows = [("Applied", str(found["applied"])), ("Interested, not applied yet", str(found["interested"])),
+            ("Skipped", str(found["skipped"])), ("Not acted on", str(found["open"]))]
+    rows += [(f"&nbsp;&nbsp;skipped: {h(SKIP_REASON_LABELS.get(reason, reason))}", str(n))
+             for reason, n in found["reasons"]]
+    tiles = (_tile("Applied", share, f"<small>{found['applied']} of {found['picked']} Top 5 jobs</small>", "accent")
+             + _tile("Skipped", str(found["skipped"]), "<small>with a reason</small>"))
+    return (f'<div class="tiles">{tiles}</div>' + _table(("Outcome", ("Jobs", "num")), rows, "")
+            + _note("Every job ever shown in a week's Top 5 counts once. Applied includes later stages."))
 
 
 def boards_table(settings: Settings, apps: list[dict]) -> str:
@@ -1701,6 +1735,7 @@ def home_filters(query: dict[str, list[str]]) -> dict:
         "loc": tuple(loc for loc in getjo.LOCATIONS if loc in query.get("loc", [])),
         "q": first("q"),
         "skipped": first("skipped") == "1",
+        "all": first("all") == "1",
         "sel": parse_sel(query.get("sel", [])),
     }
 
@@ -1750,6 +1785,8 @@ def home_url(f: dict, **changes: object) -> str:
             pairs.append(("q", s["q"]))
         if s["skipped"]:
             pairs.append(("skipped", "1"))
+        if s.get("all"):
+            pairs.append(("all", "1"))
     else:
         if s["stage"]:
             pairs.append(("stage", s["stage"]))
@@ -1789,6 +1826,8 @@ def _read_getjo(settings: Settings, conn: sqlite3.Connection, f: dict, now: str)
               | {k[2:] for k in f["sel"] if k.startswith("j:")})  # ticked offers need their names
     if f["view"] == "offers" and f["skipped"]:
         wanted |= {k for k, d in decisions.items() if d["decision"] == "skipped"}
+    if f["view"] == "offers":  # this week's Top 5 picks, acted on or not
+        wanted |= {p["getjo_job_id"] for p in db.week_picks(conn, search.week_start(now[:10]))}
     try:
         with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
             found["new"] = getjo.matches(gconn, db.excluded_job_ids(conn), f["score"], now=now)
@@ -2213,18 +2252,23 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
         f["job"] = job["id"] if job else None
     targets = sel_targets(conn, f, rows, found)
     f["sel"] = tuple(t["key"] for t in targets)  # unknown ids dropped, a tracked job named by its application
+    top, top_error = _top_board(settings, conn, found, f, today)
     briefs = _queue_briefs(settings, conn, found, job if focus is None and decision is None else None)
     open_count = sum(1 for r in rows if r["group"] != "closed")
     closed_count = len(rows) - open_count
     offers = None if found["error"] else len(found["new"])
-    if f["view"] == "offers":
-        body = _offer_filters(f) + _offer_list(offer_rows(found, f), f, found, now, settings.stale_days)
+    if f["view"] == "offers" and top is not None:
+        body = _offer_filters(f) + _top_view(top, f, found, now, today, settings)
+    elif f["view"] == "offers":
+        banner = (_banner(f"Top 5 is off: {top_error}. New offers lists every getjo match.", "neutral")
+                  if top_error and _top_wanted(f) else "")
+        body = _offer_filters(f) + banner + _offer_list(offer_rows(found, f), f, found, now, settings.stale_days)
     elif not rows:
         body = _empty("No applications yet.", "Mark a job Interested in New offers, or use /applied.")
     else:
         mine = employer_rows(rows, f)
         body = _stage_strip(mine, f) + _app_list(mine, f)
-    switch = _view_switch(f, open_count, offers) + (_skipped_toggle(f) if f["view"] == "offers" else "")
+    switch = _view_switch(f, open_count, offers) + (_all_toggle(f) + _skipped_toggle(f) if f["view"] == "offers" else "")
     list_card = (f'<section class="card card-pipeline card-list" data-view="{f["view"]}"><header class="card-head">{switch}'
                  f'</header><div class="card-body">{body}</div></section>')
     if f["cv"]:
@@ -2290,13 +2334,22 @@ def _sel_tick(f: dict, key: str, label: str, text: str = "") -> str:
 
 def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, opened: dict | None) -> dict:
     """Queue job briefs the agent has not been asked for: every new offer scored at least
-    brief_auto_min_score (in the background), and an untracked offer whose panel is open (`opened`).
+    brief_auto_min_score (in the background), and an untracked offer whose panel is open (`opened`). With a
+    criteria file (Top 5), every new offer plain code does not fail instead, the screen and company check
+    with the brief (db.queue_screens), and none for a job it fails.
     Pings the Applications Assistant once when any were added. Returns {job id: brief…} plus "open" (the
     job ids with a brief request open)."""
-    wanted = [] if found["error"] else [j["id"] for j in found["new"] if (j["score"] or 0) >= settings.brief_auto_min_score]
+    crit = None if found["error"] else _criteria(settings)
+    new = found["new"] if not found["error"] else []
+    if crit is not None:  # Top 5: no agent work on a job plain code already fails (Staff, Manchester, ...)
+        checks = db.company_checks(conn)
+        new = [j for j in new if not search.plain_fail(j, checks.get(db.company_slug(j["company"] or "")), crit)]
+    wanted = [j["id"] for j in new if (j["score"] or 0) >= settings.brief_auto_min_score]
     if opened is not None:
         wanted.append(opened["id"])
     added = db.queue_missing_briefs(conn, wanted)
+    if crit is not None:  # ... and every other candidate gets its brief, screen and company check
+        added += [j for j in db.queue_screens(conn, [j["id"] for j in new]) if j not in added]
     if added:
         log.info("%d job brief(s) queued", len(added))
         seq = assistant.pick(settings, conn, "research")
@@ -2304,6 +2357,123 @@ def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, ope
             db.assign_briefs(conn, added, seq)
         assistant.notify_briefs_in_background(settings, len(added), seq)
     return {**db.job_briefs(conn), "open": {r["getjo_job_id"] for r in db.open_briefs(conn)}}
+
+
+def _criteria(settings: Settings) -> criteria.Criteria | None:
+    try:
+        return criteria.load(settings)
+    except (criteria.CriteriaMissing, OSError):
+        return None
+
+
+def _top_wanted(f: dict) -> bool:
+    """The Top 5 view replaces the New offers list unless a filter, Show skipped or All offers is on."""
+    return (f["view"] == "offers" and not (f["skipped"] or f["all"] or f["q"] or f["loc"])
+            and f["score"] == getjo.DEFAULT_THRESHOLD)
+
+
+def _top_board(settings: Settings, conn: sqlite3.Connection, found: dict, f: dict,
+               today: str) -> tuple[dict | None, str | None]:
+    """(search.board for the new offers, None) when the Top 5 view is shown, else (None, why it is off)."""
+    if not _top_wanted(f) or found["error"]:
+        return None, None
+    try:
+        crit = criteria.load(settings)
+    except (criteria.CriteriaMissing, OSError) as e:
+        return None, str(e)
+    return search.board(conn, found["new"], crit, today, settings.top_per_week), None
+
+
+def _all_toggle(f: dict) -> str:
+    """All offers / Top 5: the plain list of every match, or the ranked view (a link)."""
+    href = home_url(f, all=not f["all"], skipped=False, app=None, job=None)
+    return (f'<a class="view-btn{" is-active" if f["all"] else ""}" href="{h(href)}">'
+            f'{"Top 5" if f["all"] else "All offers"}</a>')
+
+
+OUTCOME_TONES = {"applied": "success", "interested": "accent", "skipped": "neutral"}
+
+
+def _top_rows(items: list[tuple[dict, str, str]], f: dict, now: str, stale_days: int, lead: str = "") -> str:
+    """Rows of a Top 5 table: (job, why line, last cell) each; the role cell carries the why line."""
+    trs = []
+    for job, why, last in items:
+        key = f'j:{job["id"]}'
+        href = home_url(f, job=job["id"], app=None, sel=auto_sel(f, key))
+        chips = _job_chips(getjo.job_state(job, now, stale_days)) if job.get("first_seen") else ""
+        role = (f'<span class="clamp" title="{h(job["title"])}">{h(job["title"])}</span>'
+                + (f'<span class="why">{h(why)}</span>' if why else "")
+                + (f'<span class="chips">{chips}</span>' if chips else ""))
+        cells = (_sel_tick(f, key, f'{job["company"]} — {job["title"]}'), _score_badge(job["score"]),
+                 f'<a href="{h(href)}">{h(job["company"])}</a>', role, last)
+        focus = ' class="is-focus"' if job["id"] == f["job"] and f["app"] is None else ""
+        trs.append(f'<tr data-href="{h(href)}" data-job="{h(job["id"])}" data-key="{h(key)}"{focus}>'
+                   + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
+    head = SEL_HEAD + "".join(f'<th scope="col" class="col-{c.lower()}">{c}</th>'
+                              for c in ("Score", "Company", "Role", lead or "Location"))
+    return f'<table><thead><tr>{head}</tr></thead><tbody>{"".join(trs)}</tbody></table>'
+
+
+def _location_cell(job: dict) -> str:
+    return f'<span class="ellip" title="{h(job["location"])}">{h(job["location"])}</span>'
+
+
+def _top_view(top: dict, f: dict, found: dict, now: str, today: str, settings: Settings) -> str:
+    """New offers' Top 5 this week: the week's picks with their why lines, the Held line (one click per
+    company), how many are being screened, then More (passed, not picked) and Filtered out, collapsed."""
+    week = search.week_start(today)
+    here = home_url(f)
+    picks = []
+    for p in top["picks"]:
+        job = (p["row"]["job"] if p["row"] else None) or found["jobs"].get(p["getjo_job_id"]) or {
+            "id": p["getjo_job_id"], "company": p["company"], "title": p["title"], "score": p["score"],
+            "location": None, "first_seen": None}
+        why = p["row"]["why"] if p["row"] else p["why"]
+        last = _location_cell(job) if p["outcome"] == "open" else _badge(p["outcome"], OUTCOME_TONES.get(p["outcome"], "neutral"))
+        picks.append((job, why or "", last))
+    done = sum(1 for p in top["picks"] if p["outcome"] != "open")
+    head = (f'<h3 class="top-head">Top {settings.top_per_week} this week <small class="muted">week of '
+            f'{h(date.fromisoformat(week).strftime("%-d %b"))} · {done} of {len(picks)} acted on</small></h3>')
+    body = _top_rows(picks, f, now, settings.stale_days) if picks else _empty(
+        "Nothing has passed the criteria yet.",
+        "Jobs show here once the Research worker has written their brief and screen." if top["screening"] else
+        "getjo jobs scored 7 or more are checked against the criteria after each poll.")
+    held = _held_line(top["held"], here)
+    screening = (f'<p class="top-line muted">Screening: {len(top["screening"])} job{"s" if len(top["screening"]) != 1 else ""} '
+                 'waiting for the Research worker (brief, screen, company check).</p>' if top["screening"] else "")
+    more = ""
+    if top["more"]:
+        rows = [(r["job"], r["why"], _location_cell(r["job"])) for r in top["more"]]
+        more = (f'<details class="top-more"><summary>More ({len(rows)})</summary>'
+                f'{_top_rows(rows, f, now, settings.stale_days)}</details>')
+    failed = ""
+    if top["failed"]:
+        rows = [(r["job"], "", f'<span class="ellip muted" title="Failed: {h(search.failed_text(r))}">'
+                               f'{h(search.failed_text(r))}</span>') for r in top["failed"]]
+        failed = (f'<details class="top-more"><summary>Filtered out ({len(rows)})</summary>'
+                  f'{_top_rows(rows, f, now, settings.stale_days, lead="Failed")}</details>')
+    return (f'<div class="table-wrap app-list offer-list top-view" id="top-view">{head}{body}{held}{screening}'
+            f'{more}{failed}</div>')
+
+
+def _held_line(rows: list[dict], here: str) -> str:
+    """Held: checking interviews — each company with its job count and two one-click answers."""
+    if not rows:
+        return ""
+    companies: dict[str, list[dict]] = {}
+    for r in rows:
+        companies.setdefault(r["job"]["company"] or "?", []).append(r)
+    parts = []
+    for company, jobs in companies.items():
+        forms = "".join(
+            '<form method="post" action="/offers/interviews" class="inline" data-ajax="refresh">'
+            f'<input type="hidden" name="company" value="{h(company)}"><input type="hidden" name="interviews" value="{value}">'
+            f'<input type="hidden" name="return" value="{h(here)}">{_button(label, "ghost", "sm")}</form>'
+            for value, label in (("yes", "No LeetCode"), ("no", "LeetCode: drop")))
+        note = (jobs[0]["check"] or {}).get("note")
+        title = f' title="{h(note)}"' if note else ""
+        parts.append(f'<span class="held-co"><span{title}>{h(company)} ({len(jobs)})</span>{forms}</span>')
+    return f'<div class="top-line held-line"><strong>Held: checking interviews</strong> {"".join(parts)}</div>'
 
 
 def _read_description(settings: Settings, job_id: str) -> str | None:
