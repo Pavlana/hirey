@@ -44,6 +44,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_COORDINATOR_TASK": "",
             "PREP_CONTEXT_WARN_TOKENS": "",
             "PREP_WORKER_RESEARCH": "",
+            "PREP_WORKER_COMMS": "",
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()

@@ -23,6 +23,9 @@ description: Daily job-search brief from Hirey — applications that moved to No
    - **Agent thread** (only if the output has an "Agent thread" line): messages left in the
      dashboard's Applications Assistant box are waiting. Run /ask now and give its one-line
      summary per application.
+   - **Draft replies** (only if the output has a "Draft replies:" line): "Draft a reply" requests are
+     waiting. Run /reply for each (`python -m prep.cli thread pending` lists them), unless the
+     line says a Comms worker handles them.
    - **Learn Assistant** (only if the output has a "Learn Assistant:" line): messages in the Learn
      page's Learn Assistant box are waiting. Mention the count and that /learn-ask answers them (the
      Learn Assistant task does it when one is set); do not run it here.

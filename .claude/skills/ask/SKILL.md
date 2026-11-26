@@ -196,6 +196,10 @@ NOTES
   `python -m prep.cli update APP --pay "…"` only when the user asks.
 - Say in the reply what was added ("Added to Notes: format, AI tools not allowed, two names.").
 
+**A "Draft a reply" request** (its first line is "Draft a … (/reply)", or the ping is
+`/reply …`): not an /ask message. Run /reply for it (`.claude/skills/reply/SKILL.md`); `thread show
+--claim` never takes it.
+
 **A pasted recruiter email, call notes or a status line** (an interview invitation, a
 reschedule, a rejection, an offer): do what `/stage` does, for this application only. Its
 skill file `.claude/skills/stage/SKILL.md` has the stage table and the rules.

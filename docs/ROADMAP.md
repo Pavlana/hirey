@@ -124,5 +124,9 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
 - Assistant scaling, step 1: a `[workers]` router (plain code) sends queued research, CV fit,
   tailored CVs, AI checks and job briefs to a Research worker task when one is set; thread messages
   stay with the Applications Assistant. Message claims lapse after 30 minutes (flagged, Resend at
-  once); prep.db runs in WAL with a busy timeout so several agents write in turn. Next: a recruiter
-  communication worker (`comms`), then several research workers in parallel.
+  once); prep.db runs in WAL with a busy timeout so several agents write in turn.
+- Assistant scaling, step 2: recruiter communication, paste-in only. Draft a reply (reply, follow-up,
+  thank-you note; LinkedIn or email) in the panels and the box, routed to a Comms worker
+  (`[workers] comms`, else the Applications Assistant), written by /reply, shown with Copy. Nothing is
+  sent; interview bookings are recorded, anything else only proposed; a pay guard on drafts.
+  Next: several research workers in parallel.

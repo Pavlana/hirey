@@ -14,8 +14,10 @@ assistant as `/learn-ask <card id> <message id>` (or `/learn-ask general <messag
 
 Routing (plain code, no LLM): ROUTES maps each kind of queued work to a [workers] route; when that
 route has a worker task set (Settings.workers), the ping goes to the worker instead of `assistant_task`.
-Today `research` takes company research, CV fit, tailored CVs, AI CV checks and job briefs. Every thread
-message (/ask) and anything unmapped stays with the Applications Assistant.
+Today `research` takes company research, CV fit, tailored CVs, AI CV checks and job briefs, and `comms` the
+"Draft a reply" requests (`/reply <app id | job | general> <message id>`, written by the /reply skill). Every
+other thread message (/ask) and anything unmapped stays with the Applications Assistant, which also gets
+the /reply pings when no comms worker is set.
 
 Each message ping's time and outcome is kept in memory (last_ping), so the dashboard can offer
 Resend at once after a failed ping, or after RESEND_AFTER seconds without a reply.
@@ -52,8 +54,8 @@ def last_ping(message_id: int) -> tuple[float, bool] | None:
 APPLICATIONS_ASSISTANT = "Applications Assistant"
 # Work kind -> [workers] route. Kinds not listed (thread messages) always go to assistant_task.
 ROUTES = {"research": "research", "cv_fit": "research", "tailor": "research", "cv_eval": "research",
-          "brief": "research"}
-WORKER_NAMES = {"research": "Research worker"}
+          "brief": "research", "comms": "comms"}
+WORKER_NAMES = {"research": "Research worker", "comms": "Comms worker"}
 
 
 def target(settings: Settings, kind: str) -> tuple[int | None, str]:
@@ -99,11 +101,12 @@ def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[s
 
 
 def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str, job: bool = False,
-                topic: str | None = None) -> list[str]:
+                topic: str | None = None, kind: str = "ask") -> list[str]:
     """The `dev3 message` argument list for a new message: ids only, never its text. A message about
     a job offer not yet tracked (`job`) is sent as `/ask job <message id>` (the getjo job id stays out
     of the command), one about the master CV (`topic` "cv") as `/ask cv <message id>`, one about the
-    whole search as `/ask general <message id>`."""
+    whole search as `/ask general <message id>`. A draft request (`kind` "comms") is `/reply <app | job |
+    general> <message id>` to whoever handles comms (target)."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
     if app_id is not None:
         about, subject = str(int(app_id)), f"Question on application {int(app_id)}"
@@ -115,6 +118,12 @@ def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: s
         about, subject = "compare", "Question comparing several jobs"
     else:
         about, subject = "general", "Question on the whole search"
+    if kind == "comms":
+        about = about if about == "job" or about.isdigit() else "general"
+        subject = {"job": "Draft a reply on a job offer", "general": "Draft a reply"}.get(
+            about, f"Draft a reply on application {about}")
+        return [dev3, "message", "--task", f"seq:{int(target(settings, 'comms')[0])}", *project,
+                "--subject", subject, f"/reply {about} {int(message_id)}"]
     return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
             "--subject", subject, f"/ask {about} {int(message_id)}"]
 
@@ -164,16 +173,22 @@ def _routed(settings: Settings, requests: list[dict]) -> bool:
     return any(target(settings, r.get("kind", "research"))[0] for r in requests)
 
 
+def message_target(settings: Settings, kind: str = "ask") -> int | None:
+    """The dev3 task seq a message ping goes to: the comms route for a draft request, else assistant_task."""
+    return target(settings, "comms")[0] if kind == "comms" else settings.assistant_task
+
+
 def notify_message(settings: Settings, app_id: int | None, message_id: int, job: bool = False,
-                   topic: str | None = None) -> int:
-    """Send `/ask <app id | job | cv | general> <message id>`; returns 1 if delivered. Never raises."""
-    if not settings.assistant_task:
+                   topic: str | None = None, kind: str = "ask") -> int:
+    """Send `/ask <app id | job | cv | general> <message id>` (or `/reply …` for a draft request, `kind`
+    "comms"); returns 1 if delivered. Never raises."""
+    if not message_target(settings, kind):
         return 0
     dev3 = dev3_path(settings)
     if dev3 is None:
         log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); the message stays pending")
         return _record(message_id, 0)
-    return _record(message_id, _send([ask_command(settings, app_id, message_id, dev3, job, topic)]))
+    return _record(message_id, _send([ask_command(settings, app_id, message_id, dev3, job, topic, kind)]))
 
 
 def learn_command(settings: Settings, card_id: int | None, message_id: int, dev3: str) -> list[str]:
@@ -232,10 +247,12 @@ def notify_in_background(settings: Settings, requests: list[dict]) -> threading.
 
 
 def notify_message_in_background(settings: Settings, app_id: int | None, message_id: int,
-                                 job: bool = False, topic: str | None = None) -> threading.Thread | None:
+                                 job: bool = False, topic: str | None = None,
+                                 kind: str = "ask") -> threading.Thread | None:
     """notify_message() in a daemon thread, so the Send button never waits for dev3."""
-    if not settings.assistant_task:
+    if not message_target(settings, kind):
         return None
-    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job, topic), daemon=True)
+    thread = threading.Thread(target=notify_message, args=(settings, app_id, message_id, job, topic, kind),
+                              daemon=True)
     thread.start()
     return thread

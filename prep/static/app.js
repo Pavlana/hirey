@@ -33,6 +33,29 @@
 
   const toasts = document.querySelector(".toasts");
 
+  // --- Copy (a draft reply: its body, and an email's subject) ------------------------
+  // Copies the named element's text exactly as shown; nothing is sent anywhere.
+  document.addEventListener("click", async (e) => {
+    const btn = e.target.closest("button[data-copy]");
+    if (!btn) return;
+    const el = document.getElementById(btn.dataset.copy);
+    if (!el) return;
+    const text = el.textContent;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const area = document.createElement("textarea"); // no clipboard API (plain http on another host)
+      area.value = text;
+      document.body.append(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    const label = btn.textContent;
+    btn.textContent = "Copied";
+    setTimeout(() => { btn.textContent = label; }, 1500);
+  });
+
   // --- toasts -------------------------------------------------------------------
   // Text is always set with textContent: server messages can echo form input.
   function toast(message, { error = false, action = null, ms = 5000 } = {}) {
@@ -1358,6 +1381,15 @@
         // The panel's Mock interview: the start message joins the Applications Assistant box, which waits for the first question.
         const thread = document.querySelector(".agent [data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
+        applyChatFilter();
+        watchThread();
+        toast(reply.message);
+      } else if (mode === "draft") {
+        // Draft a reply: the request joins the Applications Assistant box, which waits for the draft.
+        const thread = document.querySelector(".agent [data-thread]");
+        if (thread && reply.html) thread.outerHTML = reply.html;
+        form.reset();
+        form.closest("details")?.removeAttribute("open");
         applyChatFilter();
         watchThread();
         toast(reply.message);

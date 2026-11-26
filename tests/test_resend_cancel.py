@@ -122,7 +122,7 @@ class ApplicationsBoxTest(ResendCancelBase):
             status, reply = self.post_json("/applications/resend", {"msg_id": str(msg)})
         self.assertEqual(status, 200)
         self.assertEqual(reply["message"], "Sent to the Applications Assistant again.")
-        ping.assert_called_once_with(self.settings, ACME, msg, job=False, topic=None)
+        ping.assert_called_once_with(self.settings, ACME, msg, job=False, topic=None, kind="ask")
         self.assertEqual(self.rows(), before)
         self.assertEqual(self.status(msg), "pending")
 

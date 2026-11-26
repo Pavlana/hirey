@@ -863,6 +863,27 @@ main:has(.learn-view) { max-width: 1880px; }
 .msg-flag { padding: 0 6px; border-radius: var(--radius-full); border: 1px dashed var(--border-strong);
   color: var(--text-muted); font-size: 11px; }
 .msg-flag-warn { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 45%, transparent); }
+/* Recruiter drafts: the channel tag on a draft request and its draft; the draft in a box with Copy
+   (and, for an email, the subject with Copy subject). Pre-wrap keeps the line breaks to paste. */
+.msg-channel { padding: 0 6px; border-radius: var(--radius-full); border: 1px solid var(--border-strong);
+  font-size: 11px; color: var(--text-muted); }
+.msg-channel-linkedin { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent); }
+.draft { margin-top: var(--space-2); border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); padding: var(--space-2) var(--space-3); display: grid; gap: var(--space-2); }
+.draft-subject { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+  padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
+.draft-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
+.draft-subject .draft-text { flex: 1; font-weight: 600; }
+.draft-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 12.5px; }
+.draft-reply { margin-top: var(--space-2); }
+.draft-reply > summary { cursor: pointer; font-size: 13px; color: var(--text-muted); }
+.draft-form { display: grid; gap: var(--space-2); margin-top: var(--space-2); }
+.draft-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.draft-channels { display: inline-flex; gap: var(--space-3); font-size: 13px; }
+.draft-channel { display: inline-flex; align-items: center; gap: 4px; margin: 0; cursor: pointer; }
+.draft-form select { padding: 4px 8px; font-size: 13px; }
+.draft-form textarea[name="notes"] { min-height: 44px; }
 .answer-check { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2);
   margin: calc(-1 * var(--space-4)) 0 0; font-size: 12.5px; }  /* close under Your answer */
 /* Your answer on the card: a plain textarea from six rows, growing as it is typed (app.js). */
