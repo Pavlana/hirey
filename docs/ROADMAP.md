@@ -146,3 +146,9 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
   and tasks) and Pipeline stats (`/stats`, the application numbers unchanged). Response time per
   model call recorded from the transcripts (`usage_messages.latency_ms`, one re-read of old
   transcripts). Run history moved to `/runs` (off the nav); old `/metrics` URLs redirect.
+- Docs kept in step with the code: `prep/docs_check.py` fails when a route, setting, table or column,
+  CLI command or skill is missing from its reference page, a link, anchor or image is broken, a
+  screenshot is unused, or (on a pull request) code changed without the page that owns it per
+  `docs/docs-map.json`, unless the PR says `Docs: not needed, <reason>`. Run by `python -m unittest`
+  and by GitHub on every pull request; `/docs-sync` is the routine before `dev3 pr create`;
+  `scripts/screenshots.py` retakes the page-level screenshots on example data.
