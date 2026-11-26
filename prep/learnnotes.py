@@ -132,14 +132,17 @@ def save(private_dir: Path | None, key: str, text: str, stamp: str) -> str:
 _OLD_LABEL = re.compile(r"^[ \t]*bonus for the interview:", re.IGNORECASE | re.MULTILINE)
 
 
-def append(private_dir: Path | None, key: str, text: str, day: str | None = None, author: str = "Agent") -> str:
+def append(private_dir: Path | None, key: str, text: str, day: str | None = None, author: str = "Agent",
+           by_user: bool = False) -> str:
     """Add a dated block ("**Agent · 18 Nov**", then the text) at the end; what is there stays as it is.
-    Return the new stamp. The agent's text never mentions pay."""
+    Return the new stamp. The agent's text never mentions pay; `by_user` (the user's own words, from the
+    Learn page's highlight box) skips that check, as the editor's save does."""
     if is_answer(key):
         raise ValueError("a card's answer is the user's own: agents read it (--show), never add to it")
     if not text.strip():
         raise ValueError("nothing to append")
-    db.check_no_pay(_OLD_LABEL.sub("", text), "notes from the agent")
+    if not by_user:
+        db.check_no_pay(_OLD_LABEL.sub("", text), "notes from the agent")
     block = db.notes_block(text, day or db.today_iso(), author)
     folder = _folder(private_dir)
     path = folder / _name(key)

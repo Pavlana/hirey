@@ -40,8 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research, stats,
-                  usage)
+from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes,
+                  research, stats, usage)
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -52,6 +52,8 @@ STATIC_FILES = {
     "/static/style.css": ("style.css", "text/css; charset=utf-8"),
     "/static/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/static/vim.js": ("vim.js", "text/javascript; charset=utf-8"),
+    "/static/explainer.css": ("explainer.css", "text/css; charset=utf-8"),
+    "/static/explainer.js": ("explainer.js", "text/javascript; charset=utf-8"),
 }
 LOOPBACK_NAMES = ("localhost", "127.0.0.1")
 MAX_BODY = 256 * 1024  # a 20,000-character pasted email URL-encodes to up to ~180 KB
@@ -125,12 +127,15 @@ MESSAGES = {
     "learn_resent": "Sent to the Learn Assistant again.",
     "learn_stopped": "Stopped. Waiting Learn Assistant messages are cancelled; ask again any time.",
     "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
+    "learn_quote_noted": "Added to this card's notes.",
+    "learn_explain_asked": "Asked the Learn Assistant for an explainer. It shows under the card when it is written.",
+    "learn_refresh_asked": "Asked the Learn Assistant to refresh the explainer.",
 }
 
 SECURITY_HEADERS = [
     ("Content-Security-Policy",
      "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src 'self'; "
-     "form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
+     "frame-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'"),
     ("X-Content-Type-Options", "nosniff"),
     # same-origin, not no-referrer: under no-referrer browsers send "Origin: null" on plain form
     # posts, which origin_allowed() refuses. External links carry rel="noreferrer" anyway.
@@ -245,6 +250,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return learn_notes_json(settings, query, today)
     if path == "/learn/thread":
         return learn_thread_json(settings, query, today)
+    if path == "/learn/explainer":
+        return explainer_page(settings, query)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
         "/metrics": lambda s, c, t: metrics_page(s, c, t, query),
@@ -864,7 +871,85 @@ def send_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[
     body = form.get("body", "")
     if not body.strip():
         raise BadRequest("Type a question first.")
+    quote = _quote(form)
+    if quote:
+        body = f"About this passage ({quote[1]}):\n> {quote[0]}\n\n{body}"
     return _learn_ask(settings, conn, card_id, body, back)
+
+
+MAX_QUOTE = 1000  # characters of highlighted text sent with a message or added to the notes
+QUOTE_SOURCES = {"card": "Card", "explainer": "Explainer"}
+
+
+def _quote(form: dict[str, str]) -> tuple[str, str] | None:
+    """The highlighted passage a Learn form carries (quote, quote_src card|explainer): its text on one
+    line, cut to MAX_QUOTE, and where it came from; None without one."""
+    text = " ".join(form.get("quote", "").split())
+    if not text:
+        return None
+    return _clip(text, MAX_QUOTE), QUOTE_SOURCES.get(form.get("quote_src", ""), "Card")
+
+
+def add_quote_to_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The highlight box's Add to notes: the quote (as a Markdown quote, with where it came from) and
+    the user's words under it, appended to the open card's notes under the day. No assistant."""
+    card_id = _card_id(form)
+    _, back = _learn_back(conn, form)
+    quote = _quote(form)
+    words = form.get("body", "").strip()
+    if quote is None and not words:
+        raise BadRequest("Select some text first.")
+    text = (f"> {quote[0]} ({quote[1]})" if quote else "") + (f"\n\n{words}" if quote and words else words)
+    key = str(card_id)
+    stamp = learnnotes.append(settings.private_dir, key, text, today, author="Highlight", by_user=True)
+    log.info("highlight added to %s", learnnotes.label(key))  # never the text
+    return {"redirect": back, "stamp": stamp, "note": "card", "note_card": card_id}
+
+
+def make_explainer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Make an explainer: a fixed message to the Learn Assistant with the card's id (/explainer skill)."""
+    card_id = _card_id(form)
+    _, back = _learn_back(conn, form)
+    if settings.private_dir is None:
+        raise BadRequest("Explainers need a private folder (private_dir).")
+    return _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN, back)
+
+
+def refresh_explainer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Refresh explainer: a fixed message naming what changed in getjo (from the check, not the form)."""
+    card_id = _card_id(form)
+    _, back = _learn_back(conn, form)
+    state = explainers.check(settings, card_id)
+    if state["state"] == "none":
+        raise BadRequest("This card has no explainer yet: Make an explainer.")
+    what = "; ".join(state["missing"] + state["changed"]) or "asked by the user"
+    return _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN_REFRESH.format(what=what), back)
+
+
+# The explainer page runs its own small scripts and styles, so it gets its own policy: inline allowed,
+# but nothing reaches the network (no connect-src), and `sandbox allow-scripts` (here and on the iframe)
+# gives it an opaque origin: no cookies, no dashboard, no same-origin requests.
+EXPLAINER_HEADERS = [
+    ("Content-Security-Policy",
+     "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; "
+     "img-src 'self' data:; font-src 'none'; connect-src 'none'; form-action 'none'; base-uri 'none'; "
+     "frame-ancestors 'self'; sandbox allow-scripts"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+    ("Cache-Control", "no-store"),
+]
+
+
+def explainer_page(settings: Settings, query: dict[str, list[str]]) -> Response:
+    """GET /learn/explainer?card=ID: the card's explainer page from private_dir/learn/explainers/, and
+    nothing else (the file name is built from the int id). 404 when there is none."""
+    raw = (query.get("card") or [""])[0]
+    if not raw.isdigit() or len(raw) > 10:
+        return _text(404, "Not found.")
+    page = explainers.read_html(settings.private_dir, int(raw))
+    if page is None:
+        return _text(404, "No explainer for this card yet.")
+    return 200, [("Content-Type", "text/html; charset=utf-8"), *EXPLAINER_HEADERS], page
 
 
 def check_answer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -1006,6 +1091,9 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/learn/resend": (resend_learn_message, "/learn", "learn_resent"),
     "/learn/cancel": (cancel_learn_message, "/learn", "learn_cancelled"),
     "/learn/stop": (stop_learn, "/learn", "learn_stopped"),
+    "/learn/quote-note": (add_quote_to_notes, "/learn", "learn_quote_noted"),
+    "/learn/explainer/make": (make_explainer, "/learn", "learn_explain_asked"),
+    "/learn/explainer/refresh": (refresh_explainer, "/learn", "learn_refresh_asked"),
 }
 
 
@@ -1242,11 +1330,9 @@ def boards_table(settings: Settings, apps: list[dict]) -> str:
 
 # --- Learn ------------------------------------------------------------------------------------
 # /learn: the tracks grid and, under it, the Learn Assistant box for general messages (no card).
-# /learn?card=ID (or ?track=SLUG, its first card to do): the card view, with
-# Notes (this card's note, or with &notes=all the general notebook: prep/learnnotes.py) and the Prep
-# agent (the Learn conversation with the Learn Assistant) on the left, a divider, and the card on the right.
-
-EXPAND_ICON = "⤢"
+# /learn?card=ID (or ?track=SLUG, its first card to do): the card view: the card at full width, its
+# Explainer under it (prep/explainers.py), and a floating window with the Learn Assistant (the Learn
+# conversation) and Notes (this card's note, or with &notes=all the general notebook: prep/learnnotes.py).
 
 
 def learn_page(settings: Settings, conn: sqlite3.Connection, today: str,
@@ -1325,36 +1411,101 @@ def _tracks_grid(tracks: list[dict], empty_track: bool = False, current: int | N
 
 
 def _learn_view(settings: Settings, conn: sqlite3.Connection, card: dict, key: str) -> str:
-    expand = (f'<button type="button" class="btn btn-ghost btn-sm learn-expand" data-learn-expand aria-pressed="false" '
-              f'aria-controls="learn-side" title="Fold Notes away" hidden>{EXPAND_ICON} Expand</button>')
-    side = ('<div class="learn-side" id="learn-side">'
-            + _notes_panel(settings, card["id"], key)
-            + _card("Learn Assistant", _learn_agent(conn, settings, card["id"]), action=expand, cls="learn-agent")
-            + "</div>")
-    handle = _split_handle("learn-side", "Resize the side column and the card", "learn-split", "Notes and assistant,card")
+    """The card view: the card at full width, its Explainer under it, and the floating "Ask about this
+    card" window (Learn Assistant | Notes) with its pill. Without the page script the window is a plain
+    section at the end of the page."""
     answer = ""
     if settings.private_dir is not None:
-        key = learnnotes.answer_key(card["id"])
-        answer = _answer_box(card["id"], key, learnnotes.read(settings.private_dir, key)) + _check_form(card["id"])
-    return f'<div class="learn-view" id="learn-view">{side}{handle}{_learn_card(conn, card, answer)}</div>'
+        akey = learnnotes.answer_key(card["id"])
+        answer = _answer_box(card["id"], akey, learnnotes.read(settings.private_dir, akey)) + _check_form(card["id"])
+    return (f'<div class="learn-view" id="learn-view" data-card="{h(card["id"])}">'
+            f'{_learn_card(conn, card, answer)}{_explainer_section(settings, card["id"])}'
+            f'{_learn_float(settings, conn, card, key)}</div>')
+
+
+def _explainer_stamp(state: dict) -> str:
+    """"getjo @ dacabe7 (12 Nov) · evals/run.py · up to date"."""
+    parts = []
+    if state["short"]:
+        when = ""
+        try:
+            day = date.fromisoformat(state["date"])
+            when = f" ({day.day} {day:%b})"
+        except ValueError:
+            pass
+        parts.append(f"getjo @ {state['short']}{when}")
+    parts += state["files"]
+    parts.append({"up_to_date": "up to date", "changed": "changed", "missing": "changed",
+                  "unknown": "not checked"}.get(state["state"], ""))
+    return " · ".join(p for p in parts if p)
+
+
+def _explainer_section(settings: Settings, card_id: int) -> str:
+    """The Explainer card: its stamp (getjo commit, files, up to date or changed) and Refresh, the amber
+    notice when getjo changed, and the page itself in a sandboxed iframe (scripts only, no same origin:
+    it cannot reach the dashboard). None yet: Make an explainer."""
+    if settings.private_dir is None:
+        return ""
+    state = explainers.check(settings, card_id)
+    hidden = f'<input type="hidden" name="card_id" value="{h(card_id)}">'
+    if state["state"] == "none":
+        make = (f'<form method="post" action="/learn/explainer/make" class="explainer-make" data-ajax="learn" '
+                f'data-open-chat>{hidden}<p class="muted">No explainer for this card yet. The Learn Assistant can '
+                'write one: a diagram, the getjo code it is about with notes, and a worked example.</p>'
+                + _button("Make an explainer", "secondary", "sm") + "</form>")
+        return _card("Explainer", make, cls="learn-explainer")
+    refresh = (f'<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn" data-open-chat>'
+               f'{hidden}<button class="btn btn-ghost btn-sm">Refresh</button></form>')
+    stamp = f'<span class="explainer-stamp">{h(_explainer_stamp(state))}</span>'
+    notice = ""
+    if state["state"] in ("changed", "missing"):
+        what = "; ".join(state["missing"] + state["changed"])
+        notice = (f'<div class="warning explainer-stale" role="status">getjo has changed since this explainer: '
+                  f'{h(what)}<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn" '
+                  f'data-open-chat>{hidden}<button class="btn btn-secondary btn-sm">Refresh explainer</button></form></div>')
+    frame = (f'<iframe class="explainer-frame" src="/learn/explainer?card={h(card_id)}" sandbox="allow-scripts" '
+             'referrerpolicy="no-referrer" title="Explainer" data-explainer></iframe>')
+    return (f'<section class="card learn-explainer" id="learn-explainer"><header class="card-head"><h2>Explainer</h2>'
+            f'<div class="explainer-head">{stamp}{refresh}</div></header>'
+            f'<div class="card-body">{notice}{frame}</div></section>')
+
+
+def _learn_float(settings: Settings, conn: sqlite3.Connection, card: dict, key: str) -> str:
+    """The floating window (app.js: open, minimise, close, tab; kept per browser) and its pill. Tabs:
+    the Learn Assistant box (same forms as ever) and the Notes editor."""
+    tab = "notes" if key == learnnotes.ALL else "assistant"
+    tabs = "".join(
+        f'<button type="button" class="float-tab" role="tab" data-float-tab="{t}" '
+        f'aria-selected="{"true" if t == tab else "false"}">{label}</button>'
+        for t, label in (("assistant", "Assistant"), ("notes", "Notes")))
+    where = h(card["track_title"])
+    return ('<button type="button" class="learn-pill" data-float-open hidden>✦ Ask about this card</button>'
+            f'<aside class="learn-float" id="learn-float" data-tab="{tab}" aria-label="Ask about this card">'
+            '<header class="float-head"><div class="float-title"><strong>Ask about this card</strong>'
+            f'<span class="muted">{where} · card {h(card["id"])}</span></div>'
+            f'<nav class="float-tabs" role="tablist" aria-label="Assistant or notes">{tabs}</nav>'
+            '<div class="float-ctl"><button type="button" class="float-btn" data-float-min aria-label="Minimise" '
+            'title="Minimise" hidden>–</button><button type="button" class="float-btn" data-float-close '
+            'aria-label="Close" title="Close" hidden>✕</button></div></header>'
+            f'<div class="float-pane learn-agent" data-pane="assistant">{_learn_agent(conn, settings, card["id"])}</div>'
+            f'<div class="float-pane learn-notes" data-pane="notes">{_notes_body(settings, card["id"], key)}</div>'
+            '</aside>')
 
 
 def _notes_url(card_id: int, key: str) -> str:
     return f"/learn?card={card_id}" + ("&notes=all" if key == learnnotes.ALL else "")
 
 
-def _notes_panel(settings: Settings, card_id: int, key: str) -> str:
-    """The Notes card: tabs "this card" | "all prep" (links, so each works without the script) and the
-    editor for the open one."""
+def _notes_body(settings: Settings, card_id: int, key: str) -> str:
+    """Notes: tabs "this card" | "all prep" (links, so each works without the script) and the editor
+    for the open one."""
     tabs = "".join(
         f'<a class="ed-tab" href="{h(_notes_url(card_id, k))}"{CURRENT if k == key else ""}>{label}</a>'
         for k, label in ((str(card_id), "this card"), (learnnotes.ALL, "all prep")))
     nav = f'<nav class="ed-tabs" aria-label="Which notes">{tabs}</nav>'
     if settings.private_dir is None:
-        body = _empty("Notes need a private folder.", "Set private_dir in settings.toml; notes go to notes/learn/ there.")
-    else:
-        body = _notes_editor(card_id, key, learnnotes.read(settings.private_dir, key))
-    return _card("Notes", body, action=nav, cls="learn-notes")
+        return nav + _empty("Notes need a private folder.", "Set private_dir in settings.toml; notes go to notes/learn/ there.")
+    return nav + _notes_editor(card_id, key, learnnotes.read(settings.private_dir, key))
 
 
 def _notes_editor(card_id: int, key: str, note: dict, draft: str | None = None, alert: str = "") -> str:
@@ -1423,6 +1574,7 @@ def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int | No
     """The Learn Assistant box: the Learn conversation and a message form that carries the open card;
     with no card (the tracks overview) the message is general."""
     if card_id is None:
+        quote = ""
         hidden, ask = "", ("Ask anything about prep: \u201cstart a mock recruiter call\u201d, "
                            "\u201cquiz me on system design\u201d…")
         foot = "A general message, not about one card. The Learn Assistant replies here."
@@ -1430,9 +1582,14 @@ def _learn_agent(conn: sqlite3.Connection, settings: Settings, card_id: int | No
         hidden = f'<input type="hidden" name="card_id" value="{h(card_id)}">'
         ask = "Ask about this card, \u201cquiz me on chapter 2\u201d, or \u201cexplain it more simply\u201d…"
         foot = "Sent with this card. The Learn Assistant replies here."
+    # A passage highlighted on the card or its explainer, attached by app.js (shown as text, never HTML).
+    quote = ('' if card_id is None else
+             '<div class="ask-quote" data-ask-quote hidden><span>Attached: \u201c<span data-quote-text></span>\u201d</span>'
+             '<button type="button" class="float-btn" data-quote-clear aria-label="Remove the attached text">\u2715</button>'
+             '<input type="hidden" name="quote" value=""><input type="hidden" name="quote_src" value=""></div>')
     return (f'<div class="learn-chat" id="learn-chat" data-card="{h(card_id or "")}">'
             f'{_learn_thread(conn, settings, card_id)}'
-            f'<form method="post" action="/learn/message" class="ask" data-ajax="learn">{hidden}'
+            f'<form method="post" action="/learn/message" class="ask" data-ajax="learn">{hidden}{quote}'
             f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required placeholder="{h(ask)}" '
             'aria-label="Message to the Learn Assistant"></textarea>'
             f'<div class="ask-foot"><span class="muted">{h(foot)}</span>'

@@ -96,11 +96,18 @@ Markdown import and gap cards).
   gaps and cards to do, within a stated time budget; creates the tasks after confirmation.
 - The dashboard gains a Learn page: tracks with cards done and to do, the card with its answer
   hidden until asked and a Done button, notes, and a prep agent.
+- Explainers (Learn 6): a private interactive page per card under the card (getjo code quoted verbatim,
+  built / partial / gap, a small "Try it"), written by the Learn Assistant (`/explainer`), served in a
+  sandboxed iframe; a read-only check flags it when getjo's quoted code changes (`explainers check`).
+  The card is full width; the Learn Assistant and Notes move to a floating window; text selected on the
+  card or the explainer can be asked about or added to the notes.
 
 Acceptance:
 - Marking a card done and back to do updates the track's done / total, unit-tested.
 - `/plan-week` never creates tasks without confirmation and never exceeds the time budget.
 - Cards done and to do appear in `/today`.
+- The explainer route serves only files from the explainers folder, with its own CSP and sandbox;
+  the staleness check reports up to date / changed / missing on a fixture repo, unit-tested.
 
 ## Built outside the phases
 

@@ -80,8 +80,9 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
              assistant.py (optional dev3 message to a standing agent: /ask, /research, /learn-ask),
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
-             static/style.css + app.js + vim.js (Learn editor's vim keys), seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, stage/, task/, research/, ask/, learn-ask/, debrief/, mock/ (questions/ per stage) — each SKILL.md calls python -m prep.cli <command>
+             explainers.py (Learn explainer pages: private files, getjo staleness check, read only),
+             static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check)
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
@@ -143,4 +144,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `thread show --cv [--claim]`
 - Job briefs (used by /research and /ask): `python -m prep.cli brief next`, `brief save (--job ID | APP)` (text on
   stdin), `brief show`, `brief queue [--redo]`; `thread show --message MSG` prints a comparison (`/ask compare MSG`)
+- Learn explainers (used by /explainer via /learn-ask; the Learn page's Explainer): `python -m prep.cli explainers path CARD`,
+  `explainers save CARD --snippet FILE:QUALNAME ...` (sidecar: getjo commit + hashes, computed by Hirey),
+  `explainers check [--card ID]` (read only; exit 1 when any changed); getjo checkout from `getjo_repo`
 - Privacy check: `python -m prep.privacy` (tracked files) or `--staged`

@@ -26,6 +26,7 @@ class IsolatedTestCase(unittest.TestCase):
             "INTERPREP_SETTINGS": str(self.tmp / "no-settings.toml"),
             "PREP_DB": str(self.prep_db),
             "PREP_GETJO_DB": str(self.getjo_db),
+            "PREP_GETJO_REPO": "",
             "PREP_PRIVATE_DIR": str(self.tmp / "private"),
             "PREP_DASHBOARD_PORT": "",
             "PREP_WEEKLY_TARGET": "",

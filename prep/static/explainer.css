@@ -1,0 +1,76 @@
+/* Hirey explainers: the shared stylesheet of the Learn page's explainer pages (private_dir/learn/
+   explainers/<card>.html, written with the /explainer skill). Dark surfaces, the Learn page's violet
+   accent, soft success / warning / danger colours for built / partial / gap, monospace for code.
+   Served from /static/explainer.css; the page loads nothing else from outside itself. */
+:root {
+  --bg: #1b1c1a; --panel: #242522; --box: #1b1c1a; --code: #0f100e;
+  --ink: #ecede8; --muted: #a3a69c; --faint: #6f7269; --line: #3b3e38;
+  --accent: #c6afe2; --accent-strong: #e2cdfe; --accent-soft: rgba(198, 175, 226, .14); --on-accent: #12140f;
+  --ok: #a9c47f; --ok-soft: rgba(169, 196, 127, .13);
+  --part: #d9bc6e; --part-soft: rgba(217, 188, 110, .13);
+  --gap: #d98a76; --gap-soft: rgba(217, 138, 118, .14);
+  --font: "Helvetica Neue", Helvetica, Arial, system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { background: var(--bg); }
+body { margin: 0; padding: 16px 20px 4px; color: var(--ink); font: 15px/1.5 var(--font); }
+::selection { background: rgba(198, 175, 226, .35); }
+h1 { margin: 0 0 4px; font-size: 22px; letter-spacing: -.01em; }
+h2 { margin: 0 0 12px; font-size: 16px; }
+h3 { margin: 0 0 8px; font-size: 14px; }
+p { margin: 0 0 8px; }
+.lede { margin: 0 0 18px; color: var(--muted); }
+.muted { color: var(--muted); }
+code { font: 12.5px var(--mono); color: var(--accent); }
+
+/* A section of the page. */
+.panel { margin-bottom: 18px; padding: 20px; background: var(--panel); border-radius: 14px; }
+
+/* Flow: numbered steps joined by arrows. */
+.flow { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.step { min-width: 96px; padding: 8px 12px; text-align: center; background: var(--box); border: 1px solid var(--line); border-radius: 10px; }
+.step b { display: block; font-size: 14px; }
+.step span { color: var(--muted); font-size: 12px; }
+.arrow { color: var(--accent); font-size: 20px; }
+/* A numbered circle (steps, code notes): dark digits on solid violet, always legible (listed with
+   .step and .notes so their own span colours never win). */
+.num, .step .num, .notes .num, pre .num { display: inline-grid; place-items: center; width: 22px; height: 22px; margin-bottom: 4px; border-radius: 50%;
+  background: var(--accent); color: var(--on-accent); font: 800 12px/1 var(--font); opacity: 1; }
+
+/* Grid: columns of boxes (e.g. dimensions grouped by grader). */
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.colh { margin-bottom: 8px; text-align: center; font-weight: 600; }
+.colh small { display: block; color: var(--muted); font-size: 12px; font-weight: 400; }
+.box { margin-bottom: 10px; padding: 9px 11px; background: var(--box); border: 1px solid var(--line); border-radius: 10px; }
+.box.muted { background: transparent; border-style: dashed; color: inherit; }
+.box b { font-size: 14px; }
+.box p { margin: 2px 0 0; color: var(--muted); font-size: 12.5px; }
+/* built / partial / gap: what exists in the project today. */
+.pill { float: right; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+.pill.built { background: var(--ok-soft); color: var(--ok); }
+.pill.partial { background: var(--part-soft); color: var(--part); }
+.pill.gap { background: var(--gap-soft); color: var(--gap); }
+
+/* Code, copied verbatim; .hl marks the lines the numbered notes explain. */
+pre { margin: 0; padding: 12px 14px; overflow: auto; background: var(--code); color: #e8e6df; border-radius: 10px;
+  font: 12.5px/1.6 var(--mono); }
+pre .src { display: block; margin-bottom: 4px; color: var(--faint); }
+.k { color: #c6afe2; } .s { color: #a9c47f; } .c { color: #6f7269; } .n { color: #d9bc6e; }
+.hl { display: block; margin: 0 -14px; padding: 0 14px; background: rgba(198, 175, 226, .08); border-left: 3px solid var(--accent); }
+.notes { margin: 10px 0 0; padding: 0; list-style: none; font-size: 13px; }
+.notes li { margin: 4px 0; }
+.notes .num { width: 18px; height: 18px; margin: 0 6px 0 0; font-size: 11px; }
+
+/* Try it: a small control and its result. */
+.try { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; align-items: center; }
+input[type=range] { width: 100%; accent-color: var(--accent); }
+.verdict { font-size: 22px; font-weight: 700; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 600; }
+
+/* Say it: the sentence to say in an interview. */
+.say { padding: 4px 12px; border-left: 3px solid var(--accent); font-style: italic; }
+pre .num { width: 18px; height: 18px; margin: 0; font-size: 11px; vertical-align: middle; }

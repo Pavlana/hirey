@@ -1276,10 +1276,15 @@ class LearnPageTest(WebTestCase):
     def test_card_view(self) -> None:
         body = self.get("/learn?card=1")[2]
         self.assertIn('class="learn-view"', body)
-        self.assertIn("<h2>Notes</h2>", body)
-        self.assertIn("<h2>Learn Assistant</h2>", body)
-        self.assertIn('data-split-key="learn-split"', body)
-        self.assertIn("data-learn-expand", body)
+        # full width: no side column, no divider; the assistant and notes are in the floating window
+        self.assertNotIn("learn-side", body)
+        self.assertNotIn('data-split-key="learn-split"', body)
+        self.assertIn('<aside class="learn-float" id="learn-float" data-tab="assistant"', body)
+        self.assertIn("data-float-open hidden>\u2726 Ask about this card</button>", body)
+        self.assertIn('data-pane="assistant"><div class="learn-chat" id="learn-chat" data-card="1">', body)
+        self.assertIn('data-pane="notes"><nav class="ed-tabs"', body)
+        self.assertIn('href="/learn?card=1&amp;notes=all">all prep</a>', body)
+        self.assertLess(body.index('id="learn-card"'), body.index("<h2>Explainer</h2>"))
         self.assertIn("What is a cache-aside read?", body)
         self.assertIn("Card 1 of 3", body)
         self.assertNotIn("timer", body)  # no timer for now

@@ -111,6 +111,10 @@ LEARN = "learn"
 LEARN_CHECK = ("Check my answer on this card (Your answer): what I covered, what I missed, "
                "and one better phrasing.")
 LEARN_CARD = "Want a card for this? Draft a card from your reply {reply}; I will confirm before it is saved."
+# The card's Explainer (prep/explainers.py; the Learn Assistant writes it with the /explainer skill).
+LEARN_EXPLAIN = "Make an explainer for this card (/explainer)."
+LEARN_EXPLAIN_REFRESH = ("Refresh the explainer for this card (/explainer): getjo has changed since it was written "
+                         "({what}). Copy the snippets again verbatim and re-check the text and the built/partial/gap tags.")
 # Job briefs: written by the agent from the getjo description, shown at the top of the panel.
 MAX_BRIEF_WORDS = 300
 MAX_FACTS = 200  # characters in the key facts line (the brief's first line)
