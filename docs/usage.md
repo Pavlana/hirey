@@ -67,14 +67,16 @@ assistants set in the settings file: its messages and queued research would othe
 
 The seed also writes made-up Claude Code transcripts to `data/example-claude-projects/` (token
 counts only, with the dev3 tasks they belong to stored in `data/example.db`). To see them on the
-Metrics page's Usage tab, name the example assistants and point at a dev3 that does not exist, so
+Usage & cost page (with a made-up Research worker, seq 71, and its jobs), name the example assistants and
+point at a dev3 that does not exist, so
 nothing can be sent anywhere:
 
 ```bash
-PREP_ASSISTANT_TASK=7 PREP_PREP_ASSISTANT_TASK=9 PREP_ASSISTANT_PROJECT=e0e0e0e0-1111-4222-8333-944445555666 \
+PREP_ASSISTANT_TASK=7 PREP_PREP_ASSISTANT_TASK=9 PREP_WORKER_RESEARCH=71 PREP_WORKER_COMMS= \
+PREP_ASSISTANT_PROJECT=e0e0e0e0-1111-4222-8333-944445555666 \
 PREP_DEV3_BIN=/nonexistent/dev3 PREP_CLAUDE_PROJECTS_DIR=$PWD/data/example-claude-projects \
 PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
-# then open http://localhost:8766/metrics
+# then open http://localhost:8766/usage
 ```
 
 The seed also copies a made-up eval catalogue and runs (`tests/fixtures/evals/`) to
@@ -136,7 +138,7 @@ charts are server-rendered SVG):
   remembered per browser; a bare `/` opens the view picked last). The nav shows the new offers
   count next to Applications. The Applications Assistant box sits under the list in both views; the panel on the
   right shows the selected application or job offer. Details below.
-- **Evals** (`/evals`, between Learn and Metrics): getjo's evaluations in one place, from getjo's
+- **Evals** (`/evals`, between Learn and Usage & cost): getjo's evaluations in one place, from getjo's
   `evals/catalog.json` and `evals/results/` (setting `getjo_repo`, read only). A short header (question
   → cases → grader → metric → decision; offline, CI gate, production), then one card per eval grouped
   by dimension or by where it runs: the question, tags, grader, where and when it runs, status (a gap
@@ -151,29 +153,26 @@ charts are server-rendered SVG):
   ![An evals.run run](screenshots/evals-run.png)
   ![A promptfoo run](screenshots/evals-promptfoo.png)
   ![One eval's history](screenshots/evals-history.png)
-- **Metrics** (`/metrics`, last in the nav; `/dashboard` and `/progress` redirect here), two tabs:
-  - **Usage** (`?tab=usage`, the default): Claude Code token use in tokens and US dollars, to see
-    which sessions cost the most and where to save. Filters: project (each project seen, or all)
-    and 7 / 14 / 30 days. Dollars are an estimate at Claude API list prices, labelled as such: a
-    Claude subscription is billed differently. First three dollar tiles, Today, Last 7 days and
-    Last 30 days (each with its token total; these windows ignore the days filter), cost per day by
-    role for the last 30 days (stacked columns), and **Where the money goes** (cache read, cache
-    write, output, input in dollars). Tokens of a model with no known price read "price unknown"
-    and count as $0, never at a guessed price. Then who spends what (cost, share of dollars,
-    tokens per role) and top tasks by cost (seq, title, turns, cost, tokens, tokens per turn),
-    both sorted by dollars and following the days filter; a cost with `*` is partly unpriced.
-    Then tiles: tokens, turns and sessions; cache-read share; assistants over the context
-    threshold. Then tokens per day (stacked: cache read, cache write, output, fresh input), who uses what (Applications
-    Assistant, Learn Assistant, coordinator, build tasks, main checkouts), context size per turn
-    for the two assistants and the coordinator (each day's last turn; "time to /compact" above
-    `context_warn_tokens`), and **Where to save**: an assistant over the threshold, a task (not an assistant or the coordinator) still
-    open after its PR merged, a session with many cache writes. A turn is one API response.
-  - **Applications** (`?tab=applications`): applications sent, response rate (a reply, call,
-    rejection or recorded interview; a warning below 10% after 25 applications), interviews and
-    offers; applications sent per week (last 12 weeks, with the `weekly_target` line); the stage
-    funnel Applied → Screen (recruiter call) → Interview (technical, system design or final) →
-    Offer; and per getjo source (job board): jobs seen, average score, strong matches (7+) and
-    applications sent from them.
+- **Usage & cost** (`/usage`, after Evals in the nav; old `/metrics` links redirect here): what Claude
+  Code costs, where the money goes and how long work takes. Filters: project (each project seen, or all)
+  and 7 / 14 / 30 days. Dollars are an estimate at Claude API list prices, labelled as such: a Claude
+  subscription is billed differently. Tokens of a model with no known price read "price unknown" and
+  count as $0. Headline tiles first: cost today, last 7 days and last 30 days (these windows ignore the
+  days filter), cache hit rate, typical job time. Then **Where the money goes** (a few sentences from
+  the numbers, then Where to save: an assistant over `context_warn_tokens`, a task still open after its
+  PR merged, a session with many cache writes); cost by part (cache read, cache write, output, input)
+  and who spends what (per role: cost, tokens, typical response time); **cost and time per kind of
+  job** (research, CV fit, tailored CV, AI check, brief, draft, question: jobs done, cost, per job,
+  tokens per job, typical and slowest-10% time); **by model** (cost, the four token counts, typical
+  and slowest-10% response time); cost per day by role and tokens per day; the most expensive jobs and
+  tasks; and context size per response. Response time is measured from the transcripts (request sent
+  to the end of the response); details in [reference/metrics.md](reference/metrics.md).
+- **Pipeline stats** (`/stats`; `/metrics?tab=applications`, `/dashboard` and `/progress` redirect here):
+  applications sent, response rate (a reply, call, rejection or recorded interview; a warning below
+  10% after 25 applications), interviews and offers; applications sent per week (last 12 weeks, with
+  the `weekly_target` line); the stage funnel Applied → Screen (recruiter call) → Interview
+  (technical, system design or final) → Offer; and per getjo source (job board): jobs seen, average
+  score, strong matches (7+) and applications sent from them.
 - **Learn** (`/learn`; the nav shows the number of cards to do): "X done · Y to do" and the next
   interview (company, stage, day) under the title, then one tile per track: a cover colour with a
   progress ring, the title, chapters and cards, and "X done / Y". Under the tracks, the **Learn
@@ -290,7 +289,7 @@ The dashboard binds to `127.0.0.1` only and refuses any other address; requests 
 header other than `localhost`/`127.0.0.1` and cross-origin form posts are rejected. The pay
 field (`applications.pay`) is never shown. Each request opens the database afresh, so changes
 made through the skills appear on the next page load. Optional settings: `dashboard_port` (default 8765), `weekly_target`
-(applications per week, the target line on Metrics, default 10) and `no_response_days` (default 14: an application
+(applications per week, the target line on Pipeline stats, default 10) and `no_response_days` (default 14: an application
 still in Applied with no stage change for that long moves to No response; checked on every
 dashboard request and by `/today`).
 
@@ -519,7 +518,7 @@ every 15 seconds while the tab is visible. Click a row for its popover: **Now** 
 when, **Open job**, **Stop**: "Back to queue" or "Cancel it", for that worker's item only),
 **Queued** and **Last runs**. Esc or a click outside closes it. When a long item (research, CV fit,
 tailored CV, AI check, brief, draft) finishes while a page is open, a toast says so with a link.
-**Run history →** opens `/metrics/runs` (also the Metrics page's Runs tab): every run with its
+**Run history →** opens `/runs` (not in the nav; also linked from Usage & cost): every run with its
 worker, kind, application, queued, started and finished times, duration, result (done, blocked,
 stopped, lapsed) and the blocked reason, filtered by worker and result. Workers record which task
 took an item from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
@@ -640,12 +639,13 @@ launchctl bootout gui/$(id -u)/uk.inter-prep.dashboard
 rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 ```
 
-## Token usage (Metrics, Usage tab)
+## Token usage (Usage & cost)
 
-The Usage tab reads Claude Code's transcripts under `claude_projects_dir` (default
+The Usage & cost page reads Claude Code's transcripts under `claude_projects_dir` (default
 `~/.claude/projects`), every `*.jsonl` below it, read only. Of each line it keeps the time, working
 directory, session id and, for API responses, the message id, model, four token counts, the
-1-hour part of the cache write, the speed (fast mode) and the inference region. Message
+1-hour part of the cache write, the speed (fast mode) and the inference region; of request lines
+only their time, for the response time. Message
 text is never stored, logged or shown. Each page load reads only what was appended since the last
 one (byte offsets in `prep.db`); `python -m prep.cli usage scan` does the same from the command line,
 for example once before the first page load.

@@ -76,6 +76,35 @@ class ScanTest(IsolatedTestCase):
         db._add_missing_columns(self.conn)
         self.assertEqual(usage.scan(self.conn, self.root)["read"], 1)  # usage_files was emptied once
 
+    def test_response_time_from_the_request_line(self) -> None:
+        def at(ts: str, kind: str) -> str:
+            return json.dumps({"timestamp": ts, "type": kind, "message": {"content": SECRET}})
+        self.write(at("2026-01-19T09:59:50Z", "user"), at("2026-01-19T10:00:00Z", "api-request"),
+                   line("m1", ts="2026-01-19T10:00:03Z"), at("2026-01-19T10:00:04Z", "attachment"),
+                   line("m1", ts="2026-01-19T10:00:07.5Z"),
+                   at("2026-01-19T10:00:09Z", "user"),  # a tool result: api-request lines start requests here
+                   at("2026-01-19T10:00:10Z", "api-request"), line("m2", ts="2026-01-19T10:00:12Z"),
+                   line("m3", ts="2026-01-19T10:00:13Z"),  # no request of its own: unknown
+                   at("2026-01-19T10:00:20Z", "api-request"), line("m4", ts="2026-01-19T11:00:20Z"))  # over 30 min
+        usage.scan(self.conn, self.root)
+        rows = self.rows()
+        self.assertEqual({k: v["latency_ms"] for k, v in rows.items()},
+                         {"m1": 7500, "m2": 2000, "m3": None, "m4": None})
+        self.assertNotIn(SECRET, "\n".join(self.conn.iterdump()))
+
+    def test_response_time_without_api_request_lines_uses_the_user_line(self) -> None:
+        user = json.dumps({"timestamp": "2026-01-19T09:59:56Z", "type": "user", "message": {"content": SECRET}})
+        self.write(user, line("m1"))
+        usage.scan(self.conn, self.root)
+        self.assertEqual(self.rows()["m1"]["latency_ms"], 4000)
+
+    def test_new_latency_column_reads_every_transcript_again(self) -> None:
+        self.write(line("m1"))
+        usage.scan(self.conn, self.root)
+        self.conn.executescript("ALTER TABLE usage_messages DROP COLUMN latency_ms;")
+        db._add_missing_columns(self.conn)
+        self.assertEqual(usage.scan(self.conn, self.root)["read"], 1)
+
     def test_incremental_and_partial_last_line(self) -> None:
         self.write(line("m1"))
         usage.scan(self.conn, self.root)
@@ -205,7 +234,7 @@ class ExampleUsage(WebTestCase):
         super().setUp()
         spec = self.fixtures["usage"]
         build_usage_example(self.tmp / "claude-projects", self.prep_db, spec, date.fromisoformat(TODAY))
-        env = {"PREP_ASSISTANT_TASK": "7", "PREP_PREP_ASSISTANT_TASK": "9",
+        env = {"PREP_ASSISTANT_TASK": "7", "PREP_PREP_ASSISTANT_TASK": "9", "PREP_WORKER_RESEARCH": "71",
                "PREP_ASSISTANT_PROJECT": spec["assistant_project"],
                "PREP_DEV3_BIN": str(self.tmp / "no-dev3")}  # never a real dev3, and no assistant ping
         patcher = mock.patch.dict(os.environ, env)
@@ -225,7 +254,8 @@ class ReportTest(ExampleUsage):
         r = self.report()
         self.assertEqual(r["projects"], ["getjo", "inter_prep"])
         self.assertEqual({role for role, _, _ in r["roles"]},
-                         {"Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts"})
+                         {"Applications Assistant", "Learn Assistant", "Research worker", "Coordinator", "Build tasks",
+                          "Main checkouts"})
         costs = [c for _, _, c in r["roles"]]
         self.assertEqual(costs, sorted(costs, reverse=True))  # roles sorted by dollars
         self.assertEqual(r["top"][0]["ref"], "seq:7")
@@ -242,14 +272,14 @@ class ReportTest(ExampleUsage):
         r = self.report(days=30, project=None)  # the example spans 30 days
         files = list((self.tmp / "claude-projects").rglob("*.jsonl"))
         responses = {json.loads(l)["message"]["id"] for f in files for l in f.read_text().splitlines()
-                     if "usage" in json.loads(l)["message"]}
+                     if "usage" in json.loads(l).get("message", {})}
         self.assertEqual(r["turns"], len(responses))  # each response is on two lines in the files
         self.assertIn("seq:getjo/12", [t["ref"] for t in r["top"]])
 
     def test_context_and_where_to_save(self) -> None:
         r = self.report()
         ctx = {c["role"]: c for c in r["context"]}
-        self.assertEqual(list(ctx), ["Applications Assistant", "Learn Assistant", "Coordinator"])
+        self.assertEqual(list(ctx), ["Applications Assistant", "Learn Assistant", "Research worker", "Coordinator"])
         self.assertTrue(ctx["Applications Assistant"]["over"])
         self.assertFalse(ctx["Learn Assistant"]["over"])
         self.assertEqual(len(ctx["Coordinator"]["trend"]), 14)
@@ -303,6 +333,59 @@ class ReportTest(ExampleUsage):
         self.assertGreater(t27["cost"], 0)
         free = self.report(prices=(("claude-", (0.0, 0.0, 0.0, 0.0, 0.0)),))  # a prefix covers every model
         self.assertEqual(free["money"]["month"]["cost"], 0.0)
+
+
+class CostAndTimeTest(ExampleUsage):
+    def test_models_latency_and_cache_hit(self) -> None:
+        r = self.report()
+        models = {m["model"]: m for m in r["models"]}
+        self.assertEqual(set(models), {"claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5-1"})
+        self.assertEqual([m["cost"] for m in r["models"]], sorted((m["cost"] for m in r["models"]), reverse=True))
+        self.assertAlmostEqual(sum(m["cost"] for m in r["models"]), r["cost"])
+        self.assertEqual(sum(m["tokens"] for m in r["models"]), r["total"])
+        self.assertEqual(sum(m["turns"] for m in r["models"]), r["turns"])
+        # the made-up waits: Sonnet is the quickest, Fable the slowest (prep.seed_example.LATENCY)
+        self.assertLess(models["claude-sonnet-5-5"]["median"], models["claude-opus-5-5"]["median"])
+        self.assertLess(models["claude-opus-5-5"]["median"], models["claude-fable-5-1"]["median"])
+        self.assertGreaterEqual(models["claude-opus-5-5"]["p90"], models["claude-opus-5-5"]["median"])
+        self.assertGreater(models["claude-sonnet-5-5"]["median"], 4000)  # ms, request to the last line
+        self.assertIn("Research worker", r["role_latency"])
+        t = r["totals"]
+        self.assertAlmostEqual(r["cache_hit"], t["cache_read"] / (t["input"] + t["cache_read"] + t["cache_write"]))
+
+    def test_jobs_cost_and_time(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            usage.sync(conn, self.settings)
+            j = usage.jobs(conn, self.settings, TODAY, 14)
+            r = usage.report(conn, self.settings, TODAY, 14, "inter_prep")
+        kinds = {k["kind"]: k for k in j["kinds"]}
+        self.assertEqual(set(kinds), {"research", "cv_fit", "tailor", "cv_eval", "brief"})
+        self.assertEqual([k["cost"] for k in j["kinds"]], sorted((k["cost"] for k in j["kinds"]), reverse=True))
+        worker = next(c for name, _, c in r["roles"] if name == "Research worker")
+        self.assertAlmostEqual(sum(k["cost"] for k in j["kinds"]), worker, places=6)  # every response is in one run
+        self.assertTrue(all(k["per_job"] > 0 and k["time"] > 0 and k["slow"] >= k["time"] for k in kinds.values()))
+        self.assertEqual(j["top"][0]["cost"], max(x["cost"] for x in j["top"]))
+        self.assertEqual(j["time"]["n"], sum(k["jobs"] for k in j["kinds"]))
+        self.assertLess(sum(k["jobs"] for k in j["kinds"]), j["runs"])  # blocked runs count in cost, not in time
+
+    def test_overlapping_runs_share_a_response(self) -> None:
+        with closing(db.connect(self.prep_db)) as conn:
+            usage.sync(conn, self.settings)
+            ts = conn.execute("SELECT substr(ts, 1, 19) FROM usage_messages WHERE cwd LIKE '%c7c7c7c7%' "
+                              "ORDER BY ts LIMIT 1").fetchone()[0] + "Z"
+            runs = [{"id": i, "worker": 71, "started_at": ts, "finished_at": ts} for i in (1, 2)]
+            costs = usage.run_costs(conn, self.settings, runs + [{"id": 3, "worker": None, "started_at": ts,
+                                                                    "finished_at": ts}])
+        self.assertAlmostEqual(costs[1]["turns"], .5)
+        self.assertEqual(costs[1], costs[2])
+        self.assertGreater(costs[1]["cost"], 0)
+        self.assertEqual(costs[3]["turns"], 0)  # no worker: nothing to charge
+
+    def test_spread(self) -> None:
+        self.assertEqual(usage.spread([]), {"n": 0, "median": None, "p90": None})
+        self.assertEqual(usage.spread([3, 1, 2]), {"n": 3, "median": 2, "p90": 3})
+        self.assertEqual(usage.spread([1, 2, 3, 4])["median"], 2.5)
+        self.assertEqual(usage.spread(list(range(1, 11)))["p90"], 10)
 
 
 class CostMathTest(IsolatedTestCase):
@@ -380,23 +463,30 @@ class CostMathTest(IsolatedTestCase):
 
 
 class UsageTabTest(ExampleUsage):
-    def test_usage_tab(self) -> None:
-        body = self.get("/metrics")[2]
-        for text in ("Tokens per day", "Top tasks by cost", "Who spends what", "Context size per turn",
+    def test_usage_page(self) -> None:
+        body = self.get("/usage")[2]
+        for text in ("Tokens per day", "Most expensive tasks", "Who spends what", "Context size per response",
                      "Cost per day by role, last 30 days", "Where the money goes", web.ESTIMATE_NOTE,
-                     "Last 7 days", "Last 30 days", "price unknown", "claude-example-1",
-                     "Where to save", "Cache-read share", 'class="chart columns stacked"', 'class="chart share-bar"',
-                     "time to /compact", "Tailored CV as PDF", '<span class="mono">seq:7</span>'):
+                     "Last 7 days", "Last 30 days", "price unknown", "claude-example-1", "Cache hit rate",
+                     "Typical job time", "Cost and time per kind of job", "By model, last 14 days",
+                     "Most expensive jobs", "Typical response", "Tailored CV", "Research worker",
+                     "Where to save", 'class="chart columns stacked"', 'class="chart share-bar"',
+                     "time to /compact", "Tailored CV as PDF", '<span class="mono">seq:7</span>',
+                     '<span class="mono">claude-opus-5-5</span>', 'href="/runs"', "is the costliest job"):
             self.assertIn(text, body)
         self.assertNotIn(SECRET, body)
         self.assertNotIn("example reply", body)  # the made-up content never reaches the page
         self.assertNotIn(" style=", body)
-        self.assertIn('href="/metrics?tab=usage&amp;project=getjo"', body)
-        self.assertIn('class="view-tab is-active" href="/metrics?tab=usage&amp;project=inter_prep"', body)
+        self.assertIn('href="/usage?project=getjo"', body)
+        self.assertIn('class="view-tab is-active" href="/usage?project=inter_prep"', body)
+        # headline numbers come first, detail below
+        self.assertLess(body.index("Cache hit rate"), body.index("Where the money goes"))
+        self.assertLess(body.index("Where the money goes"), body.index("Cost and time per kind of job"))
+        self.assertLess(body.index("Most expensive jobs"), body.index("Context size per response"))
 
     def test_filters_and_settings_prices(self) -> None:
-        body = self.get("/metrics?project=all&days=30")[2]
-        self.assertIn("Tokens, last 30 days", body)
+        body = self.get("/usage?project=all&days=30")[2]
+        self.assertIn("By model, last 30 days", body)
         self.assertIn("seq:getjo/12", body)
         self.assertIn('<span class="muted">price unknown</span>', body)  # seq:27, no price for its model
         settings_file = self.tmp / "prices.toml"
@@ -404,8 +494,14 @@ class UsageTabTest(ExampleUsage):
                                  'cache_write = 1.25\n')
         with mock.patch.dict(os.environ, {"INTERPREP_SETTINGS": str(settings_file)}):
             self.settings = load_settings()
-            body = self.get("/metrics?project=all&days=30")[2]
+            body = self.get("/usage?project=all&days=30")[2]
         self.assertNotIn("price unknown", body)
+
+    def test_secs(self) -> None:
+        for x, text in ((None, "–"), (4.24, "4.2s"), (38.4, "38s"), (250, "4m 10s"), (240, "4m"), (3900, "1h 5m"),
+                        (7200, "2h")):
+            with self.subTest(x=x):
+                self.assertEqual(web._secs(x), text)
 
     def test_usd(self) -> None:
         for x, text in ((0, "$0"), (-1, "$0"), (.004, "<$0.01"), (.0099, "<$0.01"), (.01, "$0.01"), (.0149, "$0.01"),
@@ -418,14 +514,14 @@ class UsageTabTest(ExampleUsage):
         with closing(db.connect(self.prep_db)) as conn:
             conn.execute("UPDATE usage_tasks SET title = '<img src=x onerror=alert(1)>' WHERE seq = 7")
             conn.commit()
-        body = self.get("/metrics")[2]
+        body = self.get("/usage")[2]
         self.assertNotIn("<img src=x", body)
         self.assertIn("&lt;img src=x", body)
 
     def test_pay_never_rendered(self) -> None:
         with closing(db.connect(self.prep_db)) as conn:
             db.add_application(conn, "Example Pay", "Engineer", status="applied", pay=PAY)
-        self.assertNotIn(PAY, self.get("/metrics")[2])
+        self.assertNotIn(PAY, self.get("/usage")[2])
 
 
 class UsageSettingsTest(IsolatedTestCase):

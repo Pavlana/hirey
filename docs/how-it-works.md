@@ -95,7 +95,7 @@ flowchart TD
 | CV checks | rule check; AI check results | `prep/cvcheck.py`, `prep/cveval.py` |
 | Learn | tracks, chapters, cards; notes files; explainers | `prep/learn.py`, `prep/learnnotes.py`, `prep/explainers.py` |
 | Evals reader | getjo's eval catalogue and results files, read only | `prep/evals.py` |
-| Metrics | application numbers; token usage and prices | `prep/stats.py`, `prep/usage.py`, `prep/prices.py`, `prep/charts.py` |
+| Usage & cost, Pipeline stats | token cost, response time, cost per job; application numbers | `prep/usage.py`, `prep/prices.py`, `prep/stats.py`, `prep/charts.py` |
 | Markdown | safe, escaped Markdown subset | `prep/md.py` |
 | Settings | TOML settings and env overrides | `prep/config.py` |
 | Privacy check | no private file is tracked | `prep/privacy.py`, `scripts/pre-commit` |
@@ -262,7 +262,8 @@ flowchart TD
     run --> state["Closed from the item's state:<br/>done, blocked, stopped, lapsed"]
     run --> side["Workers sidebar<br/>working, stuck, idle"]
     side -->|"Stop"| stop["cancel, or Back to queue<br/>next free worker"]
-    state --> hist["/metrics/runs<br/>Run history"]
+    state --> hist["/runs<br/>Run history"]
+    hist -->|"cost and time per job"| cost["/usage<br/>Usage & cost"]
 ```
 
 - Every page's sidebar lists each configured agent with its state, current item, queue and last runs.
@@ -391,7 +392,7 @@ Every key, env var and the launchd job: [configuration.md](reference/configurati
 | [routes.md](reference/routes.md) | every endpoint, one line each |
 | [database.md](reference/database.md) | every table, allowed values, migrations |
 | [evals.md](reference/evals.md) | getjo's eval catalogue, run details, history, file safety |
-| [metrics.md](reference/metrics.md) | stats definitions, token usage, prices |
+| [metrics.md](reference/metrics.md) | Usage & cost and Pipeline stats: definitions, token usage, response time, cost per job, prices |
 | [configuration.md](reference/configuration.md) | settings, env vars, launchd |
 
 ## Writing the docs

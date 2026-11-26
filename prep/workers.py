@@ -1,5 +1,5 @@
 """What each standing agent (worker) is doing, for the dashboard's Workers sidebar, its popover and the
-Run history page (/metrics/runs).
+Run history page (/runs).
 
 A worker is a dev3 task set in the settings: each `[workers] research` seq ("Research"), assistant_task
 ("Applications"), each `[workers] comms` seq ("Communication") and prep_assistant_task ("Learn"). A seq

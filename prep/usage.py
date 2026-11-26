@@ -1,4 +1,4 @@
-"""Claude Code token usage for the Metrics page's Usage tab.
+"""Claude Code token usage, cost and response time for the Usage & cost page (/usage).
 
 Source: Claude Code's transcripts (`claude_projects_dir`, default ~/.claude/projects), every `*.jsonl`
 below it, read only. Of each line only these are used: `timestamp`, `cwd`, `sessionId` and, when the
@@ -7,6 +7,16 @@ line has `message.usage`, `message.id`, `message.model`, the four token counts (
 write (`cache_creation.ephemeral_1h_input_tokens`), `speed` and `inference_geo`. Message content is never
 read into prep.db, logged or shown: a line is decoded with json.loads, those fields are copied out and
 the rest is dropped at once. Lines without the text `"usage"` are skipped before decoding.
+
+Response time (latency_ms): the time from the request to the response's last line. Claude Code writes an
+`api-request` line when it sends a request; older transcripts without those lines use the last `user`
+line instead. Only `type` and `timestamp` of those lines are copied out. A response whose start is not in
+the part of the file being read, or that took over MAX_LATENCY_MS, keeps latency_ms NULL. It includes the
+time the response took to stream, so it is an approximation of the model's speed.
+
+Cost per job: a run (db.runs: a worker's item, started_at to finished_at) is charged with the responses
+of its worker's dev3 task in that window (run_costs). Responses inside several runs of one worker are
+split evenly between them.
 
 Incremental: usage_files keeps each file's byte offset after its last complete line, so a page load
 reads only what was appended since. A file that shrank is read again from the start. A response
@@ -54,8 +64,10 @@ DONE = ("completed", "cancelled")
 COUNTS = ("input", "output", "cache_read", "cache_write")
 COST_KINDS = ("Cache read", "Cache write", "Output", "Input")  # how the money splits, as shown
 MONEY_DAYS = 30        # the cost chart and the "last 30 days" tile
-ROLES = ("Applications Assistant", "Learn Assistant", "Research worker", "Coordinator", "Build tasks", "Main checkouts")
-STANDING = ROLES[:4]
+ROLES = ("Applications Assistant", "Learn Assistant", "Research worker", "Comms worker", "Coordinator", "Build tasks",
+         "Main checkouts")
+STANDING = ROLES[:5]
+MAX_LATENCY_MS = 30 * 60 * 1000  # longer than this: not one response (a pause, a resumed session)
 
 _LOCK = threading.Lock()
 _LAST_TRY = [0.0]
@@ -106,19 +118,73 @@ def parse_line(raw: bytes) -> tuple | None:
 
 
 UPSERT = """INSERT INTO usage_messages (message_id, ts, day, session, cwd, model, input, output, cache_read, cache_write,
-    cache_write_1h, speed, geo)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    cache_write_1h, speed, geo, latency_ms)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(message_id) DO UPDATE SET
     input = max(input, excluded.input), output = max(output, excluded.output),
     cache_read = max(cache_read, excluded.cache_read), cache_write = max(cache_write, excluded.cache_write),
     cache_write_1h = max(coalesce(cache_write_1h, 0), coalesce(excluded.cache_write_1h, cache_write_1h, 0)),
-    speed = coalesce(excluded.speed, speed), geo = coalesce(excluded.geo, geo)"""
+    speed = coalesce(excluded.speed, speed), geo = coalesce(excluded.geo, geo),
+    latency_ms = CASE WHEN excluded.latency_ms IS NULL THEN latency_ms WHEN latency_ms IS NULL THEN excluded.latency_ms
+                      ELSE max(latency_ms, excluded.latency_ms) END"""
+
+
+def _epoch_ms(ts: str) -> int | None:
+    try:
+        return int(datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
+
+
+def request_time(raw: bytes) -> tuple[str, str] | None:
+    """("api-request" | "user", timestamp) for a line that starts a request, else None. Only those two
+    fields are kept from the decoded line."""
+    if b'"type":"api-request"' not in raw and b'"type":"user"' not in raw and b'"type": "user"' not in raw \
+            and b'"type": "api-request"' not in raw:
+        return None
+    try:
+        line = json.loads(raw)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(line, dict) or line.get("type") not in ("api-request", "user"):
+        return None
+    ts = line.get("timestamp")
+    return (line["type"], ts) if isinstance(ts, str) and ts else None
+
+
+class _Latency:
+    """Per file being read: when the pending request was sent, and each response's start."""
+
+    def __init__(self) -> None:
+        self.pending: int | None = None
+        self.api_requests = False  # this file writes api-request lines: user lines no longer start a request
+        self.starts: dict[str, int | None] = {}
+
+    def see(self, raw: bytes) -> None:
+        found = request_time(raw)
+        if not found:
+            return
+        kind, ts = found
+        if kind == "api-request":
+            self.api_requests = True
+        elif self.api_requests:
+            return
+        self.pending = _epoch_ms(ts)
+
+    def of(self, message_id: str, ts: str) -> int | None:
+        if message_id not in self.starts:
+            self.starts[message_id], self.pending = self.pending, None
+        start, end = self.starts[message_id], _epoch_ms(ts)
+        if start is None or end is None or not 0 <= end - start <= MAX_LATENCY_MS:
+            return None
+        return end - start
 
 
 def _read_file(conn: sqlite3.Connection, path: Path, offset: int) -> int:
     """Read complete lines from `offset`; return the new offset (just after the last newline). A last
     line still being written is left for the next scan."""
     rows = []
+    latency = _Latency()
     with path.open("rb") as f:
         f.seek(offset)
         rest = b""  # bytes after the last newline so far; they start at `offset`
@@ -134,7 +200,9 @@ def _read_file(conn: sqlite3.Connection, path: Path, offset: int) -> int:
             for raw in data[:end].split(b"\n"):
                 row = parse_line(raw)
                 if row:
-                    rows.append(row)
+                    rows.append((*row, latency.of(row[0], row[1])))
+                else:
+                    latency.see(raw)
             offset += end + 1
             rest = data[end + 1:]
             if len(rows) >= 5000:
@@ -305,6 +373,13 @@ def home_project(projs: list[dict], settings: Settings) -> str:
     return place(str(REPO_ROOT), projs)[0]
 
 
+def _is_home(settings: Settings, proj: str, home: str, info: dict) -> bool:
+    """True when a task belongs to this repo's dev3 project (where the assistants and workers live)."""
+    if settings.assistant_project:
+        return str(info.get("project_id") or "").startswith(settings.assistant_project)
+    return proj == home
+
+
 def _tasks(conn: sqlite3.Connection) -> dict[str, dict]:
     return {r["task_id"][:8]: dict(r) for r in conn.execute("SELECT * FROM usage_tasks")}
 
@@ -354,15 +429,16 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
             return "Main checkouts"
         info = tasks.get(task) or {}
         seq = info.get("seq")
-        mine = proj == home if not settings.assistant_project else str(info.get("project_id") or "").startswith(
-            settings.assistant_project)
-        if seq is not None and mine and seq == settings.assistant_task:
+        mine = seq is not None and _is_home(settings, proj, home, info)
+        if mine and seq == settings.assistant_task:
             return "Applications Assistant"
-        if seq is not None and mine and seq == settings.prep_assistant_task:
+        if mine and seq == settings.prep_assistant_task:
             return "Learn Assistant"
-        if seq is not None and mine and seq in worker_tasks(settings, "research"):
+        if mine and seq in worker_tasks(settings, "research"):
             return "Research worker"
-        if info.get("task_type") == "coordinator" or (seq is not None and mine and seq == settings.coordinator_task):
+        if mine and seq in worker_tasks(settings, "comms"):
+            return "Comms worker"
+        if info.get("task_type") == "coordinator" or (mine and seq == settings.coordinator_task):
             return "Coordinator"
         return "Build tasks"
 
@@ -382,6 +458,7 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
     kinds = [0.0, 0.0, 0.0, 0.0]
     kind_tokens = [0, 0, 0, 0]
     unknown_models: dict[str, int] = {}
+    models: dict[str, dict] = {}
     rows = conn.execute(
         "SELECT day, cwd, session, model, speed, geo, input + cache_read + cache_write > ?, COUNT(*), SUM(input), "
         "SUM(output), SUM(cache_read), SUM(cache_write), SUM(coalesce(cache_write_1h, cache_write)) "
@@ -425,12 +502,33 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
         entry["cwds"].add(cwd)
         roles[r_name] += tokens
         role_cost[r_name] += dollars
+        mod = models.setdefault(model or "unknown", {"model": model or "unknown", "turns": 0, "cost": 0.0, "unpriced": 0,
+                                                     **{c: 0 for c in COUNTS}})
+        mod["turns"] += n
+        mod["cost"] += dollars
+        mod["unpriced"] += 0 if p else tokens
+        for c, v in zip(COUNTS, counts):
+            mod[c] += v
         unpriced += 0 if p else tokens
         s = sessions.setdefault(session or "", {"key": key, "tokens": 0, "cache_write": 0})
         s["tokens"] += tokens
         s["cache_write"] += cw
 
     total = sum(totals)
+
+    # Response time per model and per role (responses with a known latency_ms only).
+    waits: dict[str, list[int]] = {}
+    role_waits: dict[str, list[int]] = {}
+    for cwd, model, ms in conn.execute("SELECT cwd, model, latency_ms FROM usage_messages WHERE day BETWEEN ? AND ? "
+                                       "AND latency_ms IS NOT NULL", (start.isoformat(), end.isoformat())):
+        proj, task = places.get(cwd) or place(cwd, projs)
+        if project and proj != project:
+            continue
+        waits.setdefault(model or "unknown", []).append(ms)
+        role_waits.setdefault(role(proj, task), []).append(ms)
+    by_model = sorted(({**m, "tokens": sum(m[c] for c in COUNTS), **spread(waits.get(name, []))}
+                       for name, m in models.items()), key=lambda m: (-m["cost"], -m["tokens"]))
+    fed = totals[0] + totals[2] + totals[3]
 
     def label(key: tuple[str, str | None]) -> dict:
         proj, task = key
@@ -495,6 +593,10 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
         "totals": dict(zip(COUNTS, totals)),
         "top": top_rows,
         "roles": sorted(((r, n, role_cost[r]) for r, n in roles.items() if n), key=lambda x: (-x[2], -x[1])),
+        "cost": sum(role_cost.values()),
+        "cache_hit": totals[2] / fed if fed else None,
+        "models": by_model,
+        "role_latency": {r: spread(v) for r, v in role_waits.items()},
         "context": context,
         "save": save,
         "unpriced": unpriced,
@@ -502,6 +604,101 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
                   "kinds": list(zip(COST_KINDS, kinds, kind_tokens)), "unknown_models": sorted(unknown_models.items())},
         "projects": names, "home": home,
     }
+
+
+def spread(values: list[float]) -> dict:
+    """{"n", "median", "p90"} of a list (None for an empty one): the typical and the slow case."""
+    v = sorted(values)
+    if not v:
+        return {"n": 0, "median": None, "p90": None}
+    mid = len(v) // 2
+    median = v[mid] if len(v) % 2 else (v[mid - 1] + v[mid]) / 2
+    return {"n": len(v), "median": median, "p90": v[min(len(v) - 1, int(len(v) * .9))]}
+
+
+# --- cost per job (runs) ------------------------------------------------------------------------
+
+def worker_cwds(conn: sqlite3.Connection, settings: Settings, seqs: set[int]) -> dict[int, list[str]]:
+    """The working directories of each worker seq's dev3 task in this repo's project."""
+    projs = projects(conn)
+    tasks = _tasks(conn)
+    home = home_project(projs, settings)
+    out: dict[int, list[str]] = {}
+    for cwd, in conn.execute("SELECT DISTINCT cwd FROM usage_messages"):
+        proj, task = place(cwd, projs)
+        info = tasks.get(task) if task else None
+        if info and info.get("seq") in seqs and _is_home(settings, proj, home, info):
+            out.setdefault(int(info["seq"]), []).append(cwd)
+    return out
+
+
+def run_costs(conn: sqlite3.Connection, settings: Settings, runs: list[dict]) -> dict[int, dict]:
+    """{run id: {"cost", "tokens", "turns", "unpriced"}} for finished runs with a worker: the responses of the
+    worker's task between started_at and finished_at (to the second). A response inside several runs of
+    one worker is split evenly between them."""
+    out = {r["id"]: {"cost": 0.0, "tokens": 0, "turns": 0.0, "unpriced": 0} for r in runs}
+    done = [r for r in runs if r.get("worker") and r.get("finished_at") and r.get("started_at")]
+    cwds = worker_cwds(conn, settings, {int(r["worker"]) for r in done})
+    for seq, dirs in cwds.items():
+        mine = [(r["started_at"][:19], r["finished_at"][:19], r["id"]) for r in done if int(r["worker"]) == seq]
+        low, high = min(a for a, _, _ in mine), max(b for _, b, _ in mine)
+        marks = ",".join("?" * len(dirs))
+        rows = conn.execute(
+            f"SELECT substr(ts, 1, 19), model, speed, geo, input, output, cache_read, cache_write, "
+            f"coalesce(cache_write_1h, cache_write) FROM usage_messages WHERE cwd IN ({marks}) "
+            f"AND substr(ts, 1, 19) BETWEEN ? AND ?", (*dirs, low, high))
+        for ts, model, speed, geo, i, o, cr, cw, cw1h in rows:
+            inside = [rid for a, b, rid in mine if a <= ts <= b]
+            if not inside:
+                continue
+            p = price(settings, model, i + cr + cw > price_list.LONG_PROMPT, speed, geo)
+            dollars = sum(cost((i, o, cr, cw, cw1h), p)) if p else 0.0
+            share = 1 / len(inside)
+            for rid in inside:
+                o_ = out[rid]
+                o_["cost"] += dollars * share
+                o_["tokens"] += round((i + o + cr + cw) * share)
+                o_["turns"] += share
+                o_["unpriced"] += 0 if p else round((i + o + cr + cw) * share)
+    return out
+
+
+def _seconds(start: str | None, end: str | None) -> float | None:
+    a, b = _epoch_ms(start or ""), _epoch_ms(end or "")
+    return None if a is None or b is None else max(0, b - a) / 1000
+
+
+def jobs(conn: sqlite3.Connection, settings: Settings, today: str, days: int, top: int = 10) -> dict:
+    """Cost and time per kind of job over the runs finished in the last `days` days: per kind the jobs done,
+    the cost of all its runs (any result), and per done job the median and 90th-percentile time, the median
+    cost and tokens; the `top` most expensive runs; and the median time of all done jobs."""
+    since = (date.fromisoformat(today) - timedelta(days=days - 1)).isoformat()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT r.*, a.company FROM runs r LEFT JOIN applications a ON a.id = r.application_id "
+        "WHERE r.result IS NOT NULL AND substr(r.finished_at, 1, 10) >= ?", (since,))]
+    costs = run_costs(conn, settings, rows)
+    kinds: dict[str, dict] = {}
+    for r in rows:
+        c = costs[r["id"]]
+        r.update(cost=c["cost"], tokens=c["tokens"], turns=c["turns"], unpriced=c["unpriced"],
+                 seconds=_seconds(r["started_at"], r["finished_at"]))
+        k = kinds.setdefault(r["kind"], {"kind": r["kind"], "runs": 0, "done": [], "cost": 0.0, "tokens": 0})
+        k["runs"] += 1
+        k["cost"] += c["cost"]
+        k["tokens"] += c["tokens"]
+        if r["result"] == "done":
+            k["done"].append(r)
+    table = []
+    for k in kinds.values():
+        done = k.pop("done")
+        times = spread([r["seconds"] for r in done if r["seconds"] is not None])
+        table.append({**k, "jobs": len(done), "time": times["median"], "slow": times["p90"],
+                      "per_job": spread([r["cost"] for r in done])["median"],
+                      "tokens_per_job": spread([r["tokens"] for r in done])["median"]})
+    table.sort(key=lambda k: (-k["cost"], -k["runs"]))
+    done_times = [r["seconds"] for r in rows if r["result"] == "done" and r["seconds"] is not None]
+    return {"kinds": table, "top": sorted(rows, key=lambda r: (-r["cost"], -r["tokens"]))[:top],
+            "time": spread(done_times), "runs": len(rows)}
 
 
 def _short(n: float) -> str:

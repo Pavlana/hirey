@@ -16,7 +16,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from prep import db, learn
@@ -137,31 +137,41 @@ def build_prep_db(path: Path, data: dict) -> None:
         conn.close()
 
 
-def _turn(message_id: str, ts: str, session: str, cwd: str, context: int, cw_share: float,
-          model: str = "claude-opus-5-5", ttl: str = "1h") -> list[dict]:
-    """Transcript lines for one made-up turn: the user's line, then the response written twice (as a
-    streamed response is) with the same message id. The content is a placeholder."""
+LATENCY = {"claude-opus-5-5": 9, "claude-sonnet-5-5": 4, "claude-fable-5-1": 16}  # made-up seconds per response
+
+
+def _turn(message_id: str, ts: datetime, session: str, cwd: str, context: int, cw_share: float,
+          model: str = "claude-opus-5-5", ttl: str = "1h", wait: float = 6) -> list[dict]:
+    """Transcript lines for one made-up turn: the user's line, the request (api-request), then the
+    response written twice (as a streamed response is) with the same message id, the last line `wait`
+    seconds after the request. The content is a placeholder."""
     cache_write = int(context * cw_share)
     cache_read = int(context * .97) - cache_write
     one_hour = cache_write if ttl == "1h" else 0
     usage = {"input_tokens": context - cache_read - cache_write, "cache_read_input_tokens": cache_read,
              "cache_creation_input_tokens": cache_write, "speed": "standard", "inference_geo": "global",
              "cache_creation": {"ephemeral_1h_input_tokens": one_hour, "ephemeral_5m_input_tokens": cache_write - one_hour}}
-    base = {"timestamp": ts, "cwd": cwd, "sessionId": session}
+
+    def at(seconds: float) -> str:
+        return (ts + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+    base = {"cwd": cwd, "sessionId": session}
     return [
-        {**base, "type": "user", "message": {"role": "user", "content": "example prompt"}},
-        {**base, "type": "assistant", "message": {"id": message_id, "model": model, "role": "assistant",
-                                                   "content": [{"type": "text", "text": "example"}],
-                                                   "usage": {**usage, "output_tokens": 40}}},
-        {**base, "type": "assistant", "message": {"id": message_id, "model": model, "role": "assistant",
-                                                   "content": [{"type": "text", "text": "example reply"}],
-                                                   "usage": {**usage, "output_tokens": 1500}}},
+        {**base, "timestamp": at(0), "type": "user", "message": {"role": "user", "content": "example prompt"}},
+        {"timestamp": at(.1), "type": "api-request", "sessionId": session},
+        {**base, "timestamp": at(.1 + wait / 3), "type": "assistant",
+         "message": {"id": message_id, "model": model, "role": "assistant",
+                     "content": [{"type": "text", "text": "example"}], "usage": {**usage, "output_tokens": 40}}},
+        {**base, "timestamp": at(.1 + wait), "type": "assistant",
+         "message": {"id": message_id, "model": model, "role": "assistant",
+                     "content": [{"type": "text", "text": "example reply"}], "usage": {**usage, "output_tokens": 1500}}},
     ]
 
 
 def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -> None:
     """Made-up Claude Code transcripts under `root` (replaced) for the 30 days up to `anchor`, and the
-    dev3 projects and tasks they belong to in prep.db at `prep_path`, so no dev3 is needed."""
+    dev3 projects and tasks they belong to in prep.db at `prep_path`, so no dev3 is needed. A task with
+    "jobs" (run kinds) is a worker: every "job_turns" of its turns are one run in db.runs, kinds in turn."""
     from prep import usage  # here, not at the top: usage imports the assistant module
     import shutil
     shutil.rmtree(root, ignore_errors=True)
@@ -172,21 +182,34 @@ def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -
     first = anchor - timedelta(days=13)
     runs = [(src, cwd, src["days"]) for src, cwd in sources]
     runs += [(src, cwd, days) for src, cwd in sources for days in src.get("earlier", [])]
+    jobs: list[tuple] = []  # (seq, kind, started, finished)
     for n, (src, cwd, (d0, d1)) in enumerate(runs):
         c0, c1 = src["context"]
         folder = root / ("-" + cwd.strip("/").replace("/", "-").replace("_", "-"))
         folder.mkdir(parents=True, exist_ok=True)
         session = f"00000000-0000-4000-8000-{n:012d}"
+        model = src.get("model", "claude-opus-5-5")
         lines = []
         for day in range(d0, d1 + 1):
             when = first + timedelta(days=day)
             turns = src["turns"] // (3 if when.weekday() >= 5 else 1)
+            group = src.get("job_turns", 4)
             for k in range(turns):
                 progress = ((day - d0) + k / max(turns, 1)) / max(d1 - d0 + 1, 1)
-                ts = f"{when.isoformat()}T{9 + k * 9 // max(turns, 1):02d}:{(k * 7) % 60:02d}:00Z"
+                ts = datetime(when.year, when.month, when.day, 9, tzinfo=timezone.utc) + timedelta(
+                    minutes=k * 540 // max(turns, 1))
+                if src.get("jobs"):  # a worker's job: its turns follow each other, longer for later kinds
+                    kind = src["jobs"][(day * 100 + k // group) % len(src["jobs"])]
+                    step = 30 + 25 * src["jobs"].index(kind)
+                    ts = datetime(when.year, when.month, when.day, 9, tzinfo=timezone.utc) + timedelta(
+                        minutes=(k // group) * group * 540 // max(turns, 1), seconds=(k % group) * step)
+                wait = LATENCY.get(model, 6) * (1 + progress) + k % 4
                 lines += _turn(f"msg_example_{n}_{day}_{k}", ts, session, cwd, int(c0 + (c1 - c0) * progress),
-                               src.get("cache_write_share", .04), src.get("model", "claude-opus-5-5"),
-                               src.get("cache_ttl", "1h"))
+                               src.get("cache_write_share", .04), model, src.get("cache_ttl", "1h"), wait)
+                if src.get("jobs") and k % group == 0:
+                    last = min(k + group, turns) - 1
+                    end = ts + timedelta(seconds=(last - k) * step + wait + 30)
+                    jobs.append((src["seq"], kind, ts - timedelta(seconds=20), end))
         with (folder / f"{session}.jsonl").open("w", encoding="utf-8") as f:
             f.writelines(json.dumps(line) + "\n" for line in lines)
     conn = db.connect(prep_path)
@@ -197,6 +220,16 @@ def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -
         for t in spec["tasks"]:
             conn.execute("INSERT OR REPLACE INTO usage_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                          (t["id"], t["project"], t["seq"], t["title"], t["type"], t["status"], int(t["pr_merged"]), stamp))
+        apps = [r[0] for r in conn.execute("SELECT id FROM applications ORDER BY id LIMIT 5")]
+        fmt = "%Y-%m-%dT%H:%M:%SZ"
+        for i, (seq, kind, started, finished) in enumerate(jobs):
+            source = "brief" if kind == "brief" else "message" if kind in ("ask", "comms", "learn") else "request"
+            app = apps[i % len(apps)] if apps and kind != "brief" else None
+            conn.execute("INSERT INTO runs (source, item, worker, kind, application_id, getjo_job_id, queued_at, "
+                         "started_at, finished_at, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         (source, f"example-{i}", seq, kind, app, "example-job" if kind == "brief" else None,
+                          (started - timedelta(minutes=3)).strftime(fmt), started.strftime(fmt),
+                          finished.strftime(fmt), "blocked" if i % 17 == 16 else "done"))
         conn.commit()
     finally:
         conn.close()

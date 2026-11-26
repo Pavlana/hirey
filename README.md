@@ -22,13 +22,13 @@ WeasyPrint, renders the tailored CV PDF), 699 unit tests.
 <!-- Screenshots: example data only (python -m prep.seed_example), never real applications. -->
 ![New offers with the agent's job brief, and the Applications Assistant box](docs/screenshots/new-offers.png)
 
-| Pipeline and an application (Mock interview) | Comparing two ticked jobs | Metrics: Applications |
+| Pipeline and an application (Mock interview) | Comparing two ticked jobs | Pipeline stats |
 |---|---|---|
-| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Applications Assistant box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Metrics, Applications tab](docs/screenshots/metrics-applications.png) |
+| ![Pipeline list with the selected application](docs/screenshots/applications.png) | ![Applications Assistant box comparing two ticked jobs](docs/screenshots/agent-box.png) | ![Pipeline stats page](docs/screenshots/pipeline-stats.png) |
 
-| Metrics: Usage (Claude Code tokens per day, task, role; context size; where to save) |
+| Usage & cost (cost, cache hit rate, job time; where the money goes; per job, model and role) |
 |---|
-| ![Metrics, Usage tab](docs/screenshots/metrics-usage.png) |
+| ![Usage & cost page](docs/screenshots/usage-cost.png) |
 
 | Learn: a card with Your answer, the notes (vim keys on) and the tracks |
 |---|
@@ -78,10 +78,11 @@ WeasyPrint, renders the tailored CV PDF), 699 unit tests.
 - **Master CV with history.** CV changes go through the agent only: a backup of the current text
   first, then an atomic replace. The panel shows skills by theme, versions, diffs and restore with
   undo.
-- **Metrics.** Two tabs of server-rendered SVG charts. Usage: Claude Code tokens from the local
-  transcripts (counts only) per day, task and role, context size of the standing assistants, and
-  where to save. Applications: applications per week, response rate, stage funnel and which job
-  boards bring the best matches.
+- **Usage & cost and Pipeline stats.** Two short pages of server-rendered SVG charts. Usage & cost:
+  Claude Code cost from the local transcripts (counts and times only), with a plain "where the money
+  goes" summary, cost and time per worker job, per model (with response time) and per role, and where
+  to save. Pipeline stats: applications per week, response rate, stage funnel and which job boards
+  bring the best matches.
 - **Daily brief.** `/today` lists what moved, what is due, pending agent work and new strong
   matches.
 
@@ -96,7 +97,7 @@ flowchart LR
     jobs -. read-only, SQLite mode=ro .-> core
 
     subgraph hirey [Hirey]
-        web[Dashboard: Applications, Learn, Metrics<br/>prep.web, 127.0.0.1 only] <--> db[(prep.db<br/>applications, tasks,<br/>agent_requests, agent_messages,<br/>cv_fits, tailored_cvs, ...)]
+        web[Dashboard: Applications, Learn, Evals,<br/>Usage & cost, Pipeline stats<br/>prep.web, 127.0.0.1 only] <--> db[(prep.db<br/>applications, tasks,<br/>agent_requests, agent_messages,<br/>cv_fits, tailored_cvs, ...)]
         core[prep.cli + prep.db] <--> db
     end
 

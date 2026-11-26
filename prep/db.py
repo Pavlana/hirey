@@ -557,7 +557,8 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # 5-minute one); NULL when the transcript line did not say. speed ("standard" | "fast") and geo
     # (inference_geo, e.g. "global" | "us") change the price of a response. Adding them re-reads every
     # transcript once (usage_files is emptied) so rows still on disk get the split.
-    "usage_messages": {"cache_write_1h": "INTEGER", "speed": "TEXT", "geo": "TEXT"},
+    # latency_ms: the response time (prep/usage.py), NULL when unknown; adding it re-reads every transcript once too.
+    "usage_messages": {"cache_write_1h": "INTEGER", "speed": "TEXT", "geo": "TEXT", "latency_ms": "INTEGER"},
 }
 
 APPLICATION_FIELDS = (
@@ -606,7 +607,7 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
         for column, definition in columns.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-                if (table, column) == ("usage_messages", "cache_write_1h"):
+                if (table, column) in (("usage_messages", "cache_write_1h"), ("usage_messages", "latency_ms")):
                     conn.execute("DELETE FROM usage_files")
                 if (table, column) == ("tasks", "stage"):
                     _backfill_task_stages(conn)
@@ -2875,7 +2876,7 @@ def claim_brief(conn: sqlite3.Connection, job_id: str, worker: int | None = None
 # --- runs (workers) --------------------------------------------------------------------
 # Every claim opens a run (claim_request, claim_brief, claim_messages, claim_message); sync_runs closes
 # it from the item's own state, so the many places that finish an item (saves, replies, Stop) need no
-# change. The Workers sidebar, its popover and /metrics/runs read them (prep/workers.py).
+# change. The Workers sidebar, its popover, /runs and the Usage & cost page's jobs read them (prep/workers.py).
 RUN_SOURCES = ("request", "brief", "message")
 RUN_RESULTS = ("done", "blocked", "stopped", "lapsed")
 MAX_REASON = 200  # characters in a blocked reason
