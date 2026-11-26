@@ -37,33 +37,33 @@ separate project that scores public job posts.
 ## The system at a glance
 
 ```mermaid
-flowchart LR
+flowchart TD
     user(["User"])
     browser["Browser<br/>dashboard on 127.0.0.1:8765"]
     web["prep.web<br/>dashboard server"]
+    dev3["dev3<br/>dev3 message"]
+    agents["Standing agents in dev3<br/>Applications Assistant · Research worker<br/>Communication worker · Learn Assistant"]
+    skills["Claude Code skills<br/>.claude/skills"]
     cli["prep.cli<br/>commands"]
     db[("prep.db<br/>SQLite, WAL")]
     priv[("private_dir<br/>gitignored files")]
     getjo[("getjo<br/>jobs.db and repo")]
-    dev3["dev3<br/>task board, dev3 message"]
-    agents["Standing agents<br/>Applications Assistant, Research worker,<br/>Communication worker, Learn Assistant"]
-    skills["Claude Code skills<br/>.claude/skills"]
-    gh["GitHub<br/>public repo, CI"]
+    gh["GitHub<br/>public code, CI"]
 
-    user -->|"clicks, types messages"| browser
-    browser <-->|"HTTP, same origin only"| web
-    web <-->|"read and write"| db
-    web -->|"read only: matches, descriptions"| getjo
-    web -->|"ping with ids only"| dev3
+    user -->|"clicks, messages"| browser
+    user -->|"chats in a session"| agents
+    browser <-->|"HTTP, same origin"| web
+    web -->|"ping: ids only"| dev3
     dev3 -->|"prompt in the agent's pane"| agents
     agents -->|"run"| skills
     skills -->|"python -m prep.cli"| cli
+    web <-->|"read, write"| db
     cli <-->|"claim, save, reply"| db
-    cli <-->|"CV, research, notes, transcripts"| priv
-    cli -->|"read only: jobs, code for explainers"| getjo
-    web <-->|"notes, CV restore, files to show"| priv
-    user -->|"chats in a session"| skills
-    gh -.->|"code only, never private data"| cli
+    web <-->|"notes, CV restore, files"| priv
+    cli <-->|"CV, research, notes"| priv
+    web -->|"read only"| getjo
+    cli -->|"read only"| getjo
+    gh -.->|"code only"| skills
 ```
 
 - The **dashboard never runs an agent**. It stores a request or message in prep.db and, when an agent
@@ -103,7 +103,7 @@ flowchart LR
 ### A. From getjo match to application
 
 ```mermaid
-flowchart LR
+flowchart TD
     match["getjo job<br/>score 7 or more"] --> offers["New offers list"]
     offers -->|"Skip with reason"| skipped["job_decisions: skipped"]
     offers -->|"Interested"| interested["Application: Interested<br/>research and CV fit queued"]
@@ -144,7 +144,7 @@ sequenceDiagram
     end
     W-->>B: reply shown, list and panel refreshed
     Note over B,A: no reply in 30 min: flagged, Resend shows, anyone may claim it again
-    Note over B,W: Resend pings the same message again. Cancel or Stop closes it, rows kept.
+    Note over B,A: Resend pings the same message again. Cancel or Stop closes it, rows kept.
 ```
 
 - The ticks say what the message is about: nothing (the whole search), one application, one job offer,
@@ -159,7 +159,7 @@ Reference: [assistants.md](reference/assistants.md#applications-assistant-box).
 ### C. Research, CV fit and job briefs
 
 ```mermaid
-flowchart LR
+flowchart TD
     q["Queued in prep.db<br/>agent_requests or brief_requests"] -->|"router: route research"| who{"Research worker set?"}
     who -->|"yes"| rw["Research worker"]
     who -->|"no"| aa["Applications Assistant"]
@@ -204,7 +204,7 @@ Reference: [assistants.md](reference/assistants.md#draft-a-reply-communication-w
 ### E. Learn
 
 ```mermaid
-flowchart LR
+flowchart TD
     card["Learn card<br/>question, prompt, answer, sources"]
     card -->|"Check my answer"| box["Learn Assistant box"]
     card -->|"type in floating window"| box
@@ -229,7 +229,7 @@ Reference: [learn.md](reference/learn.md).
 ### F. Master CV to tailored CV
 
 ```mermaid
-flowchart LR
+flowchart TD
     master["cv.md master<br/>versions in cv-history"] -->|"Tailor CV queued"| tailor["Research worker writes<br/>a new version file"]
     facts["facts bank"] -.-> tailor
     tailor -->|"tailor save"| version["tailored_cv_versions<br/>never overwritten"]
@@ -252,7 +252,7 @@ Reference: [cv.md](reference/cv.md).
 ### G. Workers sidebar and run history
 
 ```mermaid
-flowchart LR
+flowchart TD
     claim["A claim by any agent"] --> run["runs row opened<br/>worker = DEV3_TASK_SEQ"]
     run --> state["Closed from the item's state:<br/>done, blocked, stopped, lapsed"]
     run --> side["Workers sidebar<br/>working, stuck, idle"]
@@ -274,15 +274,16 @@ The main tables and how they link. Every table and column is in
 
 ```mermaid
 erDiagram
+    direction LR
     applications ||--o{ status_history : "stage changes"
     applications ||--o{ tasks : "to-dos"
     applications ||--o{ interviews : "dates and debriefs"
     applications ||--o{ application_comments : "free comments"
     applications ||--o{ agent_requests : "queued agent work"
     applications ||--o| cv_fits : "latest fit"
-    applications ||--o{ tailored_cv_versions : "tailored CVs"
+    applications ||--o{ tailored_cv_versions : "tailored versions"
     tailored_cv_versions ||--o| tailored_cv_checks : "verdict"
-    applications ||--o{ agent_messages : "conversation"
+    applications ||--o{ agent_messages : "messages"
     agent_messages ||--o{ agent_message_targets : "about"
     applications ||--o{ sessions : "practice"
     sessions ||--o{ gaps : "weaknesses"
@@ -313,20 +314,6 @@ erDiagram
         int reply_to
         text topic
         int card_id
-    }
-    tasks {
-        int id PK
-        int application_id FK
-        text title
-        text kind
-        text due_date
-        text stage
-    }
-    cards {
-        int id PK
-        int track_id FK
-        text front
-        text status
     }
 ```
 
