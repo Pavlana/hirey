@@ -85,6 +85,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | --- | --- | --- | --- |
 | POST | `/applications/message` | store a message (`about` targets) and ping `/ask` | [assistants.md](assistants.md#sending-a-message) |
 | POST | `/applications/draft` | Draft a reply request, pinged to the comms route | [assistants.md](assistants.md#draft-a-reply-communication-worker) |
+| POST | `/applications/draft-from` | Draft reply · LinkedIn \| Email on one of the user's own messages in the box (`msg_id`, `channel`): a reply request answering it by id | [assistants.md](assistants.md#draft-a-reply-communication-worker) |
 | POST | `/applications/resend` | put a waiting message back to pending and ping again | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/cancel` | cancel one waiting message | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/stop` | cancel every waiting message and the open panel's work | [assistants.md](assistants.md#stop-and-no-reply) |
