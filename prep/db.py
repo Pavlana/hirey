@@ -32,12 +32,8 @@ TASK_KINDS = ("apply", "prep", "drill", "admin")
 # closed: an auto task left open when its application moved to another stage (not work done).
 TASK_STATUSES = ("todo", "done", "closed")
 GAP_STATUSES = ("open", "closed")
-# A practice session: a mock interview (run by the agent or elsewhere) or a real one, debriefed.
-SESSION_KINDS = ("mock", "real")
-# Each gap named in a session gets one open drill task (add_gap_drills); closing the gap completes it.
+# Each gap named in a debrief gets one open drill task (add_gap_drills); closing the gap completes it.
 DRILL_TITLE = "Drill: {gap}"
-# The message the panel's Mock interview control stores; /ask hands it to the /mock skill.
-MOCK_START = "Start a mock interview: {label} ({stage})"
 DECISIONS = ("interested", "applied", "skipped")
 # Labels read back by job_decisions(): a tracked job reads as "interested" while its application
 # is to_apply and as "applied" once it moves on, whatever was stored.
@@ -71,8 +67,9 @@ REVIEW_TASK = ("Review research and apply", "apply", 2)
 AUTO_COMMENT = "auto: no reply in {days} days"
 # Agent work queued for an application (done by the /research skill, never by the dashboard).
 # tailor: a copy of cv.md tailored to this job (cv-tailored/), revised later through the thread (/ask).
-# cv_eval: the AI check of the latest tailored version (grounding, fit, skim; prep/cveval.py), queued by
-# every tailor save and done in a separate pass from the one that wrote the CV.
+# cv_eval: the AI check of the latest tailored version (grounding, fit, skim; prep/cveval.py), queued only
+# by the panel's AI check button (or `research queue APP --kind cv_eval`), done in a separate pass from the
+# one that wrote the CV.
 REQUEST_KINDS = ("research", "cv_fit", "tailor", "cv_eval")
 REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": "Tailored CV", "cv_eval": "AI CV check"}
 # The two kinds entering Interested queues and the Research / CV fit buttons handle; tailor is asked for on its own.
@@ -182,23 +179,9 @@ CREATE TABLE IF NOT EXISTS interviews (
 CREATE TABLE IF NOT EXISTS gaps (
     id      INTEGER PRIMARY KEY AUTOINCREMENT,
     date    TEXT NOT NULL,
-    session TEXT,                       -- where the gap showed up (mock, interview, ...)
+    session TEXT,                       -- where the gap showed up (interview, cv fit, ...)
     gap     TEXT NOT NULL,
     status  TEXT NOT NULL DEFAULT 'open'
-);
-
--- A practice session (mock or a real interview debriefed): scores per area, 1-5, as a JSON object
--- ({"system design": 3}); the transcript or notes are private_dir/sessions/<file>. Gaps it found
--- point back at it (gaps.session_id).
-CREATE TABLE IF NOT EXISTS sessions (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    date           TEXT NOT NULL,
-    kind           TEXT NOT NULL,       -- mock / real
-    application_id INTEGER REFERENCES applications(id),
-    stage          TEXT,                -- an interview stage (INTERVIEW_STAGES)
-    scores         TEXT NOT NULL DEFAULT '{}',
-    file_path      TEXT,
-    created_at     TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -311,20 +294,6 @@ CREATE TABLE IF NOT EXISTS tailored_cv_checks (
     changes        TEXT NOT NULL,
     checked_at     TEXT NOT NULL,
     PRIMARY KEY (application_id, version)
-);
-
--- The first Agent thread, one per application (replaced by agent_messages, which copies its rows
--- on connect; nothing writes here any more). Bodies are private: never logged.
-CREATE TABLE IF NOT EXISTS application_messages (
-    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-    application_id INTEGER NOT NULL REFERENCES applications(id),
-    author         TEXT NOT NULL,       -- user / agent
-    body           TEXT NOT NULL,
-    status         TEXT,                -- user messages: pending / claimed / answered; NULL for agent
-    reply_to       INTEGER REFERENCES application_messages(id),  -- agent replies: the user message answered
-    created_at     TEXT NOT NULL,
-    claimed_at     TEXT,
-    answered_at    TEXT
 );
 
 -- Every saved version of an application's tailored CV, each its own file (tailored_cvs points at the
@@ -514,7 +483,6 @@ CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
 CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_id);
-CREATE INDEX IF NOT EXISTS idx_messages_app ON application_messages(application_id);
 CREATE INDEX IF NOT EXISTS idx_agent_messages_app ON agent_messages(application_id);
 CREATE INDEX IF NOT EXISTS idx_targets_message ON agent_message_targets(message_id);
 CREATE INDEX IF NOT EXISTS idx_targets_app ON agent_message_targets(application_id);
@@ -525,8 +493,10 @@ CREATE INDEX IF NOT EXISTS idx_targets_app ON agent_message_targets(application_
 MIGRATIONS: dict[str, dict[str, str]] = {
     "status_history": {"comment": "TEXT"},  # the comment given with a stage change
     "tasks": {"stage": "TEXT"},             # the stage whose STAGE_TASKS created it; NULL if hand-made
-    # application_id: e.g. a gap found by a CV fit; session_id: the practice session that first named it.
-    "gaps": {"application_id": "INTEGER REFERENCES applications(id)", "session_id": "INTEGER REFERENCES sessions(id)"},
+    # application_id: e.g. a gap found by a CV fit. (A database from before mock sessions were dropped also
+    # has gaps.session_id and an empty sessions table; nothing reads or writes them.)
+    "gaps": {"application_id": "INTEGER REFERENCES applications(id)"},
+    "interviews": {"file_path": "TEXT"},  # the debrief's transcript or notes, under private_dir/sessions/
     # cv_sent: the file name of the tailored CV version the user says was sent (`cli cv sent`), with its
     # version and when that was recorded; NULL until then. Older rows may hold a frozen copy's path.
     # role_short: the short role name in tailored CV file names (FDE, AIEng), chosen once by the agent.
@@ -615,42 +585,21 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
                 if (table, column) == ("tasks", "stage"):
                     _backfill_task_stages(conn)
                     next_actions_to_tasks(conn)
-    _backfill_tailored_versions(conn)
-    _copy_application_messages(conn)
-    _backfill_message_targets(conn)
+    _retire_application_messages(conn)
     conn.commit()
 
 
-def _copy_application_messages(conn: sqlite3.Connection) -> None:
-    """Messages from the per-application threads move into agent_messages with the same ids, so
-    reply_to still points at the right message. Rows already copied are skipped."""
-    conn.execute(
-        "INSERT OR IGNORE INTO agent_messages (id, application_id, author, body, status, reply_to, created_at, "
-        "claimed_at, answered_at) SELECT id, application_id, author, body, status, reply_to, created_at, claimed_at, "
-        "answered_at FROM application_messages"
-    )
-
-
-def _backfill_message_targets(conn: sqlite3.Connection) -> None:
-    """A message from before agent_message_targets gets one target row from its own columns (an
-    application with its getjo job id, a job, or a topic); general and Learn Assistant (LEARN) messages get none."""
-    conn.execute(
-        "INSERT INTO agent_message_targets (message_id, application_id, getjo_job_id, topic) "
-        "SELECT m.id, m.application_id, COALESCE(m.getjo_job_id, a.getjo_job_id), m.topic "
-        "FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id "
-        "WHERE (m.application_id IS NOT NULL OR m.getjo_job_id IS NOT NULL OR m.topic IS NOT NULL) "
-        "AND COALESCE(m.topic, '') NOT IN (?, ?) "
-        "AND NOT EXISTS (SELECT 1 FROM agent_message_targets t WHERE t.message_id = m.id)",
-        (COMPARE, LEARN))
-
-
-def _backfill_tailored_versions(conn: sqlite3.Connection) -> None:
-    """A tailored CV saved before versions were kept becomes its own version row (file not renamed)."""
-    conn.execute(
-        "INSERT INTO tailored_cv_versions (application_id, version, file_path, created_at) "
-        "SELECT t.application_id, t.version, t.file_path, t.updated_at FROM tailored_cvs t "
-        "WHERE NOT EXISTS (SELECT 1 FROM tailored_cv_versions v WHERE v.application_id = t.application_id)"
-    )
+def _retire_application_messages(conn: sqlite3.Connection) -> None:
+    """The first Agent thread table (one per application) was replaced by agent_messages: a database
+    that still has it gets its rows copied with the same ids (so reply_to still points at the right
+    message), then the old table is dropped. Nothing else references it."""
+    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'application_messages'").fetchone():
+        conn.execute(
+            "INSERT OR IGNORE INTO agent_messages (id, application_id, author, body, status, reply_to, created_at, "
+            "claimed_at, answered_at) SELECT id, application_id, author, body, status, reply_to, created_at, "
+            "claimed_at, answered_at FROM application_messages"
+        )
+        conn.execute("DROP TABLE application_messages")
 
 
 def _backfill_task_stages(conn: sqlite3.Connection) -> None:
@@ -1365,7 +1314,7 @@ def undo_skip(conn: sqlite3.Connection, getjo_job_id: str, today: str | None = N
 def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
     """Undo Interested on a job: delete the decision and the to_apply application it created, with
     its queued requests, so the job is new again. Only while nothing else has happened to it: still
-    to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, sessions, CV fit or tier, and no
+    to_apply with one history row, no tasks, comments, agent messages, interviews, gaps, CV fit or tier, and no
     request taken by the agent. Messages asked about the job before Interested (they carry its id) do
     not count: they go back to the job. Raises ValueError otherwise. Returns the deleted application id."""
     app = find_by_job(conn, getjo_job_id)
@@ -1383,7 +1332,6 @@ def undo_interested(conn: sqlite3.Connection, getjo_job_id: str) -> int:
                        AND (getjo_job_id IS NULL OR getjo_job_id != :job))
             OR EXISTS (SELECT 1 FROM interviews WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM gaps WHERE application_id = :id)
-            OR EXISTS (SELECT 1 FROM sessions WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM cv_fits WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM tailored_cvs WHERE application_id = :id)
             OR EXISTS (SELECT 1 FROM agent_requests WHERE application_id = :id AND status != 'pending')
@@ -1642,11 +1590,11 @@ def next_interview(conn: sqlite3.Connection, today: str) -> dict | None:
 
 
 def add_gap(conn: sqlite3.Connection, gap: str, day: str | None = None, session: str | None = None,
-            application_id: int | None = None, session_id: int | None = None) -> int:
+            application_id: int | None = None) -> int:
     day = day or today_iso()
     _check_date("date", day)
-    cursor = conn.execute("INSERT INTO gaps (date, session, gap, application_id, session_id) VALUES (?, ?, ?, ?, ?)",
-                          (day, session, gap, application_id, session_id))
+    cursor = conn.execute("INSERT INTO gaps (date, session, gap, application_id) VALUES (?, ?, ?, ?)",
+                          (day, session, gap, application_id))
     conn.commit()
     return cursor.lastrowid
 
@@ -1699,29 +1647,20 @@ def list_gaps(conn: sqlite3.Connection, status: str | None = "open") -> list[dic
     return [dict(r) for r in rows]
 
 
-def add_gap_drills(conn: sqlite3.Connection, gaps: list[str], session_id: int | None = None,
-                   application_id: int | None = None, due_date: str | None = None,
-                   day: str | None = None) -> dict:
-    """Record the weaknesses a session named: each becomes a new open gap, or matches an open gap with
-    the same text (ignoring case and spacing), such as one from a CV fit. A new gap points at the
-    session; a matched one gets the session only when it has none. Each named gap without an open task
-    gets one drill task (DRILL_TITLE, kind drill, due_date). With a session, the application defaults
-    to the session's and the gap's `session` label is its kind.
+def add_gap_drills(conn: sqlite3.Connection, gaps: list[str], application_id: int | None = None,
+                   due_date: str | None = None, day: str | None = None, label: str | None = None) -> dict:
+    """Record the weaknesses named (by a debrief, or `gap add`): each becomes a new open gap (its `session`
+    label is `label`, e.g. "interview"), or matches an open gap with the same text (ignoring case and
+    spacing), such as one from a CV fit. Each named gap without an open task gets one drill task
+    (DRILL_TITLE, kind drill, due_date).
     Returns {"gaps": ids, one per distinct weakness named, "new_gaps": ids created, "tasks": drill task ids}."""
     day = day or today_iso()
     _check_date("date", day)
     _check_date("due_date", due_date)
-    label = None
-    if session_id is not None:
-        session = get_session(conn, session_id)
-        if session is None:
-            raise LookupError(f"no session with id {session_id}")
-        label = session["kind"]
-        application_id = application_id if application_id is not None else session["application_id"]
     if application_id is not None and get_application(conn, application_id) is None:
         raise LookupError(f"no application with id {application_id}")
     open_gaps = {_gap_key(r["gap"]): dict(r) for r in conn.execute(
-        "SELECT id, gap, application_id, session_id FROM gaps WHERE status = 'open' ORDER BY id DESC")}
+        "SELECT id, gap, application_id FROM gaps WHERE status = 'open' ORDER BY id DESC")}
     found = {"gaps": [], "new_gaps": [], "tasks": []}
     for text in gaps:
         key = _gap_key(text)
@@ -1729,15 +1668,11 @@ def add_gap_drills(conn: sqlite3.Connection, gaps: list[str], session_id: int | 
             continue
         gap = open_gaps.get(key)
         if gap is None:
-            gap_id = add_gap(conn, " ".join(text.split()), day, label, application_id, session_id)
-            gap = open_gaps[key] = {"id": gap_id, "application_id": application_id, "session_id": session_id}
+            gap_id = add_gap(conn, " ".join(text.split()), day, label, application_id)
+            gap = open_gaps[key] = {"id": gap_id, "application_id": application_id}
             found["new_gaps"].append(gap_id)
         elif gap["id"] in found["gaps"]:
             continue
-        elif session_id is not None and gap["session_id"] is None:
-            conn.execute("UPDATE gaps SET session_id = ? WHERE id = ?", (session_id, gap["id"]))
-            conn.commit()
-            gap["session_id"] = session_id
         found["gaps"].append(gap["id"])
         if conn.execute("SELECT 1 FROM tasks WHERE gap_id = ? AND status = 'todo'", (gap["id"],)).fetchone() is None:
             found["tasks"].append(add_task(conn, DRILL_TITLE.format(gap=" ".join(text.split())), "drill", due_date,
@@ -1745,123 +1680,57 @@ def add_gap_drills(conn: sqlite3.Connection, gaps: list[str], session_id: int | 
     return found
 
 
-# --- practice sessions ---------------------------------------------------------
+# --- interview debriefs --------------------------------------------------------
 
-def _check_scores(scores: dict[str, int] | None) -> dict[str, int]:
-    checked = {}
-    for area, score in (scores or {}).items():
-        area = " ".join(str(area).split())
-        if not area:
-            raise ValueError("a score needs an area name")
-        if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
-            raise ValueError(f"the score for {area!r} must be a whole number from 1 to 5; got {score!r}")
-        checked[area] = score
-    return checked
-
-
-def record_session(conn: sqlite3.Connection, kind: str, day: str | None = None, application_id: int | None = None,
-                   stage: str | None = None, scores: dict[str, int] | None = None, file_path: str | None = None,
-                   gaps: list[str] | None = None, due_date: str | None = None) -> dict:
-    """Record a mock or a real interview: the session row, then its gaps with one drill task per gap
-    without one (add_gap_drills). Everything is checked before the first write, so a bad score or stage
-    records nothing. Returns add_gap_drills' result with "session_id"."""
-    day = day or today_iso()
-    _check("kind", kind, SESSION_KINDS)
-    if kind is None:
-        raise ValueError("a session needs a kind")
-    _check("stage", stage, INTERVIEW_STAGES)
-    _check_date("date", day)
-    _check_date("due_date", due_date)
-    checked = _check_scores(scores)
-    if application_id is not None and get_application(conn, application_id) is None:
-        raise LookupError(f"no application with id {application_id}")
-    cursor = conn.execute(
-        "INSERT INTO sessions (date, kind, application_id, stage, scores, file_path, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (day, kind, application_id, stage, json.dumps(checked), file_path, now_iso()),
-    )
-    conn.commit()
-    found = add_gap_drills(conn, gaps or [], cursor.lastrowid, application_id, due_date, day)
-    return {"session_id": cursor.lastrowid, **found}
-
-
-
-def record_debrief(conn: sqlite3.Connection, kind: str, application_id: int | None = None, day: str | None = None,
+def record_debrief(conn: sqlite3.Connection, application_id: int, day: str | None = None,
                    stage: str | None = None, questions: str | None = None, went_well: str | None = None,
-                   to_improve: str | None = None, scores: dict[str, int] | None = None,
-                   file_path: str | None = None, gaps: list[str] | None = None,
+                   to_improve: str | None = None, file_path: str | None = None, gaps: list[str] | None = None,
                    due_date: str | None = None) -> dict:
-    """Record a debrief: for a real interview, its interviews row (questions, went well, to improve),
-    then the session with its gaps and drill tasks (record_session), then the application's open
-    DEBRIEF_TASK is completed. The interviews row /stage stored for the same stage and date is filled
-    rather than duplicated; no task dates move. A mock (done elsewhere) has no interviews row: its notes
-    stay in the transcript file. The stage defaults to the application's when that is an interview
-    stage. Everything is checked before the first write. Returns record_session's result with
-    "interview_id" (None for a mock) and "debrief_tasks" (ids completed)."""
+    """Record the debrief of a real interview: its interviews row (questions, went well, to improve, the
+    transcript file), its gaps with one drill task each (add_gap_drills, label "interview"), then the
+    application's open DEBRIEF_TASK is completed. The interviews row /stage stored for the same stage
+    and date is filled rather than duplicated; no task dates move. The stage defaults to the
+    application's when that is an interview stage. Everything is checked before the first write.
+    Returns add_gap_drills' result with "interview_id" and "debrief_tasks" (ids completed)."""
     day = day or today_iso()
-    _check("kind", kind, SESSION_KINDS)
     _check_date("date", day)
     _check_date("due_date", due_date)
-    _check_scores(scores)
-    app = None
-    if application_id is not None:
-        app = get_application(conn, application_id)
-        if app is None:
-            raise LookupError(f"no application with id {application_id}")
-    if kind == "real" and app is None:
-        raise ValueError("a real interview debrief needs its application")
-    if stage is None and app is not None and app["status"] in INTERVIEW_STAGES:
+    app = get_application(conn, application_id)
+    if app is None:
+        raise LookupError(f"no application with id {application_id}")
+    if stage is None and app["status"] in INTERVIEW_STAGES:
         stage = app["status"]
     _check("stage", stage, INTERVIEW_STAGES)
-    interview_id = None
-    if kind == "real":
-        row = conn.execute(
-            """
-            SELECT id FROM interviews WHERE application_id = ? AND stage IS ? AND date = ?
-            AND questions IS NULL AND went_well IS NULL AND to_improve IS NULL ORDER BY id DESC LIMIT 1
-            """,
-            (application_id, stage, day),
-        ).fetchone()
-        if row is None:
-            interview_id = add_interview(conn, application_id, day, stage, questions, went_well, to_improve)
-        else:
-            interview_id = row["id"]
-            conn.execute("UPDATE interviews SET questions = ?, went_well = ?, to_improve = ? WHERE id = ?",
-                         (questions, went_well, to_improve, interview_id))
-            conn.commit()
-    found = record_session(conn, kind, day, application_id, stage, scores, file_path, gaps, due_date)
-    debrief_tasks = []
-    if application_id is not None:
-        debrief_tasks = [r["id"] for r in conn.execute(
-            "SELECT id FROM tasks WHERE application_id = ? AND title = ? AND status = 'todo'",
-            (application_id, DEBRIEF_TASK))]
-        for task_id in debrief_tasks:
-            complete_task(conn, task_id)
+    row = conn.execute(
+        """
+        SELECT id FROM interviews WHERE application_id = ? AND stage IS ? AND date = ?
+        AND questions IS NULL AND went_well IS NULL AND to_improve IS NULL ORDER BY id DESC LIMIT 1
+        """,
+        (application_id, stage, day),
+    ).fetchone()
+    if row is None:
+        interview_id = add_interview(conn, application_id, day, stage, questions, went_well, to_improve)
+    else:
+        interview_id = row["id"]
+        conn.execute("UPDATE interviews SET questions = ?, went_well = ?, to_improve = ? WHERE id = ?",
+                     (questions, went_well, to_improve, interview_id))
+    if file_path:
+        conn.execute("UPDATE interviews SET file_path = ? WHERE id = ?", (file_path, interview_id))
+    conn.commit()
+    found = add_gap_drills(conn, gaps or [], application_id, due_date, day, "interview")
+    debrief_tasks = [r["id"] for r in conn.execute(
+        "SELECT id FROM tasks WHERE application_id = ? AND title = ? AND status = 'todo'",
+        (application_id, DEBRIEF_TASK))]
+    for task_id in debrief_tasks:
+        complete_task(conn, task_id)
     return {**found, "interview_id": interview_id, "debrief_tasks": debrief_tasks}
 
 
-def get_session(conn: sqlite3.Connection, session_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)).fetchone()
-    if row is None:
-        return None
-    d = dict(row)
-    d["scores"] = json.loads(d["scores"] or "{}")
-    return d
-
-
-def list_sessions(conn: sqlite3.Connection) -> list[dict]:
-    """Every session, newest first, with its application's company (None without one)."""
-    rows = conn.execute(
-        """
-        SELECT s.*, a.company FROM sessions s LEFT JOIN applications a ON a.id = s.application_id
-        ORDER BY s.date DESC, s.id DESC
-        """
-    )
-    found = []
-    for r in rows:
-        d = dict(r)
-        d["scores"] = json.loads(d["scores"] or "{}")
-        found.append(d)
-    return found
+def debriefs(conn: sqlite3.Connection, application_id: int) -> list[dict]:
+    """An application's debriefed interviews (notes or a transcript recorded), newest first."""
+    return [dict(r) for r in conn.execute(
+        "SELECT * FROM interviews WHERE application_id = ? AND (questions IS NOT NULL OR went_well IS NOT NULL "
+        "OR to_improve IS NOT NULL OR file_path IS NOT NULL) ORDER BY date DESC, id DESC", (application_id,))]
 
 
 # --- agent research queue and results ---------------------------------------------
@@ -2077,8 +1946,7 @@ def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
 def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
                      reply_to: int | None = None) -> int:
     """Record a saved tailored CV for an application: version + 1 (a new tailored_cv_versions row; each
-    version is its own file and is kept), its open tailor request done, an AI check (cv_eval) queued
-    unless one is open already (it always checks the latest version), and
+    version is its own file and is kept), its open tailor request done, and
     `note` (what was done or changed, and any questions) posted in the thread as an agent message,
     all in one transaction. With `reply_to` (a revision asked for in the thread) the note answers
     that user message, as reply_message does. Returns the new version."""
@@ -2102,8 +1970,6 @@ def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note
             "AND status IN ('pending', 'claimed')",
             (stamp, app_id),
         )
-        conn.execute("INSERT OR IGNORE INTO agent_requests (application_id, kind, requested_at) VALUES (?, 'cv_eval', ?)",
-                     (app_id, stamp))
         _agent_message(conn, app_id, note, stamp, reply_to)
     return version
 
@@ -2169,7 +2035,7 @@ def save_cv_eval(conn: sqlite3.Connection, app_id: int, version: int, findings: 
 
 def eval_state(conn: sqlite3.Connection, app_id: int, check: dict | None) -> str:
     """The AI check of the latest tailored version, whose stored check is `check`: "done" (its summary
-    is in), "pending" (a cv_eval request is open) or "none" (never asked, e.g. saved before AI checks)."""
+    is in), "pending" (a cv_eval request is open) or "none" (not asked for this version: the panel's AI check button queues it)."""
     if check and check.get("summary") is not None:
         return "done"
     found = conn.execute("SELECT 1 FROM agent_requests WHERE application_id = ? AND kind = 'cv_eval' "
@@ -2348,9 +2214,9 @@ def source_preview(body: str, limit: int = SOURCE_PREVIEW) -> str:
 def is_draft_source(msg: dict | None) -> bool:
     """A message a reply can be drafted from: the user's own message in the Applications thread about an
     application, a job offer or the whole search; not a draft request, a comparison, a CV or Learn message,
-    a fixed mock-interview start, or a cancelled message."""
+    or a cancelled message."""
     return bool(msg) and msg["author"] == "user" and not msg["comms"] and msg["topic"] is None \
-        and msg["status"] != "cancelled" and not msg["body"].startswith(MOCK_START.split(":")[0])
+        and msg["status"] != "cancelled"
 
 
 def draft_source(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None) -> dict | None:

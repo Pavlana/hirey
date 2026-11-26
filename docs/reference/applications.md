@@ -291,8 +291,8 @@ questions to ask, notes from a call, what the agent finds.
   stamp, so nothing is lost and a second Save is a deliberate overwrite.
 - **Agent append.** `cli notes APP --append` (`db.append_notes`) adds a "**Agent · 17 Nov**" block at
   the end, never a rewrite, pay refused (`db.check_no_pay`).
-- **Who appends.** `/ask` after a request to note something, a pasted recruiter email or call notes, a
-  mock or a debrief; `/research` appends "Questions to ask" after company research when the notes have
+- **Who appends.** `/ask` after a request to note something, a pasted recruiter email or call notes, or a
+  debrief; `/research` appends "Questions to ask" after company research when the notes have
   none (`cli.has_questions_section`).
 - `thread show` and `research next` print the notes as context. `cli update --notes` still replaces
   them (and moves the stamp). Notes text is never logged.

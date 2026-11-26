@@ -1,6 +1,6 @@
 ---
 name: debrief
-description: Turn a pasted or dictated transcript or notes from a real interview, or from a mock interview done elsewhere, into Hirey records — the interview's questions, what went well and what to improve, a practice session with 1–5 scores per area, and a gap with a drill task for each weakness named. The transcript is saved under private_dir/sessions/. It also completes the "Debrief — what to improve" task. Use when the user types /debrief, pastes or dictates how an interview or a mock went, or says "let's debrief the Initech interview".
+description: Turn a pasted or dictated transcript or notes from a real interview into Hirey records — the interview's questions, what went well and what to improve, and a gap with a drill task for each weakness named. The transcript is saved under private_dir/sessions/. It also completes the "Debrief — what to improve" task. Use when the user types /debrief, pastes or dictates how an interview went, or says "let's debrief the Initech interview".
 ---
 
 # /debrief
@@ -11,17 +11,16 @@ question at a time.
 
 Nothing here sends email or replies to anyone. Run commands from the repo root.
 
-## 1. Real or mock, and which application
+## 1. Which application
 
-- **Real** (`--kind real`): an interview with a company. It needs the application:
+- A debrief is for a real interview with a company, so it needs the application (`--app ID`):
   `python -m prep.cli apps`, then match the company as /stage does (ignore Ltd, Inc, plc and case;
   two roles at one company → the one the text names, else ask). No match → offer /applied first.
-- **Mock** (`--kind mock`): a practice interview done elsewhere (a friend, a platform). Add `--app ID`
-  only when it was practice for that application. A mock gets no interview row; its notes stay in
-  the transcript file.
+- A practice interview (a friend, a platform) is not recorded: Hirey keeps no practice sessions or
+  scores. Say so in one line; its weaknesses can still become gaps with `gap add` if the user wants.
 - Stage (`--stage`): `recruiter_call`, `technical` (coding), `system_design` or `final` (company /
-  hiring manager / values). Omit it for a real interview when the application is already at that
-  stage: the command uses the application's. After a rejection, pass the stage the interview was.
+  hiring manager / values). Omit it when the application is already at that stage: the command
+  uses the application's. After a rejection, pass the stage the interview was.
 - Date (`--date`): the day it took place, `YYYY-MM-DD` (`today` by default). When /stage stored that
   interview with this date, its row is filled instead of a new one; no task dates move.
 
@@ -30,9 +29,6 @@ Nothing here sends email or replies to anyone. Run commands from the repo root.
 - **Questions**: the questions asked, one per line, short ("Design a rate limiter", "Tell me about a
   conflict"). At most about 15.
 - **Went well** and **To improve**: two to five short lines each, in plain words.
-- **Scores** (`--score AREA=N`, N from 1 to 5): only for areas the text lets you judge — for example
-  coding, problem solving, system design, communication, behavioural, domain. Use the interviewer's
-  feedback when there is any; otherwise judge from the answers and say the scores are your estimate.
 - **Gaps** (`--gap`): each concrete weakness worth drilling, as a short topic ("Consistent hashing",
   "STAR stories: shorter", "Big-O of heap operations"). One gap per topic, not per question. Reuse the
   wording of an open gap when it is the same weakness (`python -m prep.cli gap list`): it is matched
@@ -43,10 +39,10 @@ Never put pay, salary or anything the user asked to keep out into any field.
 ## 3. Record it — one command
 
 ```bash
-python -m prep.cli debrief --kind real --app ID [--stage S] --date YYYY-MM-DD \
+python -m prep.cli debrief --app ID [--stage S] --date YYYY-MM-DD \
   --questions 'Q1
 Q2' --went-well '…' --to-improve '…' \
-  --score coding=3 --score communication=4 --gap 'Consistent hashing' --gap 'STAR stories: shorter' \
+  --gap 'Consistent hashing' --gap 'STAR stories: shorter' \
   [--due YYYY-MM-DD] --transcript <<'TRANSCRIPT_END'
 <the transcript or notes, as given>
 TRANSCRIPT_END
@@ -63,8 +59,8 @@ TRANSCRIPT_END
 
 ## 3b. Gap cards — drafted, saved only after a yes
 
-`python -m prep.cli cards gaps --session S` (S: the session the command printed) gives a draft per
-gap of this session with no Learn card yet: JSON with track, chapter, front, an empty back and
+`python -m prep.cli cards gaps --gap ID --gap ID …` (the gap ids the command printed after
+`gaps:`) gives a draft per gap with no Learn card yet: JSON with track, chapter, front, an empty back and
 `source_gap_id`. For each, write the front as the question to drill and the back as 3 to 6 short
 key points on the topic, plus one line on how to answer from cv.md when cv.md backs it. Never
 invent the user's experience or numbers.
@@ -95,7 +91,7 @@ If the text also says what happens next, record that as /stage does (`python -m 
 
 ## 5. Notes
 
-For a debrief with `--app`, add to the application's Notes what helps the next round, as short
+Add to the application's Notes what helps the next round, as short
 `-` bullets: the interview format, whether AI tools were allowed, names and roles, next steps,
 questions to ask next time. Skip what the notes already say (`python -m prep.cli notes ID`).
 
@@ -112,7 +108,7 @@ The command adds a dated "Agent" block and never rewrites the user's text. Never
 
 A few lines from the command output. For example:
 
-> Initech coding interview (10 Nov) recorded: 6 questions, scores coding 3/5, communication 4/5.
+> Initech coding interview (10 Nov) recorded: 6 questions, 2 to improve.
 > New drills: Consistent hashing, STAR stories: shorter. Transcript saved in sessions/.
 > Cards to drill (not saved yet): **How does consistent hashing spread keys?** (gap #12) … — save them?
 

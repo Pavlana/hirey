@@ -227,8 +227,7 @@ class FromThreadTest(ResendCancelBase):
             agent = db.reply_message(conn, ACME, src, "Looks good.")
             draft = db.add_draft_request(conn, ACME, "reply", "email", PASTED)
             cv = db.add_message(conn, None, "Shorten my summary", topic="cv")
-            mock_start = db.add_message(conn, ACME, db.MOCK_START.format(label="Recruiter call", stage="recruiter_call"))
-            for bad in (agent, draft, cv, mock_start, 999):
+            for bad in (agent, draft, cv, 999):
                 with self.subTest(msg=bad), self.assertRaises(LookupError):
                     db.add_draft_request(conn, None, "reply", "email", source_id=bad)
             with self.assertRaises(ValueError):

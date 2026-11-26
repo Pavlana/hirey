@@ -15,7 +15,7 @@ CARD_FIELDS = ("track", "chapter", "front", "prompt", "back", "tags", "follow_up
 SOURCE_FIELDS = ("kind", "title", "url", "minutes", "why")
 CARD_STATUSES = ("todo", "done")
 # (slug, title, subtitle) of the track that cards drafted from gaps go to; added with its first card.
-GAPS_TRACK = ("gaps-to-drill", "Gaps to drill", "Weak spots from mocks, interviews and CV fits")
+GAPS_TRACK = ("gaps-to-drill", "Gaps to drill", "Weak spots from interviews and CV fits")
 
 
 def slugify(title: str) -> str:
@@ -495,7 +495,7 @@ def import_markdown(conn: sqlite3.Connection, text: str, dry_run: bool = False) 
 # --- gaps to drill ----------------------------------------------------------------
 
 def gap_drafts(conn: sqlite3.Connection, gap_ids: list[int] | None = None, application_id: int | None = None,
-               session_id: int | None = None, limit: int | None = None) -> list[dict]:
+               limit: int | None = None) -> list[dict]:
     """Card skeletons for open gaps that have no card yet, newest gap first: track GAPS_TRACK, chapter the
     application's company (else "General"), front the gap, an empty back for the agent to write, tag "gap"
     and source_gap_id. Nothing is saved: the agent fills the back, shows the user, then `cards add`."""
@@ -506,9 +506,6 @@ def gap_drafts(conn: sqlite3.Connection, gap_ids: list[int] | None = None, appli
     if application_id is not None:
         where.append("g.application_id = ?")
         params.append(application_id)
-    if session_id is not None:
-        where.append("g.session_id = ?")
-        params.append(session_id)
     sql = ("SELECT g.id, g.gap, a.company FROM gaps g LEFT JOIN applications a ON a.id = g.application_id WHERE "
            + " AND ".join(where) + " ORDER BY g.id DESC" + (f" LIMIT {int(limit)}" if limit else ""))
     return [{"track": GAPS_TRACK[0], "chapter": r["company"] or "General", "front": r["gap"], "back": "",

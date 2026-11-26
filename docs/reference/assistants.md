@@ -42,7 +42,7 @@ and CV work itself is in [research.md](research.md) and [cvs.md](cvs.md).
 
 | Agent | Setting | Handles | Skills |
 | --- | --- | --- | --- |
-| Applications Assistant | `assistant_task` | Applications Assistant box messages; any work whose route has no worker | /ask, /stage, /mock, /reply (fallback), /research (fallback) |
+| Applications Assistant | `assistant_task` | Applications Assistant box messages; any work whose route has no worker | /ask, /stage, /reply (fallback), /research (fallback) |
 | Research worker | `[workers] research` | company research, CV fit, tailored CV, AI CV check, job briefs | /research |
 | Communication worker | `[workers] comms` | Draft a reply requests | /reply |
 | Learn Assistant | `prep_assistant_task` | Learn Assistant box messages | /learn-ask, /explainer |
@@ -126,9 +126,8 @@ Routing is plain code, no LLM (`assistant.target`, `assistant.message_target`).
 - The line offers /research; it is not an order, because the hook also runs in coding sessions.
   `/today` runs /research when work is pending.
 - `queue` and `today` add, each read on its own:
-  - "Agent thread: N messages waiting (applications …, general)", from `agent_messages` (or, in a
-    database no newer version has opened, `application_messages`), so an older database still reports
-    research; comparisons are named as such;
+  - "Agent thread: N messages waiting (applications …, general)", from `agent_messages`;
+    comparisons are named as such;
   - "Draft replies: N requests waiting. Run /reply.";
   - "Job briefs: N waiting";
   - "Learn Assistant: N messages waiting. Run /learn-ask."
@@ -184,9 +183,9 @@ in a panel).
   "Waiting for the agent: run /ask…" without one.
 - Messages are stored and shown verbatim, so they may hold pay the user pasted. Bodies are never logged
   or sent in the ping.
-- Rows from the earlier per-application threads (`application_messages`, no longer written) are copied
-  into `agent_messages` with their ids on connect (`db._copy_application_messages`, `INSERT OR IGNORE`),
-  so `reply_to` still holds.
+- A database that still has the earlier per-application thread table (`application_messages`) gets its
+  rows copied into `agent_messages` with their ids on connect, then the table dropped
+  (`db._retire_application_messages`), so `reply_to` still holds.
 
 ## Ticks and targets
 
@@ -220,8 +219,7 @@ The form posts every `about` value with `about_set=1`:
 
 - An older form's `app_id` / `job_id` / `topic` fields still work.
 - Every message's targets are rows of `agent_message_targets` (message id, `application_id` with its
-  getjo id when it has one, `getjo_job_id`, `topic`; none for a general message). Messages from before
-  the table get one row from their columns on connect (`db._backfill_message_targets`).
+  getjo id when it has one, `getjo_job_id`, `topic`; none for a general message).
 - An agent reply copies its question's targets, and carries the job id and topic.
 - "General" means both columns are NULL everywhere it is read (claims, the general `thread show`, the
   `queue` and `today` lines).
@@ -290,7 +288,7 @@ messages they are about (atomic per message; a lapsed claim counts as pending ag
   the message's change to `answered`, and only while that message is still open.
 - `thread close MSG` closes a waiting message left without a reply ([below](#stop-and-no-reply)).
 - `thread show --message` hands a Learn message to `learn-thread show` ([learn.md](learn.md)).
-- A mock interview is a message too ([practice.md](practice.md#mock-interviews)).
+- A request for a mock interview gets a one-line answer: Hirey runs none ([practice.md](practice.md)).
 
 ## Job messages and Interested
 
@@ -395,8 +393,7 @@ sequenceDiagram
   channel; the text never goes back through the browser. The request is a reply about that message's
   application, job offer or the whole search.
 - A source message is one `db.is_draft_source` accepts: written by the user, in the Applications box
-  (no `topic`: not a CV, comparison or Learn message), not a draft request, not cancelled, not a mock
-  interview start.
+  (no `topic`: not a CV, comparison or Learn message), not a draft request, not cancelled.
 - **Empty paste.** A reply with nothing pasted answers the latest source message on the same subject
   (`db.draft_source`: this application, this job offer, or the whole search). The form names it under
   the paste box: "Left empty, a reply uses your message of Nov 26, 14:02: '…'" (first 60 characters,

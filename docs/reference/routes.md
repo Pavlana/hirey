@@ -64,7 +64,6 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | POST | `/applications/research` | queue research, CV fit or tailored CV (Redo sets `force`) | [research.md](research.md) |
 | POST | `/applications/notes` | save the Notes card (`app_id`, `stamp`, `notes`); stale stamp is a 400 | [applications.md](applications.md#notes) |
 | POST | `/applications/employer` | set `employer_kind`: product, client or empty for unknown | [dashboard.md](dashboard.md#the-application-panel) |
-| POST | `/applications/mock` | start a mock interview for a stage | [practice.md](practice.md#mock-interviews) |
 | POST | `/tasks/done` | tick a panel task done | [applications.md](applications.md#tasks) |
 | POST | `/tasks/reopen` | Undo a ticked task | [applications.md](applications.md#tasks) |
 

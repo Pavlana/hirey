@@ -335,7 +335,6 @@ class CliTest(IsolatedTestCase):
             db.queue_request(conn, self.app, "research")
             conn.execute("DROP TABLE agent_message_targets")  # an older database: no thread tables at all
             conn.execute("DROP TABLE agent_messages")
-            conn.execute("DROP TABLE application_messages")
             conn.commit()
         out = self.run_cli("queue")[1]
         self.assertIn("Agent work pending: 1 company research", out)
@@ -391,7 +390,10 @@ class GeneralThreadTest(IsolatedTestCase):
         self.assertEqual(argv[-1], "/ask general 31")
         self.assertIn("Question on the whole search", argv)
 
-    def test_old_thread_rows_are_copied_once_with_their_ids(self) -> None:
+    def test_old_thread_rows_are_copied_with_their_ids_then_the_table_dropped(self) -> None:
+        self.conn.execute("CREATE TABLE application_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, application_id INTEGER, "
+                          "author TEXT, body TEXT, status TEXT, reply_to INTEGER, created_at TEXT, claimed_at TEXT, "
+                          "answered_at TEXT)")
         self.conn.execute("INSERT INTO application_messages (id, application_id, author, body, status, created_at) "
                           "VALUES (40, ?, 'user', 'Old question', 'answered', '2026-01-01T09:00:00Z')", (self.app,))
         self.conn.execute("INSERT INTO application_messages (id, application_id, author, body, reply_to, created_at) "
@@ -403,6 +405,7 @@ class GeneralThreadTest(IsolatedTestCase):
         self.assertEqual([(m["id"], m["reply_to"], m["body"]) for m in rows],
                          [(40, None, "Old question"), (41, 40, "Old answer")])
         self.assertGreater(db.add_message(self.conn, None, "New"), 41, "new ids continue after the copied ones")
+        self.assertIsNone(self.conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'application_messages'").fetchone())
 
 
 class ReviewOrderTest(IsolatedTestCase):
@@ -557,15 +560,6 @@ class JobMessagesTest(WebTestCase):
         self.assertIn(f"Claimed for this session: message {general}.", out)
         self.assertNotIn(f"To answer message {msg}:", out)
         self.assertIn(f"job {GLOBEX_JOB}", out)  # the conversation still shows it, tagged
-
-    def test_queue_on_a_database_from_before_the_job_column(self) -> None:
-        with self.conn() as conn:
-            conn.execute("ALTER TABLE agent_messages DROP COLUMN getjo_job_id")
-            conn.execute("INSERT INTO agent_messages (application_id, author, body, status, created_at) "
-                         "VALUES (NULL, 'user', 'Old general question', 'pending', '2026-01-20T09:00:00Z')")
-            conn.commit()
-        out = self.run_cli("queue")[1]  # read-only: it must not add the column
-        self.assertIn("Agent thread: 1 message waiting (applications general).", out)
 
     def test_ask_command_for_a_job(self) -> None:
         settings = self.settings.__class__(**{**self.settings.__dict__, "assistant_task": 42})

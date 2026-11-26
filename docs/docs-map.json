@@ -36,7 +36,7 @@
      "docs": ["docs/reference/applications.md", "docs/usage.md"]},
     {"name": "Skills: research and CVs", "code": [".claude/skills/research/*"],
      "docs": ["docs/reference/research.md", "docs/reference/cvs.md"]},
-    {"name": "Skills: practice", "code": [".claude/skills/mock/*", ".claude/skills/debrief/*"],
+    {"name": "Skills: practice", "code": [".claude/skills/debrief/*"],
      "docs": ["docs/reference/practice.md"]},
     {"name": "Skills: Learn", "code": [".claude/skills/learn-ask/*", ".claude/skills/explainer/*"],
      "docs": ["docs/reference/learn.md"]},

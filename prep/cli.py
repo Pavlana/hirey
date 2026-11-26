@@ -24,13 +24,9 @@
     python -m prep.cli task done TASK_ID
     python -m prep.cli task edit TASK_ID [--title T] [--due DATE | --no-due]
     python -m prep.cli task delete TASK_ID
-    python -m prep.cli session add --kind mock|real [--app ID] [--stage S] [--date DATE] [--score AREA=N ...]
-                                   [--file PATH] [--gap TEXT ...] [--due DATE]   (one drill task per gap)
-    python -m prep.cli session list
-    python -m prep.cli debrief --kind real|mock [--app ID] [--stage S] [--date DATE] [--questions T]
-        [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] [--transcript < FILE]
-    python -m prep.cli mock path APP --stage S [--date DATE]   (transcript file for a new mock, under sessions/)
-    python -m prep.cli gap add TEXT ... [--session ID] [--app ID] [--due DATE]   (one drill task per gap)
+    python -m prep.cli debrief --app ID [--stage S] [--date DATE] [--questions T] [--went-well T]
+        [--to-improve T] [--gap TEXT ...] [--transcript < FILE]   (a real interview; one drill task per gap)
+    python -m prep.cli gap add TEXT ... [--app ID] [--due DATE]   (one drill task per gap)
     python -m prep.cli gap list [--all | --closed]
     python -m prep.cli gap close GAP_ID                    (its open drill tasks are marked done)
     python -m prep.cli skip APP_ID --reason R [--comment TEXT]   (Interested only, as the panel's Skip)
@@ -66,7 +62,7 @@
     python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
     python -m prep.cli cards add [--file PATH]   (a JSON card or list of cards on stdin; all or none)
     python -m prep.cli cards import FILE [--dry-run]   (Markdown: docs/learn-format.md; same track + front updated)
-    python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--session ID] [--limit N]   (drafts, JSON; read-only)
+    python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--limit N]   (drafts, JSON; read-only)
     python -m prep.cli cards list [--track ID|SLUG] [--todo | --done] | show CARD_ID | done CARD_ID | undo CARD_ID
     python -m prep.cli cards delete CARD_ID   (removes the card for good)
 
@@ -590,14 +586,6 @@ def cmd_task(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
     return 0
 
 
-def _score(value: str) -> tuple[str, int]:
-    """AREA=N from --score, N a whole number from 1 to 5."""
-    area, sep, score = value.rpartition("=")
-    if not sep or not area.strip() or not score.strip().isdigit() or not 1 <= int(score) <= 5:
-        raise argparse.ArgumentTypeError(f"not a score: {value!r} (use AREA=N, N from 1 to 5)")
-    return area.strip(), int(score)
-
-
 def _session_file(settings: Settings, value: str) -> str:
     """A session file must be under private_dir: transcripts and notes never go into the repo."""
     private = _private_dir(settings).resolve()
@@ -609,30 +597,18 @@ def _session_file(settings: Settings, value: str) -> str:
 
 
 def _print_drills(conn: sqlite3.Connection, found: dict) -> None:
-    print(f"  gaps: {len(found['gaps'])} ({len(found['new_gaps'])} new)")
+    ids = "".join(f" #{g}" for g in found["gaps"])
+    print(f"  gaps: {len(found['gaps'])} ({len(found['new_gaps'])} new){':' + ids if ids else ''}")
     for task_id in found["tasks"]:
         print(f"  added {_task_line(_get_task(conn, task_id))}")
-
-
-def cmd_session(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
-    if args.session_cmd == "add":
-        file_path = _session_file(settings, args.file) if args.file else None
-        found = db.record_session(conn, args.kind, args.date, args.app, args.stage, dict(args.score),
-                                  file_path, args.gap, args.due)
-        log.info("session %s recorded, %s new gaps", found["session_id"], len(found["new_gaps"]))  # never the gaps
-        print(f"Recorded session {_session_line(db.get_session(conn, found['session_id']))}")
-        _print_drills(conn, found)
-    elif args.session_cmd == "list":
-        print("\n".join(_session_line(s) for s in db.list_sessions(conn)) or "no sessions")
-    return 0
 
 
 def _debrief_file(settings: Settings, conn: sqlite3.Connection, args: argparse.Namespace) -> Path:
     """A new file under private_dir/sessions/ for the transcript: DATE-COMPANY-STAGE-debrief.md, with
     -2, -3, ... when the name is taken, so nothing is overwritten."""
     app = db.get_application(conn, args.app) if args.app is not None else None
-    who = db.company_slug(app["company"]) if app else args.kind
-    stage = args.stage or (app["status"] if app and app["status"] in db.INTERVIEW_STAGES else args.kind)
+    who = db.company_slug(app["company"]) if app else "interview"
+    stage = args.stage or (app["status"] if app and app["status"] in db.INTERVIEW_STAGES else "interview")
     stem = f"{args.date or db.today_iso()}-{who}-{stage.replace('_', '-')}-debrief"
     folder = Path(_session_file(settings, "x")).parent
     path, n = folder / f"{stem}.md", 1
@@ -653,16 +629,14 @@ def cmd_debrief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         with path.open("x", encoding="utf-8") as f:
             f.write(text)
     try:
-        found = db.record_debrief(conn, args.kind, args.app, args.date, args.stage, args.questions, args.went_well,
-                                  args.to_improve, dict(args.score), str(path) if path else None, args.gap, args.due)
+        found = db.record_debrief(conn, args.app, args.date, args.stage, args.questions, args.went_well,
+                                  args.to_improve, str(path) if path else None, args.gap, args.due)
     except Exception:
         if path:
             path.unlink(missing_ok=True)  # nothing recorded, so no orphan transcript
         raise
-    log.info("debrief: session %s, %s new gaps", found["session_id"], len(found["new_gaps"]))  # never the text
-    if found["interview_id"]:
-        print(f"Interview #{found['interview_id']} notes saved")
-    print(f"Recorded session {_session_line(db.get_session(conn, found['session_id']))}")
+    log.info("debrief: interview %s, %s new gaps", found["interview_id"], len(found["new_gaps"]))  # never the text
+    print(f"Interview #{found['interview_id']} notes saved")
     if path:
         print(f"  transcript: {path}")
     _print_drills(conn, found)
@@ -671,40 +645,9 @@ def cmd_debrief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     return 0
 
 
-def cmd_mock(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
-    """mock path: the transcript file for a new mock, the next free name under private_dir/sessions/
-    (the folder is created, the file is not). The /mock skill writes the mock's questions and answers there,
-    then records it with `session add --file`."""
-    if db.get_application(conn, args.app_id) is None:
-        raise LookupError(f"no application with id {args.app_id}")
-    path = mock_file(_private_dir(settings), args.app_id, args.stage, args.date or db.today_iso())
-    path.parent.mkdir(parents=True, exist_ok=True)
-    print(path)
-    return 0
-
-
-def mock_file(private_dir: Path, app_id: int, stage: str, day: str) -> Path:
-    """private_dir/sessions/mock-<app>-<stage>-<date>.md, or -2, -3 … when that name is taken."""
-    if stage not in db.INTERVIEW_STAGES:
-        raise ValueError(f"stage must be one of {', '.join(db.INTERVIEW_STAGES)}; got {stage!r}")
-    folder = private_dir / "sessions"
-    stem = f"mock-{int(app_id)}-{stage}-{day}"
-    n = 1
-    while (folder / (stem + (f"-{n}" if n > 1 else "") + ".md")).exists():
-        n += 1
-    return folder / (stem + (f"-{n}" if n > 1 else "") + ".md")
-
-
-def _session_line(s: dict) -> str:
-    app = f" — #{s['application_id']}" + (f" {s['company']}" if s.get("company") else "") if s["application_id"] else ""
-    stage = f" {db.status_label(s['stage'])}" if s["stage"] else ""
-    scores = ", ".join(f"{area} {n}/5" for area, n in s["scores"].items())
-    return f"#{s['id']} {s['date']} {s['kind']}{stage}{app}" + (f" ({scores})" if scores else "")
-
-
 def cmd_gap(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     if args.gap_cmd == "add":
-        found = db.add_gap_drills(conn, args.gaps, args.session, args.app, args.due)
+        found = db.add_gap_drills(conn, args.gaps, args.app, args.due)
         log.info("%s gaps named, %s new", len(found["gaps"]), len(found["new_gaps"]))
         print(f"Gaps: {', '.join(f'#{g}' for g in found['gaps']) or 'none'}")
         _print_drills(conn, found)
@@ -719,8 +662,7 @@ def cmd_gap(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
 
 def _gap_line(g: dict) -> str:
     where = f" ({g['session']})" if g["session"] else ""
-    links = "".join(f" {label}#{g[col]}" for label, col in (("app ", "application_id"), ("session ", "session_id"))
-                    if g[col] is not None)
+    links = f" app #{g['application_id']}" if g["application_id"] is not None else ""
     closed = " (closed)" if g["status"] == "closed" else ""
     return f"#{g['id']} {g['date']} {g['gap']}{where}{links} — {g['drill_open']} open drill{closed}"
 
@@ -839,15 +781,8 @@ def _brief_line(requests: list[dict]) -> str:
 
 
 def _messages_query(conn: sqlite3.Connection) -> str:
-    """Waiting user messages: agent_messages, or the older per-application table in a database no
-    newer version has opened yet (queue never migrates: it is read-only)."""
-    found = conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'agent_messages'").fetchone()
-    table = "agent_messages" if found else "application_messages"
-    columns = {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
-    job = "getjo_job_id" if "getjo_job_id" in columns else "NULL"  # added later: an older database has none
-    topic = "topic" if "topic" in columns else "NULL"
-    comms = "comms" if "comms" in columns else "NULL"
-    return (f"SELECT application_id, 'message', status, claimed_at, {job}, {topic}, {comms} FROM {table} "
+    """Waiting user messages in agent_messages (a database without it reports none: queue is read-only)."""
+    return ("SELECT application_id, 'message', status, claimed_at, getjo_job_id, topic, comms FROM agent_messages "
             "WHERE author = 'user' AND status IN ('pending', 'claimed') ORDER BY id")
 
 
@@ -1272,7 +1207,6 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
               + (f" Message {args.to} is still waiting for a reply." if args.to else ""))
         return 0
     note = sys.stdin.read()
-    mark = db.last_request_id(conn)
     version = db.save_tailored_cv(conn, args.app_id, str(path), note, args.to)
     log.info("tailored cv v%s saved for application %s", version, args.app_id)  # never the CV or the note
     print(f"Saved tailored CV v{version} ({path.name}) for #{args.app_id}; the note is in the thread"
@@ -1282,7 +1216,6 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
     pages = _print_pdf(settings, path, required=False)
     _print_check(settings, conn, args.app_id, version, pages)
-    _notify_new(settings, conn, mark)  # the AI check queued by the save
     return 0
 
 
@@ -1308,7 +1241,7 @@ def _print_found(conn: sqlite3.Connection, app_id: int, version: int, found: dic
         "done" if found.get("summary") else "none")
     ai = {"done": "AI check: " + cveval.summary_line(found),
           "pending": f"AI check pending: run python -m prep.cli research next {app_id} in a separate pass",
-          "none": "no AI check"}[state]
+          "none": "no AI check yet: the panel's AI check button asks for one"}[state]
     print(f"  Check: {cvcheck.LABELS[found['verdict']]} ({ai})")
     for f in found["findings"]:
         print(f"    [{f['severity']}] {f['message']}" + (f": {f['text']}" if f["text"] else ""))
@@ -1827,8 +1760,8 @@ def cmd_reply(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
 
 
 def _print_debriefs(conn: sqlite3.Connection, app_id: int) -> None:
-    """Real interview sessions of an application (a thank-you note uses the latest debrief)."""
-    found = [s for s in db.list_sessions(conn) if s["application_id"] == app_id and s["kind"] == "real"]
+    """An application's debriefed interviews (a thank-you note uses the latest debrief)."""
+    found = db.debriefs(conn, app_id)
     print(f"Interview debriefs ({len(found)}, newest first):")
     for s in found[:5]:
         path = Path(s["file_path"]) if s["file_path"] else None
@@ -2077,7 +2010,7 @@ def cmd_cards(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
         if args.dry_run:
             print("Dry run: nothing saved.")
     elif args.cards_cmd == "gaps":
-        drafts = learn.gap_drafts(conn, args.gap, args.app, args.session, args.limit)
+        drafts = learn.gap_drafts(conn, args.gap, args.app, args.limit)
         print(json.dumps(drafts, indent=2, ensure_ascii=False))
         if not drafts:
             print("No open gaps without a card.", file=sys.stderr)
@@ -2276,50 +2209,23 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("task_id", type=int)
     p.set_defaults(func=cmd_task)
 
-    p = sub.add_parser("session", help="practice sessions: mocks and real interviews, with their gaps")
-    ssub = p.add_subparsers(dest="session_cmd", required=True)
-    t = ssub.add_parser("add", help="record a session; each gap named gets a drill task")
-    t.add_argument("--kind", required=True, choices=db.SESSION_KINDS)
-    t.add_argument("--app", type=int, help="related application id")
-    t.add_argument("--stage", choices=db.INTERVIEW_STAGES)
-    t.add_argument("--date", type=parse_day, help="the session's date (default today)")
-    t.add_argument("--score", type=_score, action="append", default=[], metavar="AREA=N",
-                   help="a 1-5 score for one area; repeat per area")
-    t.add_argument("--file", help="transcript or notes, under private_dir (relative: private_dir/sessions/)")
-    t.add_argument("--gap", action="append", default=[], help="a weakness found; repeat per gap")
-    t.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
-    ssub.add_parser("list", help="every session, newest first")
-    p.set_defaults(func=cmd_session)
-
-    p = sub.add_parser("debrief", help="record a real interview or a mock done elsewhere: notes, session, gaps")
-    p.add_argument("--kind", required=True, choices=db.SESSION_KINDS)
-    p.add_argument("--app", type=int, help="related application id (required for --kind real)")
+    p = sub.add_parser("debrief", help="record a real interview's debrief: notes, transcript, gaps")
+    p.add_argument("--app", type=int, required=True, help="the application interviewed for")
     p.add_argument("--stage", choices=db.INTERVIEW_STAGES, help="default: the application's, if an interview stage")
     p.add_argument("--date", type=parse_day, help="the interview's date (default today)")
-    p.add_argument("--questions", help="questions asked (real: stored in interviews)")
-    p.add_argument("--went-well", help="what went well (real: stored in interviews)")
-    p.add_argument("--to-improve", help="what to improve (real: stored in interviews)")
-    p.add_argument("--score", type=_score, action="append", default=[], metavar="AREA=N",
-                   help="a 1-5 score for one area; repeat per area")
+    p.add_argument("--questions", help="questions asked")
+    p.add_argument("--went-well", help="what went well")
+    p.add_argument("--to-improve", help="what to improve")
     p.add_argument("--gap", action="append", default=[], help="a weakness named; repeat per gap")
     p.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
     p.add_argument("--transcript", action="store_true",
                    help="read the transcript or notes on stdin; saved under private_dir/sessions/")
     p.set_defaults(func=cmd_debrief)
-    p = sub.add_parser("mock", help="mock interviews run in the Applications Assistant box (/mock)")
-    msub = p.add_subparsers(dest="mock_cmd", required=True)
-    t = msub.add_parser("path", help="print the transcript file for a new mock (under private_dir/sessions/)")
-    t.add_argument("app_id", type=int)
-    t.add_argument("--stage", required=True, choices=db.INTERVIEW_STAGES)
-    t.add_argument("--date", type=parse_day, help="the mock's date (default today)")
-    p.set_defaults(func=cmd_mock)
-
     p = sub.add_parser("gap", help="gaps and their drill tasks")
     gsub = p.add_subparsers(dest="gap_cmd", required=True)
     t = gsub.add_parser("add", help="add gaps (or match open ones); each gets a drill task")
     t.add_argument("gaps", nargs="+")
-    t.add_argument("--session", type=int, help="the session that found them")
-    t.add_argument("--app", type=int, help="related application id (default: the session's)")
+    t.add_argument("--app", type=int, help="related application id")
     t.add_argument("--due", type=parse_day, help="due date of the drill tasks (default none)")
     t = gsub.add_parser("list")
     group = t.add_mutually_exclusive_group()
@@ -2469,7 +2375,6 @@ def build_parser() -> argparse.ArgumentParser:
                                      "newest first; save them with `cards add` after the user confirms")
     t.add_argument("--gap", type=int, action="append", help="only this gap id; repeat for more")
     t.add_argument("--app", type=int, help="only gaps of this application")
-    t.add_argument("--session", type=int, help="only gaps this practice session named")
     t.add_argument("--limit", type=int, default=10, help="at most this many drafts (default 10)")
     t = ksub.add_parser("list", help="cards in track order")
     t.add_argument("--track", help="track id or slug")

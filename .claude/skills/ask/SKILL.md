@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Answer messages left in the Applications Assistant box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage, or a mock interview (started from the panel, or an answer while one is in progress). Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the Applications Assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Applications Assistant box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the Applications Assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
@@ -87,11 +87,9 @@ first; the full description follows for anything it leaves out.
 
 ## 3. Decide what the message is
 
-**A mock interview** (a message `Start a mock interview: … (<stage>)` from the panel's Mock
-interview control, a request such as "mock me for system design", or any message while a mock is in
-progress: the most recent agent reply about this application with a `— Mock ·` line has the
-`question N of M` footer, not `finished`): follow `.claude/skills/mock/SKILL.md`. It asks one question per reply, then scores the
-answers, records the session with its gaps and drill tasks, and replies with the scores.
+**A mock interview request** ("mock me for system design"): Hirey no longer runs mock interviews or
+keeps practice scores. Say so in one line and point to the Learn Assistant's quiz mode ("quiz me on
+system design" on the Learn page); a real interview's notes go through /debrief.
 
 **Gap cards to save** (the most recent agent reply in this conversation ends its card drafts with
 `— Gap cards · session #S · reply "save cards" …`, and the message says save, yes, or asks for
@@ -175,7 +173,7 @@ Never put pay in a task or comment unless the user's own words ask for it.
 
 **Notes.** Each application has one Notes card on its panel; the user edits it and the agent
 appends to it. Append when the user asks to note something ("note the interview is in two
-rounds"), when a recruiter email or call notes are pasted (below), and after a mock or a debrief
+rounds"), when a recruiter email or call notes are pasted (below), and after a debrief
 of that application:
 
 ```bash
@@ -238,11 +236,11 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    WARNING above two pages: shorten it in another version), checks it ("Check: Blocked" or "Look at
    these lines" with the flagged lines: fix a blocking line in another version; keep the front
    matter's `keywords` and `gaps` current, a term the user confirms moves from gaps into the text) and answers the
-   message, so do not also run `thread reply` for it. The save also queues the AI check
-   (grounding, fit, skim, editorial) of the new version. With a Research worker set
-   (`[workers] research`), the save sends it there: leave it. Otherwise run it afterwards as a
-   separate pass, as the /research skill's "AI check of a tailored CV" says (`research next APP`,
-   then a fresh subagent).
+   message, so do not also run `thread reply` for it. The AI check (grounding, fit, skim,
+   editorial) is not queued by the save: the user asks for it with the panel's AI check button.
+   When asked, it goes to the Research worker when one is set (`[workers] research`); otherwise it
+   is a separate pass, as the /research skill's "AI check of a tailored CV" says (`research next
+   APP`, then a fresh subagent).
    No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
 4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.
