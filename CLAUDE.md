@@ -79,7 +79,9 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: one column, skills first, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
-             cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
+             cveval.py (AI check of a tailored CV: grounding, fit, skim, editorial and grammar, from the agent's .eval.md),
+             tailorplan.py (the tailoring plan written before a tailored CV: sections, questions, answers),
+             cvedit.py (the panel's CV editor: in-place saves with undo, sent version frozen, %% comments),
              criteria.py (the private criteria file: gates and ranking), search.py (gate, ranking, Top 5 picks,
              company list import; New offers' Top 5 this week),
              assistant.py (optional dev3 message to a standing agent: /ask, /research, /reply, /learn-ask; picks among several workers),
@@ -154,11 +156,14 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)
+- Tailoring plan (used by /research and /ask): `python -m prep.cli plan path|save|show APP`, `plan answer APP N [--to MSG]`
+  (answer on stdin), `plan write APP` (agreed: queue the CV); `style add [--app APP]` (approved wording to `_style.md`)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
   `tailor check APP [--version N]` (checks a version again without WeasyPrint);
   `tailor eval APP [--version N]` (stores the AI check queued by the panel's AI check button, written in a separate pass);
-  `cv sent APP FILE_NAME`
+  `cv sent APP FILE_NAME`; in-place revisions: `tailor draft APP`, `tailor edit APP [--to MSG]` (note on stdin),
+  `tailor undo APP`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
 - Notes (used by /ask and /research; the panel's Notes card): `python -m prep.cli notes APP [--show | --append [TEXT]]`
