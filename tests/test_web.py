@@ -12,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/?view=offers", "/metrics", "/metrics?tab=applications", "/metrics/runs", "/learn", "/learn?card=1")
+PAGES = ("/", "/?view=offers", "/metrics", "/metrics?tab=applications", "/metrics/runs", "/evals", "/learn", "/learn?card=1")
 PAY = "PAY-MARKER-31337"
 h = web.h
 
@@ -784,7 +784,7 @@ class LandingPageTest(WebTestCase):
     def test_nav_and_switch(self) -> None:
         body = self.get("/")[2]
         nav = body[body.index('<nav aria-label="Pages">'):body.index("</nav>", body.index('<nav aria-label="Pages">'))]
-        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Learn", "Metrics"])
+        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Learn", "Evals", "Metrics"])
         self.assertIn('<a href="/" aria-current="page">', nav)
         self.assertIn('<span class="nav-count" title="New offers">3</span>', nav)
         self.assertIn("<title>Applications · Hirey</title>", body)

@@ -1086,3 +1086,48 @@ form.employer-form select { height: 26px; font-size: 12.5px; padding: 0 6px; }
 @media (max-width: 600px) {
   .has-js body:has(.learn-float:not([data-state="closed"])) .toasts { top: var(--space-3); bottom: auto; }
 }
+
+/* --- Evals (getjo's eval catalogue and results) --------------------------------- */
+.eval-flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: var(--space-2); }
+.eval-step { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm);
+  background: var(--surface-2); border: 1px solid var(--border); min-width: 120px; }
+.eval-step small { color: var(--text-muted); font-size: 12px; }
+.eval-arrow { align-self: center; color: var(--text-faint); }
+.eval-places { margin: var(--space-3) 0 0; padding-left: var(--space-5); display: grid; gap: 4px; font-size: 13.5px; }
+.eval-toolbar { display: flex; justify-content: flex-end; }
+.eval-group { display: flex; flex-direction: column; gap: var(--space-3); }
+.eval-group-title { font-size: 18px; font-weight: 500; text-transform: capitalize; display: flex; align-items: center; gap: var(--space-2); }
+.eval-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: var(--space-4); }
+.eval-card { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-4); border-radius: var(--radius-lg);
+  background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow-md); min-width: 0; }
+.eval-card.eval-gap { background: transparent; border: 1.5px dashed var(--border-strong); box-shadow: none; }
+.eval-card.eval-partial { border-color: rgba(217, 188, 110, .35); }
+.eval-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-2); }
+.eval-head h3 { font-size: 16px; font-weight: 500; }
+.eval-question { margin: 0; color: var(--text-muted); font-size: 13.5px; }
+.eval-facts { display: grid; grid-template-columns: max-content 1fr; gap: 2px var(--space-3); margin: 0; font-size: 13px; }
+.eval-facts dt { color: var(--text-muted); }
+.eval-facts dd { margin: 0; }
+.eval-last { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin: 0; font-size: 13.5px; }
+.eval-last .label, .eval-code .label { color: var(--text-muted); font-size: 12px; }
+.eval-last .chart.trend { width: 140px; height: 32px; }
+.eval-history { margin-left: auto; font-size: 12.5px; }
+.eval-command { display: flex; align-items: center; gap: var(--space-2); background: var(--surface-2); border-radius: var(--radius-sm);
+  padding: 4px 4px 4px var(--space-3); }
+.eval-command code { flex: 1; font-family: var(--mono); font-size: 12px; overflow-x: auto; white-space: nowrap; }
+.eval-steps summary { cursor: pointer; font-size: 13px; color: var(--accent-text); }
+.eval-steps ol { margin: var(--space-2) 0 0; padding-left: var(--space-5); display: grid; gap: 4px; font-size: 13px; }
+.eval-code ul { list-style: none; margin: 2px 0 0; padding: 0; display: grid; gap: 2px; }
+.eval-reasons { margin: 0; padding-left: var(--space-4); font-size: 13px; }
+.eval-personal { margin: 2px 0 0; color: var(--warning); font-size: 12.5px; }
+.conf-hit { color: var(--success); font-weight: 600; } .conf-miss { color: var(--danger); font-weight: 600; } .conf-zero { color: var(--text-faint); }
+.chart.lines { max-width: 520px; margin-bottom: var(--space-3); }
+.pf-cell { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; min-width: 170px; }
+.pf-pass strong { color: var(--success); } .pf-fail strong { color: var(--danger); }
+.pf-checks { list-style: none; margin: 0; padding: 0; }
+.pf-checks .ok { color: var(--text-muted); } .pf-checks .bad { color: var(--danger); }
+.eval-judge summary { cursor: pointer; color: var(--accent-text); }
+.eval-judge p { margin: 2px 0 0; color: var(--text-muted); white-space: pre-wrap; }
+.back { margin: 0; font-size: 13.5px; }
+.eval-chart { padding: var(--space-3) var(--space-5) 0; }
+.tile .badge { align-self: flex-start; }

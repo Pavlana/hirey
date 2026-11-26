@@ -27,7 +27,7 @@ separate project that scores public job posts.
   - [E. Learn](#e-learn)
   - [F. Master CV to tailored CV](#f-master-cv-to-tailored-cv)
   - [G. Workers sidebar and run history](#g-workers-sidebar-and-run-history)
-- Evals (planned: its own dashboard page, `/evals`; docs to come)
+  - [H. Evals](#h-evals)
 - [Data model](#data-model)
 - [Configuration](#configuration)
 - [Boundaries and safety](#boundaries-and-safety)
@@ -75,7 +75,7 @@ flowchart TD
 - The **agents never touch the browser**. They read their work from prep.db through `prep.cli`,
   write files under `private_dir`, and save results back through `prep.cli`.
 - **getjo** is only read: its `jobs.db` with SQLite `mode=ro`, and its git checkout for explainer
-  checks. Hirey never writes to it and never imports its code.
+  checks and the Evals page. Hirey never writes to it and never imports its code.
 - **GitHub** holds the public code. Private data (CV, notes, sessions, databases, pay) never goes into
   a committed file; `prep/privacy.py` and the pre-commit hook check that.
 
@@ -94,6 +94,7 @@ flowchart TD
 | CV PDF | tailored CV to PDF (WeasyPrint) | `prep/cvpdf.py`, `prep/cv_template.html` |
 | CV checks | rule check; AI check results | `prep/cvcheck.py`, `prep/cveval.py` |
 | Learn | tracks, chapters, cards; notes files; explainers | `prep/learn.py`, `prep/learnnotes.py`, `prep/explainers.py` |
+| Evals reader | getjo's eval catalogue and results files, read only | `prep/evals.py` |
 | Metrics | application numbers; token usage and prices | `prep/stats.py`, `prep/usage.py`, `prep/prices.py`, `prep/charts.py` |
 | Markdown | safe, escaped Markdown subset | `prep/md.py` |
 | Settings | TOML settings and env overrides | `prep/config.py` |
@@ -271,6 +272,27 @@ flowchart TD
 
 Reference: [assistants.md](reference/assistants.md#workers-sidebar-and-run-history).
 
+### H. Evals
+
+```mermaid
+flowchart TD
+    cat[("getjo evals/catalog.json<br/>read only")] -->|"one card per eval"| map["/evals<br/>eval map, grouped by dimension or place"]
+    res[("getjo evals/results/<br/>runpy-* and promptfoo-* files")] -->|"matched by the catalogue's file pattern"| map
+    map -->|"Last run"| run["/evals/run?file=NAME<br/>metrics, confusion, sweep, case grid"]
+    map -->|"History"| hist["/evals?eval=ID<br/>every run: model, prompt hash, commit"]
+    run -->|"Open promptfoo report"| rep["/evals/report/NAME.html<br/>sandboxed"]
+```
+
+- Each eval answers one question: cases, a grader (code, human labels or an LLM judge), a metric and
+  the decision it informs. getjo runs them offline (`evals.run`, promptfoo), as a CI gate, and lists
+  production checks not built yet as gaps.
+- Runs are matched to evals by the catalogue's results file pattern, so a new getjo eval needs no
+  change here.
+- File names are checked against one pattern and must resolve inside `evals/results`; nothing else in
+  getjo is served.
+
+Reference: [evals.md](reference/evals.md).
+
 ## Data model
 
 The main tables and how they link. Every table and column is in
@@ -368,6 +390,7 @@ Every key, env var and the launchd job: [configuration.md](reference/configurati
 | [dashboard.md](reference/dashboard.md) | server, hardening, app.js, each page and panel |
 | [routes.md](reference/routes.md) | every endpoint, one line each |
 | [database.md](reference/database.md) | every table, allowed values, migrations |
+| [evals.md](reference/evals.md) | getjo's eval catalogue, run details, history, file safety |
 | [metrics.md](reference/metrics.md) | stats definitions, token usage, prices |
 | [configuration.md](reference/configuration.md) | settings, env vars, launchd |
 

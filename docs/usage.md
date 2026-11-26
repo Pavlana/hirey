@@ -77,6 +77,10 @@ PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.
 # then open http://localhost:8766/metrics
 ```
 
+The seed also copies a made-up eval catalogue and runs (`tests/fixtures/evals/`) to
+`data/example-getjo-repo/`. Add `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` to the dashboard command
+above and open `/evals`.
+
 The seed shifts the example dates so the most recent ones fall around today. The example databases are built from made-up fixtures in `tests/fixtures/example.json`
 (fictional companies only) and are gitignored.
 
@@ -132,6 +136,21 @@ charts are server-rendered SVG):
   remembered per browser; a bare `/` opens the view picked last). The nav shows the new offers
   count next to Applications. The Applications Assistant box sits under the list in both views; the panel on the
   right shows the selected application or job offer. Details below.
+- **Evals** (`/evals`, between Learn and Metrics): getjo's evaluations in one place, from getjo's
+  `evals/catalog.json` and `evals/results/` (setting `getjo_repo`, read only). A short header (question
+  → cases → grader → metric → decision; offline, CI gate, production), then one card per eval grouped
+  by dimension or by where it runs: the question, tags, grader, where and when it runs, status (a gap
+  is a dashed card), the last result with a sparkline, the command with **Copy**, **How to check it**,
+  **If it fails** and the related code. **Last run** opens the run: for `evals.run`, agreement,
+  precision and recall, the confusion matrix, the threshold sweep and the disagreements; for promptfoo,
+  each model's numbers and a case × model grid with every check and the judge's score and text, plus
+  **Open promptfoo report**. **History** lists every run with model, prompt hash and commit, so a
+  prompt or model change shows its effect. Details: [reference/evals.md](reference/evals.md).
+
+  ![Evals page](screenshots/evals.png)
+  ![An evals.run run](screenshots/evals-run.png)
+  ![A promptfoo run](screenshots/evals-promptfoo.png)
+  ![One eval's history](screenshots/evals-history.png)
 - **Metrics** (`/metrics`, last in the nav; `/dashboard` and `/progress` redirect here), two tabs:
   - **Usage** (`?tab=usage`, the default): Claude Code token use in tokens and US dollars, to see
     which sessions cost the most and where to save. Filters: project (each project seen, or all)

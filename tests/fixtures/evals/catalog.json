@@ -1,0 +1,214 @@
+{
+  "version": 1,
+  "about": "Made-up catalogue for Hirey's tests and screenshots (fictional).",
+  "evals": [
+    {
+      "id": "unit-tests",
+      "name": "Unit tests",
+      "question": "Does the code still do what it did?",
+      "dimensions": [
+        "correctness",
+        "format"
+      ],
+      "grader": "code",
+      "metrics": [
+        {
+          "name": "failures",
+          "meaning": "Tests that failed",
+          "target": "0"
+        }
+      ],
+      "runs": {
+        "where": [
+          "local",
+          "CI"
+        ],
+        "when": "every push and pull request"
+      },
+      "command": "python -m unittest",
+      "results": null,
+      "how_to_check": [
+        "Read the last line: OK, or the failures."
+      ],
+      "if_fails": [
+        "Read the first failing test's traceback."
+      ],
+      "code": [
+        {
+          "file": "tests/test_score.py",
+          "function": null
+        }
+      ],
+      "status": "built"
+    },
+    {
+      "id": "runpy-ci-gate",
+      "name": "Scoring eval gate (fictional set)",
+      "question": "Does the scorer still label ten fictional postings the way they are labelled?",
+      "dimensions": [
+        "correctness",
+        "safety",
+        "cost"
+      ],
+      "grader": "code",
+      "metrics": [
+        {
+          "name": "agreement",
+          "meaning": "Verdicts that match the label",
+          "target": ">= 8 of 10"
+        },
+        {
+          "name": "apply_precision",
+          "meaning": "Of jobs sent, how many are apply",
+          "target": null
+        }
+      ],
+      "runs": {
+        "where": [
+          "CI",
+          "local"
+        ],
+        "when": "on push to main when scoring changes; by hand"
+      },
+      "command": "python -m evals.run --ci --min-agreement 8",
+      "results": "evals/results/runpy-ci-<YYYYMMDDTHHMMSS>.json",
+      "how_to_check": [
+        "Read the Agreement line.",
+        "Open the newest results file."
+      ],
+      "if_fails": [
+        "Read the Disagreements list.",
+        "Run it again: one flipped case is noise."
+      ],
+      "code": [
+        {
+          "file": "evals/run.py",
+          "function": "main"
+        },
+        {
+          "file": "jobs/score.py",
+          "function": "score_with_retry"
+        }
+      ],
+      "status": "built"
+    },
+    {
+      "id": "promptfoo-ci",
+      "name": "promptfoo grid on the fictional set",
+      "question": "Side by side for two models: does each output parse, match its label and stay grounded?",
+      "dimensions": [
+        "correctness",
+        "grounding",
+        "safety"
+      ],
+      "grader": "code",
+      "metrics": [
+        {
+          "name": "parses",
+          "meaning": "Usable result",
+          "target": "all cases"
+        },
+        {
+          "name": "verdict",
+          "meaning": "Verdict matches the label",
+          "target": ">= 8 of 10"
+        }
+      ],
+      "runs": {
+        "where": [
+          "local"
+        ],
+        "when": "by hand, to compare models"
+      },
+      "command": "evals/promptfoo/run.sh ci",
+      "results": "evals/results/promptfoo-ci-<YYYYMMDDTHHMMSS>.json",
+      "how_to_check": [
+        "Open the HTML report."
+      ],
+      "if_fails": [
+        "Check whether evals.run --ci agrees."
+      ],
+      "code": [
+        {
+          "file": "evals/promptfoo/asserts.py",
+          "function": "verdict_matches"
+        }
+      ],
+      "status": "built"
+    },
+    {
+      "id": "rubric-judge",
+      "name": "LLM judge of reason quality",
+      "question": "Are the reasons specific to the posting?",
+      "dimensions": [
+        "grounding"
+      ],
+      "grader": "LLM judge",
+      "metrics": [
+        {
+          "name": "rubric_reasons",
+          "meaning": "The judge's 0-1 score",
+          "target": null
+        }
+      ],
+      "runs": {
+        "where": [
+          "local"
+        ],
+        "when": "with every promptfoo run"
+      },
+      "command": "evals/promptfoo/run.sh ci",
+      "results": "evals/results/promptfoo-<set>-<YYYYMMDDTHHMMSS>.json",
+      "how_to_check": [
+        "Read the judge's text per case."
+      ],
+      "if_fails": [
+        "Compare with your own reading."
+      ],
+      "code": [
+        {
+          "file": "evals/promptfoo/promptfooconfig.yaml",
+          "function": null
+        }
+      ],
+      "status": "partial"
+    },
+    {
+      "id": "drift",
+      "name": "Drift on real jobs",
+      "question": "Is the score distribution on new jobs shifting?",
+      "dimensions": [
+        "calibration"
+      ],
+      "grader": "code",
+      "metrics": [
+        {
+          "name": "share_apply",
+          "meaning": "Share sent",
+          "target": null
+        }
+      ],
+      "runs": {
+        "where": [
+          "production"
+        ],
+        "when": "not built"
+      },
+      "command": null,
+      "results": null,
+      "how_to_check": [
+        "Not built."
+      ],
+      "if_fails": [
+        "Not built."
+      ],
+      "code": [
+        {
+          "file": "jobs/score.py",
+          "function": null
+        }
+      ],
+      "status": "gap"
+    }
+  ]
+}

@@ -46,8 +46,9 @@ Static files are served from `prep/static/`: `style.css`, `app.js`, `vim.js` (Le
 `explainer.css` / `explainer.js` (Learn explainer pages).
 
 - `style.css` holds the design tokens: one dark grey theme where each page has its own muted hue:
-  Applications ochre, Metrics sage (dark olive to pale lime), Learn dusty violet (`web.PAGE_THEMES`).
-- More themes (dusty blue, eucalyptus, slate indigo, mauve rose, terracotta) are ready for new pages.
+  Applications ochre, Metrics sage (dark olive to pale lime), Learn dusty violet, Evals eucalyptus
+  (`web.PAGE_THEMES`).
+- More themes (dusty blue, slate indigo, mauve rose, terracotta) are ready for new pages.
   Each is ten shades `s1`–`s10`, set by a `theme-*` class on `<body>` and used by badges, charts,
   buttons and meters.
 - Installed Helvetica Neue-style fonts only; responsive down to phone width.
@@ -64,7 +65,7 @@ Static files are served from `prep/static/`: `style.css`, `app.js`, `vim.js` (Le
   style), plus `frame-src 'self'` for Learn explainers. Nothing is fetched from another host (no CDN,
   fonts or chart libraries).
 - Pages served with their own headers: the tailored CV PDF ([cv.md](cv.md)) and the Learn explainer
-  ([learn.md](learn.md)).
+  ([learn.md](learn.md)), and a saved promptfoo report ([evals.md](evals.md#the-promptfoo-report)).
 - Logs hold the request line and status only, never request bodies or skip comments.
 - The dashboard makes no outgoing requests; job links open only when clicked. Its only outgoing
   action is the optional local [`dev3 message`](assistants.md#the-ping).
@@ -296,6 +297,7 @@ ignored.
 | Research file | `/research/file?app=ID&kind=…` | [research.md](research.md) |
 | Tailored CV PDF | `/research/pdf?app=ID&v=N` | [cv.md](cv.md) |
 | Learn | `/learn` | [learn.md](learn.md) |
+| Evals | `/evals` | [evals.md](evals.md) |
 | Metrics: Usage, Applications | `/metrics` | [metrics.md](metrics.md) |
 | Metrics: Run history | `/metrics/runs` | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 

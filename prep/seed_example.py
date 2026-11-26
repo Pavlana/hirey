@@ -26,6 +26,8 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures" / "example.json"
 EXAMPLE_PREP_DB = REPO_ROOT / "data" / "example.db"
 EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
 EXAMPLE_CLAUDE_DIR = REPO_ROOT / "data" / "example-claude-projects"
+EVALS_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "evals"
+EXAMPLE_GETJO_REPO = REPO_ROOT / "data" / "example-getjo-repo"
 
 log = logging.getLogger("prep.seed")
 
@@ -200,6 +202,17 @@ def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -
         conn.close()
 
 
+def build_evals_example(repo: Path) -> None:
+    """A stand-in for getjo's checkout with only evals/catalog.json and evals/results/ (made-up runs),
+    for the Evals page: PREP_GETJO_REPO=$PWD/data/example-getjo-repo."""
+    target = repo / "evals"
+    (target / "results").mkdir(parents=True, exist_ok=True)
+    for src in EVALS_FIXTURES.rglob("*"):
+        if src.is_file():
+            dest = target / src.relative_to(EVALS_FIXTURES)
+            dest.write_bytes(src.read_bytes())
+
+
 def main() -> int:
     logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(message)s")
     data = load_fixtures()
@@ -207,10 +220,12 @@ def main() -> int:
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
     build_usage_example(EXAMPLE_CLAUDE_DIR, EXAMPLE_PREP_DB, data["usage"], date.today())
+    build_evals_example(EXAMPLE_GETJO_REPO)
     log.info("wrote %s, %s and %s/", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT),
              EXAMPLE_CLAUDE_DIR.relative_to(REPO_ROOT))
     log.info("try: PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
     log.info("or:  PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
+    log.info("Evals page on made-up runs: add PREP_GETJO_REPO=$PWD/data/example-getjo-repo")
     log.info("Metrics' Usage tab on the example transcripts: see docs/usage.md, \"Example data\"")
     return 0
 

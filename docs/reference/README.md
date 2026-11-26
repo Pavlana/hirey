@@ -18,6 +18,7 @@ commands, endpoints and edge cases. Start from the overview's diagrams, then com
 | [dashboard.md](dashboard.md) | server, look, hardening, what `app.js` adds, polling, each page and panel |
 | [routes.md](routes.md) | every endpoint, one line each, and old URL redirects |
 | [database.md](database.md) | every table, allowed values, migrations and backfills |
+| [evals.md](evals.md) | the Evals page: getjo's eval catalogue, run details, history, the promptfoo report, file safety |
 | [metrics.md](metrics.md) | application number definitions, token usage, prices |
 | [configuration.md](configuration.md) | settings file lookup, every key and env var, launchd |
 

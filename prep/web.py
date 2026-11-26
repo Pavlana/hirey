@@ -1,5 +1,6 @@
 """Local dashboard over prep.db: Applications (the landing page, whose left column switches
-between the pipeline and New offers from getjo), Learn and Metrics (tabs Usage: Claude Code tokens
+between the pipeline and New offers from getjo), Learn, Evals (getjo's eval catalogue and results files,
+read only, prep/evals.py) and Metrics (tabs Usage: Claude Code tokens
 from its transcripts, read only, prep/usage.py; and Applications: the search's numbers), plus a
 read-only view of the agent's research and CV fit files.
 
@@ -40,7 +41,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes,
+from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, evals, explainers, getjo, learn, learnnotes,
                   research, stats, usage, workers)
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
@@ -83,6 +84,8 @@ PAGES = (
                           '<rect x="17" y="3" width="4" height="8" rx="1.5"/>'),
     ("/learn", "Learn", '<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H11v15H5.5A1.5 1.5 0 0 0 4 20.5z"/>'
                         '<path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/>'),
+    ("/evals", "Evals", '<path d="M9 3h6"/><path d="M10 3v6l-5.6 9.4A1.7 1.7 0 0 0 5.9 21h12.2a1.7 1.7 0 0 0 1.5-2.6L14 9V3"/>'
+                        '<path d="M7.5 15h9"/>'),
     ("/metrics", "Metrics", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
                           '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
 )
@@ -152,9 +155,9 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 # Badge tones: a few semantic ones plus the shade steps of the page's hue (charts.SHADES,
 # s1 dark to s10 light); anything else falls back to "neutral". Each page has one hue.
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
-# One theme per page (defined in style.css). Spare themes for new pages: dusty-blue, eucalyptus,
+# One theme per page (defined in style.css). Spare themes for new pages: dusty-blue,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "ochre", "/metrics": "sage", "/learn": "dusty-violet"}
+PAGE_THEMES = {"/": "ochre", "/metrics": "sage", "/learn": "dusty-violet", "/evals": "eucalyptus"}
 # Closed outcomes take s1-s3, then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -258,6 +261,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return explainer_page(settings, query)
     if path == "/workers.json":
         return workers_json(settings, query, today)
+    if path.startswith("/evals/report/"):
+        return eval_report(settings, path)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
         "/metrics": lambda s, c, t: metrics_page(s, c, t, query),
@@ -266,6 +271,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
         "/learn": lambda s, c, t: learn_page(s, c, t, query),
         "/metrics/runs": lambda s, c, t: runs_page(s, c, t, query),
+        "/evals": lambda s, c, t: evals_page(s, c, t, query),
+        "/evals/run": lambda s, c, t: eval_run_page(s, c, t, query),
     }
     if path not in pages:
         return _text(404, "Not found.")
@@ -279,7 +286,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         cards_todo = learn.counts(conn)["todo"]
         side = workers_section(settings, conn, path)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    active = "/metrics" if path.startswith("/metrics") else path if path == "/learn" else "/"
+    active = ("/metrics" if path.startswith("/metrics") else "/evals" if path.startswith("/evals")
+              else path if path == "/learn" else "/")
     return _page(200, title, subtitle, notice + content, active, offers, head[0] if head else "", cards_todo, side)
 
 
@@ -3649,6 +3657,346 @@ def runs_page(settings: Settings, conn: sqlite3.Connection, today: str,
                                         "(assistant_task, [workers] in the settings)."))
     return ("Run history", f"Workers' runs · {today}",
             note + _card("Runs", filters + table, count=len(found)), tabs)
+
+
+# --- Evals (getjo's evals: catalogue, run details, history; prep/evals.py, read only) ------------
+
+EVAL_GROUPS = (("dimension", "By dimension"), ("where", "By where it runs"))
+EVAL_STATUS_TONES = {"built": "success", "partial": "warning", "gap": "neutral"}
+GRADER_LABELS = {"code": "Code", "human labels": "Your labels", "LLM judge": "LLM judge"}
+REPORT_HEADERS = [  # a saved promptfoo HTML report: sandboxed, nothing fetched, no same-origin access
+    ("Content-Security-Policy",
+     "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; font-src 'none'; "
+     "connect-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors 'none'; sandbox allow-scripts"),
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+]
+EVALS_FLOW = (("Question", "what the eval asks"), ("Cases", "labelled jobs: fictional or real"),
+              ("Grader", "code, your labels or an LLM judge"), ("Metric", "agreement, precision, pass rate"),
+              ("Decision", "ship, change the prompt, move the threshold"))
+EVALS_PLACES = (("Offline", "evals.run and promptfoo, by hand, after a prompt, model or threshold change"),
+                ("CI gate", "the fictional set on every push to main that touches scoring; fails below 8 of 10"),
+                ("Production", "drift on real jobs and latency: not built yet (gaps below)"))
+
+
+def _pct(rate: float | None) -> str:
+    return "–" if rate is None else f"{rate:.0%}"
+
+
+def _rate_text(r: dict) -> str:
+    """'8 of 10 · 80%', or '–' for an empty rate."""
+    if not r or r.get("rate") is None:
+        return "–"
+    if r.get("total"):
+        return f"{r['hits']} of {r['total']} · {r['rate']:.0%}"
+    return f"{r['rate']:.0%}" if r["rate"] <= 1 else f"{r['rate']:.2f}"
+
+
+def _metric_name(name: str | None) -> str:
+    return {"pass_rate": "pass rate", None: ""}.get(name, (name or "").replace("_", " "))
+
+
+def evals_url(**q: object) -> str:
+    pairs = {k: v for k, v in q.items() if v not in ("", None)}
+    return "/evals" + (f"?{urlencode(pairs)}" if pairs else "")
+
+
+def _evals_header() -> str:
+    flow = '<span class="eval-arrow" aria-hidden="true">→</span>'.join(
+        f'<span class="eval-step"><strong>{h(a)}</strong><small>{h(b)}</small></span>' for a, b in EVALS_FLOW)
+    places = "".join(f'<li><strong>{h(a)}</strong> {h(b)}</li>' for a, b in EVALS_PLACES)
+    return _card("How evals fit together",
+                 f'<div class="eval-flow">{flow}</div><ul class="eval-places">{places}</ul>'
+                 + _note("Read from getjo's evals/catalog.json and evals/results/, never written. Results hold "
+                         "case titles, companies and reasons: shown here only, on this machine."), cls="card-wide")
+
+
+def _evals_empty(settings: Settings, catalog: dict) -> str:
+    if catalog["state"] == "no_repo":
+        return _card("Evals", _empty("getjo's checkout is not set.",
+                                     "Set getjo_repo in settings.toml (an absolute path to getjo's working copy)."))
+    if catalog["state"] == "missing":
+        return _card("Evals", _empty("getjo has no eval catalogue here yet.",
+                                     f"Expected {catalog['path']}. Pull getjo's main branch."))
+    return _card("Evals", _empty("getjo's eval catalogue could not be read.",
+                                 f"Check {catalog['path']}: it must be valid JSON with an evals list."))
+
+
+def _copy_command(command: str, ident: str) -> str:
+    if not command:
+        return ""
+    return (f'<div class="eval-command"><code id="{h(ident)}">{h(command)}</code>'
+            f'<button type="button" class="btn btn-ghost btn-sm" data-copy="{h(ident)}">Copy</button></div>')
+
+
+def _steps(title: str, steps: list[str]) -> str:
+    if not steps:
+        return ""
+    items = "".join(f"<li>{h(s)}</li>" for s in steps)
+    return f'<details class="eval-steps"><summary>{h(title)}</summary><ol>{items}</ol></details>'
+
+
+def _code_refs(code: list[dict]) -> str:
+    if not code:
+        return ""
+    refs = "".join(f'<li>{_mono(h(c["file"]))}{" · " + _mono(h(c["function"])) if c.get("function") else ""}</li>'
+                   for c in code)
+    return f'<div class="eval-code"><span class="label">Code</span><ul>{refs}</ul></div>'
+
+
+def _spark(runs: list[dict]) -> str:
+    points = [(r["when"], round(r["value"] * 100)) for r in runs if r["value"] is not None]
+    return charts.trend(points[-12:], low=0, high=100, width=140, height=32) if points else ""
+
+
+def _eval_card(e: dict) -> str:
+    """One eval: name, status, question, tags, grader, where and when, last result with a sparkline,
+    the command (Copy), How to check / If it fails, and the code it lives in. A gap is dashed."""
+    tags = "".join(_badge(d, "s4") for d in e["dimensions"])
+    where = ", ".join(e["where"]) or "–"
+    last = e["runs"][-1] if e["runs"] else None
+    if last:
+        head = (f'<a href="/evals/run?{h(urlencode({"file": last["name"]}))}">{h(_metric_name(last["metric"]))} '
+                f'<strong>{h(_pct(last["value"]))}</strong></a>' if last["metric"] else
+                f'<a href="/evals/run?{h(urlencode({"file": last["name"]}))}">open the run</a>')
+        result = (f'<div class="eval-last"><span class="label">Last run</span>{head}'
+                  f' <span class="muted mono">{h(last["when"])}</span>{_spark(e["runs"])}'
+                  f'<a class="eval-history" href="{h(evals_url(eval=e["id"]))}">History · {len(e["runs"])} '
+                  f'run{"s" if len(e["runs"]) != 1 else ""} →</a></div>')
+    elif e["status"] == "gap":
+        result = '<p class="eval-last muted">Not built yet: a known blind spot.</p>'
+    elif e["results"]:
+        result = ('<div class="eval-last"><span class="label">Last run</span><span class="muted">No runs yet. '
+                  'Run the command below in getjo.</span></div>')
+    else:
+        result = '<p class="eval-last muted">Writes no results file: read its output where it runs.</p>'
+    return (f'<article class="eval-card eval-{h(e["status"])}" id="eval-{h(e["id"])}">'
+            f'<header class="eval-head"><h3>{h(e["name"])}</h3>{_badge(e["status"], EVAL_STATUS_TONES[e["status"]])}</header>'
+            f'<p class="eval-question">{h(e["question"])}</p>'
+            f'<div class="chips">{tags}</div>'
+            f'<dl class="eval-facts"><dt>Grader</dt><dd>{h(GRADER_LABELS.get(e["grader"], e["grader"]))}</dd>'
+            f'<dt>Runs</dt><dd>{h(where)}<span class="muted"> · {h(e["when"])}</span></dd></dl>'
+            f'{result}{_copy_command(e["command"], "cmd-" + e["id"])}'
+            f'{_steps("How to check it", e["how_to_check"])}{_steps("If it fails", e["if_fails"])}'
+            f'{_code_refs(e["code"])}</article>')
+
+
+def _eval_groups(evals_list: list[dict], group: str) -> list[tuple[str, list[dict]]]:
+    """Evals under their first dimension or the first place they run (getjo lists the main one first;
+    the rest show as tags), so each card appears once. Gaps go last within a group."""
+    key = "dimensions" if group == "dimension" else "where"
+    groups: dict[str, list[dict]] = {}
+    for e in evals_list:
+        groups.setdefault(e[key][0] if e[key] else "other", []).append(e)
+    order = {s: i for i, s in enumerate(evals.STATUSES)}
+    return [(name, sorted(items, key=lambda e: order[e["status"]])) for name, items in groups.items()]
+
+
+def evals_page(settings: Settings, conn: sqlite3.Connection, today: str,
+               query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """/evals: how evals fit together, then one card per eval in getjo's catalogue grouped by dimension
+    or by where it runs; ?eval=ID shows that eval's history instead."""
+    data = evals.overview(settings.getjo_repo)
+    catalog = data["catalog"]
+    if catalog["state"] != "ok":
+        return "Evals", "getjo's evaluations", _evals_header() + _evals_empty(settings, catalog)
+    wanted = (query.get("eval") or [""])[0]
+    if wanted:
+        entry = next((e for e in data["evals"] if e["id"] == wanted), None)
+        if entry is None:
+            raise NotFound()
+        return entry["name"], "Eval history", _eval_history(entry)
+    group = (query.get("group") or [""])[0]
+    group = group if group in dict(EVAL_GROUPS) else "dimension"
+    switch = _switch("Group evals", [(evals_url(group=g if g != "dimension" else ""), label, g == group)
+                                     for g, label in EVAL_GROUPS])
+    counts = {s: sum(e["status"] == s for e in data["evals"]) for s in evals.STATUSES}
+    tiles = (_tile("Evals", str(len(data["evals"])), f"<small>{counts['built']} built · {counts['partial']} partial · "
+                                                    f"{counts['gap']} gaps</small>")
+             + _tile("Runs saved", str(len(data["files"])), "<small>results files in getjo's evals/results</small>")
+             + _tile("Last run", data["files"][-1]["when"] if data["files"] else "–",
+                     f"<small>{h(data['files'][-1]['name'])}</small>" if data["files"] else
+                     "<small>no runs yet: python -m evals.run --ci</small>"))
+    sections = "".join(
+        f'<section class="eval-group"><h2 class="eval-group-title">{h(name)} <span class="count">{len(items)}</span></h2>'
+        f'<div class="eval-grid">{"".join(_eval_card(e) for e in items)}</div></section>'
+        for name, items in _eval_groups(data["evals"], group))
+    return ("Evals", f"getjo's evaluations · {today}",
+            _evals_header() + f'<div class="tiles">{tiles}</div>'
+            + f'<div class="eval-toolbar">{switch}</div>' + sections)
+
+
+def _eval_history(entry: dict) -> str:
+    """Every run of one eval over time: a chart of its headline metric and a table with what changed
+    (model, prompt hash, commit), so a prompt or model change shows its effect."""
+    runs = entry["runs"]
+    back = f'<p class="back"><a href="/evals#eval-{h(entry["id"])}">← All evals</a></p>'
+    card = _eval_card({**entry, "runs": runs})
+    if not runs:
+        hint = f"Run in getjo: {entry['command']}" if entry["command"] else ""
+        return back + card + _card("History", _empty("No runs yet.", hint))
+    metric = next((r["metric"] for r in reversed(runs) if r["metric"]), None)
+    chart = charts.lines([r["when"][5:10] for r in runs],
+                         [(_metric_name(metric), "s7", [r["value"] if r["metric"] == metric else None for r in runs])])
+    rows = []
+    for r in reversed(runs):
+        s = r["summary"]
+        cost = "–" if s["cost"] is None else _usd(s["cost"])
+        passed = {True: _badge("passed", "success"), False: _badge("failed", "danger")}.get(s["passed"], "")
+        rows.append((f'<a href="/evals/run?{h(urlencode({"file": r["name"]}))}">{_mono(h(r["when"]))}</a>',
+                     h(r["set"]), h(s["model"]), _mono(h(s["prompt_sha"])), _mono(h(s["commit"][:7])),
+                     h(_pct(r["value"])) + (" " + passed if passed else ""), h(cost)))
+    table = _table(("When", "Set", "Model", "Prompt", "Commit", (_metric_name(metric) or "Result", "num"),
+                    ("Cost", "num")), rows, "No runs yet.")
+    chart = f'<div class="eval-chart">{chart}</div>' if chart else ""
+    return (back + card + _card(f"History · {_metric_name(metric)}", chart + table
+                                + _note("Newest first. Prompt is a hash of the scoring prompt (evals.run only): when "
+                                        "it changes, the prompt text changed."), count=len(runs), cls="card-wide"))
+
+
+def eval_run_page(settings: Settings, conn: sqlite3.Connection, today: str,
+                  query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """/evals/run?file=NAME: one results file in detail (evals.run or promptfoo)."""
+    name = (query.get("file") or [""])[0]
+    data = evals.read_json(settings.getjo_repo, name) if name.endswith(".json") else None
+    if data is None:
+        raise NotFound()
+    s = evals.summary(name, data)
+    catalog = evals.load_catalog(settings.getjo_repo)
+    owners = evals.evals_for_file(catalog, name)
+    links = " · ".join(f'<a href="{h(evals_url(eval=e["id"]))}">{h(e["name"])}</a>' for e in owners)
+    head = (f'<p class="back"><a href="/evals">← All evals</a>{" · History: " + links if links else ""}</p>')
+    if s["runner"] == "promptfoo":
+        body = _promptfoo_run(name, s, settings)
+    else:
+        body = _runpy_run(s)
+    when = evals._when(evals.NAME_RE.match(name).group(3))
+    return "Eval run", f"{name} · {when}", head + body
+
+
+def _runpy_run(s: dict) -> str:
+    m = s["metrics"]
+    gate = ""
+    if s["passed"] is not None:
+        gate = _badge(f"gate {'passed' if s['passed'] else 'failed'} (min {s['min_agreement']})",
+                      "success" if s["passed"] else "danger")
+    tiles = (_tile("Agreement", _pct(m["agreement"]["rate"]), f"<small>{h(_rate_text(m['agreement']))}</small> {gate}")
+             + _tile("Apply precision", _pct(m["apply_precision"]["rate"]), f"<small>{h(_rate_text(m['apply_precision']))}</small>")
+             + _tile("Apply recall", _pct(m["apply_recall"]["rate"]), f"<small>{h(_rate_text(m['apply_recall']))}</small>")
+             + _tile("Personal mentions", "–" if m["personal_mentions"]["value"] is None
+                     else f"{m['personal_mentions']['value']:.0f}", "<small>target 0</small>",
+                     "warning" if m["personal_mentions"]["value"] else "")
+             + _tile("Cost", "–" if s["cost"] is None else _usd(s["cost"]), f"<small>{h(s['model'])}</small>"))
+    facts = (f'<dl class="eval-facts"><dt>Set</dt><dd>{h(s["set"])}</dd><dt>Threshold</dt><dd>{h(s["threshold"])}</dd>'
+             f'<dt>Prompt</dt><dd>{_mono(h(s["prompt_sha"]))}</dd><dt>Commit</dt><dd>{_mono(h(s["commit"][:12]))}</dd>'
+             f'<dt>Created</dt><dd>{_mono(h(s["created_at"]))}</dd></dl>')
+    labels = ("apply", "maybe", "skip")
+    cols = (*labels, "unscored")
+    conf_rows = []
+    for e in labels:
+        row = s["confusion"].get(e) if isinstance(s["confusion"].get(e), dict) else {}
+        cells = []
+        for p in cols:
+            n = row.get(p, 0)
+            css = "conf-hit" if p == e and n else "conf-miss" if n else "conf-zero"
+            cells.append(f'<span class="{css}">{h(n)}</span>')
+        conf_rows.append((f"<strong>{h(e)}</strong>", *cells))
+    confusion = _table(("Expected ↓ / predicted →", *[(c, "num") for c in cols]), conf_rows, "No cases.")
+    sweep = s["sweep"]
+    chart = charts.lines([str(r["threshold"]) for r in sweep],
+                         [("precision", "s8", [r["precision"]["rate"] for r in sweep]),
+                          ("recall", "s5", [r["recall"]["rate"] for r in sweep])])
+    sweep_rows = [((f"<strong>{h(r['threshold'])} ★</strong>" if r["threshold"] == s["threshold"] else h(r["threshold"])),
+                   h(r["sent"]), h(_rate_text(r["precision"])), h(_rate_text(r["recall"]))) for r in sweep]
+    legend = ('<div class="stack-legend"><span class="stack-key"><span class="swatch s8"></span>precision</span>'
+              '<span class="stack-key"><span class="swatch s5"></span>recall</span></div>')
+    sweep_body = (f'<div class="eval-chart">{legend}{chart}</div>' + _table(("Threshold", ("Sent", "num"), ("Precision", "num"), ("Recall", "num")),
+                                                  sweep_rows, "No sweep in this file.")
+                  + _note("★ the threshold in use. Precision: of jobs sent, how many are labelled apply. Recall: "
+                          "of jobs labelled apply, how many are sent."))
+    dis = []
+    for c in s["disagreements"]:
+        why = c.get("dealbreakers") or []
+        reasons = [f"dealbreaker: {d.get('rule', '')}" + (f" (“{d.get('quote')}”)" if d.get("quote") else "")
+                   for d in why if isinstance(d, dict)] + [str(x) for x in (c.get("reasons") or [])[:3]]
+        personal = c.get("personal_mentions") or []
+        dis.append((h(c.get("title")) + (f'<br><span class="muted">{h(c.get("company"))}</span>' if c.get("company") else ""),
+                    h(c.get("expected")), h("–" if c.get("score") is None else c.get("score"))
+                    + (f' <span class="muted">(raw {h(c.get("raw_score"))})</span>'
+                       if c.get("raw_score") not in (None, c.get("score")) else ""),
+                    h(c.get("predicted")),
+                    "<ul class=\"eval-reasons\">" + "".join(f"<li>{h(x)}</li>" for x in reasons) + "</ul>"
+                    + (f'<p class="muted">label: {h(c.get("label_reason"))}</p>' if c.get("label_reason") else "")
+                    + (f'<p class="eval-personal">personal: {h(" | ".join(map(str, personal)))}</p>' if personal else "")))
+    disagreements = _table(("Job", "Expected", ("Score", "num"), "Verdict", "Reasons"), dis,
+                           "Every case agrees with its label.")
+    return (f'<div class="tiles">{tiles}</div>' + _card("Run", facts)
+            + _card("Confusion matrix", confusion + _note("Rows: the label. Columns: the verdict from the score."))
+            + _card("Threshold sweep", sweep_body)
+            + _card("Disagreements", disagreements, count=len(s["disagreements"]), cls="card-wide"))
+
+
+def _promptfoo_run(name: str, s: dict, settings: Settings) -> str:
+    stem = name[:-len(".json")]
+    has_html = evals.safe_path(settings.getjo_repo, stem + ".html") is not None
+    report = (f'<a class="btn btn-ghost btn-sm" href="/evals/report/{h(stem)}.html" target="_blank" rel="noreferrer">'
+              "Open promptfoo report</a>" if has_html else '<span class="muted">No HTML report beside this file.</span>')
+    model_rows = []
+    named = sorted({k for m in s["per_model"] for k in m["named"]})
+    judged = {c["judge"]["metric"] for case in s["cases"] for c in case["cells"].values() if c["judge"]}
+    fmt = lambda k, v: "–" if v is None else f"{v:.2f}" if k in judged else _pct(v)  # noqa: E731
+    for m in s["per_model"]:
+        total = m["pass"] + m["fail"] + m["error"]
+        model_rows.append((h(m["label"]), h(f"{m['pass']} of {total}"), h(m["fail"]), h(m["error"]),
+                           *[h(fmt(k, m["named"].get(k))) for k in named],
+                           h("–" if m["cost"] is None else _usd(m["cost"]))))
+    per_model = _table(("Model", ("Passed", "num"), ("Failed", "num"), ("Errors", "num"),
+                        *[(k.replace("_", " "), "num") for k in named], ("Cost", "num")), model_rows, "No providers.")
+    labels = s["models"]
+    grid_rows = []
+    for c in s["cases"]:
+        cells = []
+        for model in labels:
+            cell = c["cells"].get(model)
+            if not cell:
+                cells.append('<span class="muted">–</span>')
+                continue
+            checks = "".join(
+                f'<li class="{"ok" if v["pass"] else "bad"}" title="{h(v["reason"])}">'
+                f'{"✓" if v["pass"] else "✗"} {h(k.replace("_", " "))}'
+                + ("" if v["pass"] or not v["reason"] else f'<span class="muted"> · {h(v["reason"])}</span>') + "</li>"
+                for k, v in cell["checks"].items())
+            judge = ""
+            if cell["judge"]:
+                j = cell["judge"]
+                js = "–" if j["score"] is None else f"{j['score']:.2f}"
+                judge = (f'<details class="eval-judge"><summary>judge {h(js)}</summary>'
+                         f"<p>{h(j['reason'])}</p></details>")
+            score = "–" if cell["score"] is None else f"{cell['score']:g}"
+            cells.append(f'<div class="pf-cell pf-{"pass" if cell["pass"] else "fail"}">'
+                         f'<strong>{"PASS" if cell["pass"] else "FAIL"}</strong> <span class="muted">score {h(score)}</span>'
+                         + (f'<p class="eval-personal">{h(cell["error"])}</p>' if cell["error"] else "")
+                         + f'<ul class="pf-checks">{checks}</ul>{judge}</div>')
+        job = h(c["title"]) + (f'<br><span class="muted">{h(c["company"])}</span>' if c["company"] else "")
+        grid_rows.append((job, h(c["expected"]), *cells))
+    grid = _table(("Case", "Expected", *labels), grid_rows, "No cases in this file.")
+    tiles = (_tile("Pass rate", _pct(s["metrics"]["pass_rate"]["rate"]), f"<small>{h(_rate_text(s['metrics']['pass_rate']))}</small>")
+             + _tile("Models", str(len(labels)), f"<small>{h(', '.join(labels))}</small>")
+             + _tile("Cost", "–" if s["cost"] is None else _usd(s["cost"]), "<small>all models</small>"))
+    return (f'<div class="tiles">{tiles}</div>' + _card("Per model", per_model, action=report)
+            + _card("Case × model", grid + _note("Each check is a named promptfoo assertion; the judge (LLM "
+                                                  "rubric, weight 0) never fails a case, its 0-1 score is the "
+                                                  "information."), count=len(s["cases"]), cls="card-wide"))
+
+
+def eval_report(settings: Settings, path: str) -> Response:
+    """GET /evals/report/NAME.html: a saved promptfoo HTML report from getjo's evals/results only
+    (prep/evals.py checks the name and that it resolves inside that folder), sandboxed."""
+    page = evals.read_html(settings.getjo_repo, path[len("/evals/report/"):])
+    if page is None:
+        return _text(404, "Not found.")
+    return 200, [("Content-Type", "text/html; charset=utf-8"), *REPORT_HEADERS], page
+
 
 def _page(status: int, title: str, subtitle: str, content: str, active: str, offers: int | None = None,
           actions: str = "", cards_todo: int | None = None, side: str = "") -> Response:

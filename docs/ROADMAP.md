@@ -135,3 +135,8 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
   line, popover with Now / Stop / Queued / Last runs, polled every 15 s; no message text or pay), a
   toast when a long item finishes, Run history at /metrics/runs, and a lighter Applications Assistant
   box (short "→ worker" tags).
+- Evals page: `/evals` maps getjo's evaluations from its `evals/catalog.json` (question, grader,
+  where and when it runs, status with gaps, how to check, if it fails, command, code), with each run's
+  details (evals.run metrics, confusion matrix, threshold sweep, disagreements; promptfoo case × model
+  grid with judge text and the saved report) and each eval's history. Read only; results file names
+  are checked against one pattern inside `evals/results`.

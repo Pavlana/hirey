@@ -83,6 +83,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              workers.py (Workers sidebar and Run history: each worker's state, queue and runs; no message text or pay),
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
              explainers.py (Learn explainer pages: private files, getjo staleness check, read only),
+             evals.py (Evals page: getjo's eval catalogue and results files, read only),
              static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
@@ -92,7 +93,7 @@ scripts/     pre-commit (privacy check on staged files)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
 docs/        ROADMAP.md (phases + acceptance), how-it-works.md (overview: system diagram, key flows, data model),
              reference/ (one page per area: applications, assistants, research, cv, practice, learn, dashboard,
-             routes, database, metrics, configuration), usage.md (setup and reference),
+             routes, database, evals, metrics, configuration), usage.md (setup and reference),
              learn-format.md (Markdown format of `cards import`; example: learn.example.md), screenshots/
 data/        local databases (gitignored)
 requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
@@ -125,7 +126,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   (transcript on stdin, saved under `private_dir/sessions/`)
 - Mock interviews (used by /mock via /ask, started from the panel): `python -m prep.cli mock path APP --stage S`
   (transcript file under `private_dir/sessions/`), then `session add --kind mock ... --file PATH`
-- Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only)
+- Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only); Evals at `/evals` reads `getjo_repo`'s
+  `evals/` (example: `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` after `seed_example`)
 - Example data: `python -m prep.seed_example`, then
   `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
   `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty

@@ -32,6 +32,9 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | --- | --- | --- | --- |
 | GET | `/` | Applications page: Pipeline or New offers view, panels, My CV | [dashboard.md](dashboard.md) |
 | GET | `/metrics` | Metrics: Usage and Applications tabs (`tab=`) | [metrics.md](metrics.md) |
+| GET | `/evals` | Evals: eval map (`group=dimension\|where`), or one eval's history (`eval=ID`) | [evals.md](evals.md) |
+| GET | `/evals/run?file=NAME` | one results file in detail | [evals.md](evals.md#run-details) |
+| GET | `/evals/report/NAME.html` | a saved promptfoo report, sandboxed, own headers | [evals.md](evals.md#the-promptfoo-report) |
 | GET | `/metrics/runs` | Run history, filters by worker and result | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 | GET | `/learn` | Learn: tracks grid, track, card view | [learn.md](learn.md) |
 | GET | `/research/file?app=ID&kind=K[&v=N]` | a company profile, CV fit file or tailored CV, read-only | [research.md](research.md) |
