@@ -658,9 +658,40 @@ def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, toda
     kind, channel = form.get("comms") or "reply", form.get("channel") or ""
     if kind not in db.COMMS_KINDS or channel not in db.CHANNELS:
         raise BadRequest("Pick what to write and the channel (LinkedIn or Email).")
+    source = None
     if kind == "reply" and not form.get("pasted", "").strip():
-        raise BadRequest("Paste the recruiter's message to reply to.")
-    msg_id = db.add_draft_request(conn, app_id, kind, channel, form.get("pasted", ""), form.get("notes", ""), job_id)
+        # nothing pasted: the message the form named (source_id), else the latest one the user sent about it
+        named = _int_field(form, "source_id")
+        source = db.draft_source(conn, app_id, job_id)
+        if named is not None and named != (source or {}).get("id"):
+            found = db.get_message(conn, named)
+            same = found and (found["application_id"], found["getjo_job_id"] if found["application_id"] is None
+                              else None) == (app_id, job_id if app_id is None else None)
+            source = found if same and db.is_draft_source(found) else source
+        if source is None:
+            raise BadRequest("Paste the recruiter's message to reply to.")
+    msg_id = db.add_draft_request(conn, app_id, kind, channel, form.get("pasted", ""), form.get("notes", ""), job_id,
+                                  source["id"] if source else None)
+    return _route_draft(settings, conn, form, msg_id, kind, channel)
+
+
+def draft_from_message(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
+    """Draft reply · LinkedIn | Email on a message in the Applications Assistant box: a reply request that
+    answers that message (by id: its text stays on the server), about its application, job offer or the
+    whole search, routed as request_draft. Only the user's own plain messages (db.is_draft_source)."""
+    channel = form.get("channel") or ""
+    if channel not in db.CHANNELS:
+        raise BadRequest("Pick the channel (LinkedIn or Email).")
+    source = db.get_message(conn, _msg_id(form))
+    if not db.is_draft_source(source):
+        raise BadRequest("A reply can be drafted only from one of your own messages in this box.")
+    msg_id = db.add_draft_request(conn, None, "reply", channel, notes=form.get("notes", ""), source_id=source["id"])
+    return _route_draft(settings, conn, form, msg_id, "reply", channel)
+
+
+def _route_draft(settings: Settings, conn: sqlite3.Connection, form: Form, msg_id: int, kind: str,
+                 channel: str) -> dict:
+    """Ping `/reply …` about a stored draft request (the comms worker, else the Applications Assistant)."""
     about, job = db.message_subject(conn, msg_id)
     log.info("draft request %s (%s, %s) added (application %s, job %s)", msg_id, kind, channel, about,
              bool(job))  # never the text
@@ -1145,6 +1176,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/mock": (start_mock, "/", "mock_started"),
     "/applications/draft": (request_draft, "/", "draft_requested"),
+    "/applications/draft-from": (draft_from_message, "/", "draft_requested"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/stop": (stop_waiting, "/", "stopped"),
@@ -2192,7 +2224,7 @@ SEL_HEAD = '<th scope="col" class="col-sel"><span class="sr-only">Ask about</spa
 
 
 def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str,
-                 stale_days: int, busy: bool = False) -> str:
+                 stale_days: int, busy: bool = False, draft_from: dict | None = None) -> str:
     """The side panel for a job not yet tracked: header (company, role, score, location, seen date,
     posting link, open/closed chips, the Ask-about tick), Interested · Skip (or Skipped with Undo
     skip) and the job brief (or the tidied description while it is written: `brief`, from
@@ -2231,7 +2263,7 @@ def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         '<div class="panel-body">'
         f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div>'
-        + _draft_form(here, job_id=job["id"]) + "</section>"
+        + _draft_form(here, job_id=job["id"], source=draft_from) + "</section>"
         + brief
         + "</div></aside>"
     )
@@ -2499,7 +2531,8 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     elif job:
         brief = _brief_section(job["id"], briefs, found["description"], home_url(f),
                                gone=not job["first_seen"] and found["description"] is None)
-        panel = _offer_panel(job, decision, brief, f, now, settings.stale_days, job["id"] in briefs["open"])
+        panel = _offer_panel(job, decision, brief, f, now, settings.stale_days, job["id"] in briefs["open"],
+                             db.draft_source(conn, job_id=job["id"]))
     else:
         panel = ""
     agent = _agent_box(conn, settings, f, targets)
@@ -2814,7 +2847,7 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
     if app["status"] not in db.CLOSED_STATUSES:
         buttons.append(_mock_form(app, here))
     return (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div>'
-            + _draft_form(here, app_id=app["id"]) + "</section>")
+            + _draft_form(here, app_id=app["id"], source=db.draft_source(conn, app["id"])) + "</section>")
 
 
 def _mock_form(app: dict, here: str) -> str:
@@ -2829,23 +2862,31 @@ def _mock_form(app: dict, here: str) -> str:
             + _button("Mock interview", "secondary", "sm") + "</form>")
 
 
-def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None) -> str:
+def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None, source: dict | None = None) -> str:
     """Draft a reply (folded): what to write (reply, follow-up, thank-you note), the channel, the recruiter's
     message pasted in and the user's notes. Posts a draft request about this application, this job offer
-    or (neither) the whole search; the draft comes back in the Applications Assistant box with Copy."""
+    or (neither) the whole search; the draft comes back in the Applications Assistant box with Copy.
+    `source` (db.draft_source): the message a reply answers when nothing is pasted, named under the box."""
     about = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
              else f'<input type="hidden" name="job_id" value="{h(job_id)}">' if job_id else "")
     kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS)
     channels = "".join(f'<label class="draft-channel"><input type="radio" name="channel" value="{c}"'
                        f'{" checked" if c == "linkedin" else ""}> {h(db.CHANNEL_LABELS[c])}</label>'
                        for c in db.CHANNELS)
+    if source is None:
+        placeholder, uses = "Paste the recruiter's message (LinkedIn or email). Needed for a reply.", ""
+    else:
+        placeholder = "Paste the recruiter's message, or leave it empty to use your message below."
+        uses = (f'<input type="hidden" name="source_id" value="{h(source["id"])}">'
+                f'<p class="muted draft-uses">Left empty, a reply uses your '
+                f'message of {h(_local_time(source["created_at"]))}: “{h(db.source_preview(source["body"]))}”</p>')
     return ('<details class="draft-reply"><summary>Draft a reply</summary>'
             '<form method="post" action="/applications/draft" class="ask draft-form" data-ajax="draft">'
             f'{about}<input type="hidden" name="return" value="{h(here)}">'
             f'<div class="draft-row"><select name="comms" aria-label="What to write">{kinds}</select>'
             f'<span class="draft-channels" role="radiogroup" aria-label="Channel">{channels}</span></div>'
             f'<textarea name="pasted" rows="4" maxlength="{db.MAX_MESSAGE}" aria-label="Their message" '
-            'placeholder="Paste the recruiter\'s message (LinkedIn or email). Needed for a reply."></textarea>'
+            f'placeholder="{h(placeholder)}"></textarea>{uses}'
             '<textarea name="notes" rows="2" maxlength="2000" aria-label="What I want to say" '
             'placeholder="What to say, optional: available Tue/Wed after 2, ask about hybrid…"></textarea>'
             '<div class="ask-foot"><span class="muted">A draft to copy. Nothing is sent.</span>'
@@ -3200,7 +3241,8 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         'placeholder="Ask anything: which tasks need me, a question about the ticked jobs, a comparison, a change '
         '(tasks, comments, stage, tier, CV), or paste a recruiter email…" aria-label="Message to the Applications Assistant"></textarea>'
         '<div class="ask-foot"><span class="muted">The assistant does the edits and replies here.</span>'
-        + _button("Send", size="sm") + "</div></form>" + _draft_form(home_url(f)) + "</div></section>"
+        + _button("Send", size="sm") + "</div></form>" + _draft_form(home_url(f), source=db.draft_source(conn))
+        + "</div></section>"
     )
 
 
@@ -3280,7 +3322,7 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
         + about(m) + _channel_tag(m) + flags.get(m["id"], "") + _route_tag(settings, m, m["id"] in flags)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _draft_box(m)
+        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _draft_box(m) + _draft_actions(m)
         + (_wait_actions(m, "/applications", "thread", "",
                          bool(assistant.message_target(settings, "comms" if m.get("comms") else "ask")))
            if m["author"] == "user" else "")
@@ -3326,6 +3368,18 @@ def _channel_tag(m: dict) -> str:
     what = "" if m["comms"] == "reply" else f' · {h(db.COMMS_LABELS.get(m["comms"], ""))}'
     return (f'<span class="msg-channel msg-channel-{h(m["channel"])}">{h(db.CHANNEL_LABELS[m["channel"]])}'
             f'{what}</span>')
+
+
+def _draft_actions(m: dict) -> str:
+    """Draft reply · LinkedIn | Email under one of the user's own messages (db.is_draft_source): one click
+    drafts a reply to the recruiter text in it, by the message's id (/applications/draft-from)."""
+    if not db.is_draft_source(m):
+        return ""
+    buttons = "".join(f'<button class="btn btn-ghost btn-sm" name="channel" value="{c}" '
+                      f'title="Draft a {h(db.CHANNEL_LABELS[c])} reply to the message above">{h(db.CHANNEL_LABELS[c])}</button>'
+                      for c in db.CHANNELS)
+    return ('<form method="post" action="/applications/draft-from" class="msg-actions msg-draft" data-ajax="draft">'
+            f'<input type="hidden" name="msg_id" value="{h(m["id"])}"><span class="muted">Draft reply ·</span>{buttons}</form>')
 
 
 def _draft_box(m: dict) -> str:

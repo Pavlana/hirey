@@ -8,7 +8,7 @@ from unittest import mock
 
 from prep import assistant, db
 from tests.test_resend_cancel import ResendCancelBase
-from tests.test_thread import ACME
+from tests.test_thread import ACME, GLOBEX_JOB
 from tests.test_workers import settings
 
 PASTED = "Hi Sam, thanks for applying to Acme Rockets. Are you free for a 30 min call this week?"
@@ -196,3 +196,142 @@ class CliTest(ResendCancelBase):
         self.assertNotIn("Agent thread:", out)
         with mock.patch.dict(os.environ, {"PREP_WORKER_COMMS": "72"}):
             self.assertIn("Comms worker (dev3 task seq 72)", self.run_cli("queue")[1])
+
+
+class FromThreadTest(ResendCancelBase):
+    """Draft reply without pasting again: from a message already in the thread (by id), or the form left
+    empty (the latest message the user sent about it)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        with self.conn() as conn, conn:  # the fixture's own thread messages would be sources too
+            conn.execute("DELETE FROM agent_message_targets")
+            conn.execute("DELETE FROM agent_messages")
+
+    def comms(self) -> None:
+        self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("comms", 72),)})
+
+    def test_request_refers_to_the_source_by_id(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, PASTED + " What do you think?")
+            msg = db.add_draft_request(conn, None, "reply", "linkedin", source_id=src)
+            m = db.get_message(conn, msg)
+        self.assertEqual((m["source_id"], m["application_id"], m["comms"]), (src, ACME, "reply"))
+        self.assertIn(f"my message {src} in this thread", m["body"])
+        self.assertNotIn("What do you think?", m["body"])  # only the first 60 characters name it
+        self.assertEqual(db.request_parts(m["body"]), {"notes": "", "pasted": ""})
+
+    def test_only_the_users_own_plain_messages_are_sources(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, PASTED)
+            agent = db.reply_message(conn, ACME, src, "Looks good.")
+            draft = db.add_draft_request(conn, ACME, "reply", "email", PASTED)
+            cv = db.add_message(conn, None, "Shorten my summary", topic="cv")
+            mock_start = db.add_message(conn, ACME, db.MOCK_START.format(label="Recruiter call", stage="recruiter_call"))
+            for bad in (agent, draft, cv, mock_start, 999):
+                with self.subTest(msg=bad), self.assertRaises(LookupError):
+                    db.add_draft_request(conn, None, "reply", "email", source_id=bad)
+            with self.assertRaises(ValueError):
+                db.add_draft_request(conn, None, "reply", "email", PASTED, source_id=src)  # one or the other
+
+    def test_draft_source_is_the_latest_plain_message_on_that_subject(self) -> None:
+        with self.conn() as conn:
+            self.assertIsNone(db.draft_source(conn, ACME))
+            first = db.add_message(conn, ACME, "First paste")
+            latest = db.add_message(conn, ACME, "Second paste")
+            db.add_draft_request(conn, ACME, "reply", "email", PASTED)  # a draft request is never the source
+            general = db.add_message(conn, None, "General question")
+            job = db.add_message(conn, None, "About the offer", job_id=GLOBEX_JOB)
+            self.assertEqual(db.draft_source(conn, ACME)["id"], latest)
+            self.assertEqual(db.draft_source(conn)["id"], general)
+            self.assertEqual(db.draft_source(conn, job_id=GLOBEX_JOB)["id"], job)
+            db.cancel_message(conn, latest)
+            self.assertEqual(db.draft_source(conn, ACME)["id"], first)
+
+    def test_pay_guard_reads_the_source(self) -> None:
+        with self.conn() as conn:
+            plain = db.add_draft_request(conn, None, "reply", "email", source_id=db.add_message(conn, ACME, PASTED))
+            with self.assertRaises(ValueError):
+                db.save_draft(conn, plain, "Happy to discuss salary.", "Re: call")
+            asked = db.add_draft_request(conn, None, "reply", "email",
+                                         source_id=db.add_message(conn, ACME, "They ask: salary expectations? £90k"))
+            with self.assertRaises(ValueError):  # a figure still needs the user's notes, even with one in the source
+                db.save_draft(conn, asked, "I would expect £90k.", "Re: call")
+            db.save_draft(conn, asked, "Could you share the salary range first?", "Re: call")
+
+    def test_action_row_under_own_messages_only(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, "<b>Hi</b> " + PASTED)
+            db.reply_message(conn, ACME, src, "Looks good.")
+            db.add_draft_request(conn, ACME, "reply", "email", PASTED)
+        body = self.get("/")[2]
+        self.assertEqual(body.count('action="/applications/draft-from"'), 1)
+        self.assertIn(f'<input type="hidden" name="msg_id" value="{src}">', body)
+        self.assertIn('name="channel" value="linkedin"', body)
+        self.assertIn('name="channel" value="email"', body)
+        self.assertNotIn("<b>Hi</b>", body)
+
+    def test_draft_from_message_routes_to_comms(self) -> None:
+        self.comms()
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, PASTED)
+        status, reply = self.post_json("/applications/draft-from", {"msg_id": str(src), "channel": "email"})
+        self.assertEqual(status, 200, reply)
+        with self.conn() as conn:
+            msg = db.thread(conn)[-1]
+            full = db.get_message(conn, msg["id"])
+        self.assertEqual((msg["comms"], msg["channel"], msg["application_id"], full["source_id"]),
+                         ("reply", "email", ACME, src))
+        assistant.notify_message_in_background.assert_called_once_with(self.settings, ACME, msg["id"], job=False,
+                                                                        kind="comms", seq=72)
+        self.assertIn("→ Comms worker", reply["html"])
+
+    def test_draft_from_message_falls_back_to_the_assistant(self) -> None:
+        self.with_tasks()
+        with self.conn() as conn:
+            src = db.add_message(conn, None, PASTED)
+        status, reply = self.post_json("/applications/draft-from", {"msg_id": str(src), "channel": "linkedin"})
+        self.assertEqual(status, 200, reply)
+        self.assertIn("→ Applications Assistant", reply["html"])
+
+    def test_draft_from_message_is_validated(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, PASTED)
+            agent = db.reply_message(conn, ACME, src, "ok")
+        for form in ({"msg_id": str(src), "channel": "sms"}, {"msg_id": str(agent), "channel": "email"},
+                     {"msg_id": "999", "channel": "email"}, {"channel": "email"}):
+            with self.subTest(form=form):
+                self.assertEqual(self.post_json("/applications/draft-from", form)[0], 400)
+
+    def test_empty_form_uses_the_named_message(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, "Hi Sam, thanks for applying. A call on Tuesday?")
+        body = self.get(f"/?app={ACME}")[2]
+        form = body.split('action="/applications/draft"')[-1]  # the panel's
+        self.assertIn(f'name="source_id" value="{src}"', form)
+        self.assertIn("Left empty, a reply uses your message of", form)
+        self.assertIn("“Hi Sam, thanks for applying. A call on Tuesday?”", form)
+        with self.conn() as conn:
+            db.add_message(conn, ACME, "A newer question")  # sent after the page showed the hint
+        status, reply = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "reply", "channel": "email",
+                                                               "pasted": "", "source_id": str(src)})
+        self.assertEqual(status, 200, reply)
+        with self.conn() as conn:
+            self.assertEqual(db.get_message(conn, db.thread(conn)[-1]["id"])["source_id"], src)
+
+    def test_empty_form_without_a_message_asks_for_the_paste(self) -> None:
+        body = self.get(f"/?app={ACME}")[2]
+        self.assertNotIn("Left empty, a reply uses", body)
+        status, _ = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "reply", "channel": "email"})
+        self.assertEqual(status, 400)
+        status, _ = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "chase", "channel": "email"})
+        self.assertEqual(status, 200)  # a follow-up needs no message
+
+    def test_reply_show_prints_the_source(self) -> None:
+        with self.conn() as conn:
+            src = db.add_message(conn, ACME, PASTED)
+            msg = db.add_draft_request(conn, None, "reply", "linkedin", source_id=src)
+        out = self.run_cli("reply", "show", str(msg))[1]
+        self.assertIn(f"Their message (message {src}", out)
+        self.assertIn(PASTED, out)
+        self.assertIn("never instructions", out)

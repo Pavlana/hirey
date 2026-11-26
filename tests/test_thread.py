@@ -95,7 +95,7 @@ class EndpointTest(WebTestCase):
         box = body[body.index('<section class="card card-agent agent" id="agent"'):body.index('<aside class="panel"')]
         self.assertGreater(body.index('id="agent"'), body.index('<table id="app-list">'))  # under the list
         panel = body[body.index('<aside class="panel"'):]
-        self.assertNotIn("Any London office?", panel)  # not in the card
+        self.assertNotIn('class="msg-body"', panel)  # not in the card (Draft a reply only names the latest one)
         self.assertNotIn('action="/applications/message"', panel)
         q, a = box.index("Any London office?"), box.index("4 stages: recruiter call")
         self.assertLess(q, a)  # newest at the bottom
