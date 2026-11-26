@@ -1,0 +1,704 @@
+{
+  "evalId": "eval-example",
+  "results": {
+    "version": 3,
+    "timestamp": "2026-01-19T12:00:00.000Z",
+    "prompts": [
+      {
+        "raw": "{{title}} \u2014 {{company}}",
+        "label": "{{title}} \u2014 {{company}}",
+        "provider": "claude-sonnet-5",
+        "metrics": {
+          "score": 4,
+          "testPassCount": 4,
+          "testFailCount": 0,
+          "testErrorCount": 0,
+          "namedScores": {
+            "parses": 4,
+            "verdict": 4,
+            "no_personal": 4,
+            "grounded": 4,
+            "rubric_reasons": 3.0
+          },
+          "namedScoresCount": {
+            "parses": 4,
+            "verdict": 4,
+            "no_personal": 4,
+            "grounded": 4,
+            "rubric_reasons": 4
+          },
+          "cost": 0.016,
+          "totalLatencyMs": 8400
+        }
+      },
+      {
+        "raw": "{{title}} \u2014 {{company}}",
+        "label": "{{title}} \u2014 {{company}}",
+        "provider": "claude-haiku-4-5",
+        "metrics": {
+          "score": 2,
+          "testPassCount": 2,
+          "testFailCount": 2,
+          "testErrorCount": 0,
+          "namedScores": {
+            "parses": 4,
+            "verdict": 3,
+            "no_personal": 4,
+            "grounded": 3,
+            "rubric_reasons": 2.6
+          },
+          "namedScoresCount": {
+            "parses": 4,
+            "verdict": 4,
+            "no_personal": 4,
+            "grounded": 4,
+            "rubric_reasons": 4
+          },
+          "cost": 0.004,
+          "totalLatencyMs": 4800
+        }
+      }
+    ],
+    "results": [
+      {
+        "testIdx": 0,
+        "promptIdx": 0,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-sonnet-5"
+        },
+        "vars": {
+          "title": "Platform Engineer",
+          "company": "Initech",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 8, \"reasons\": [\"Platform Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.9
+        },
+        "cost": 0.004,
+        "latencyMs": 2100,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 8",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected apply, got apply (score 8)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.9,
+              "reason": "Reasons name Platform Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 1,
+        "promptIdx": 0,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-sonnet-5"
+        },
+        "vars": {
+          "title": "Backend Developer",
+          "company": "Globex",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 7, \"reasons\": [\"Backend Developer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.8
+        },
+        "cost": 0.004,
+        "latencyMs": 2100,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 7",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected apply, got apply (score 7)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.8,
+              "reason": "Reasons name Backend Developer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 2,
+        "promptIdx": 0,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-sonnet-5"
+        },
+        "vars": {
+          "title": "Data Engineer",
+          "company": "Hooli",
+          "expected": "maybe",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 5, \"reasons\": [\"Data Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.6
+        },
+        "cost": 0.004,
+        "latencyMs": 2100,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 5",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected maybe, got maybe (score 5)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.6,
+              "reason": "Reasons name Data Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 3,
+        "promptIdx": 0,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-sonnet-5"
+        },
+        "vars": {
+          "title": "Site Reliability Engineer",
+          "company": "Vandelay Industries",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 8, \"reasons\": [\"Site Reliability Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.7
+        },
+        "cost": 0.004,
+        "latencyMs": 2100,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 8",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected apply, got apply (score 8)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.7,
+              "reason": "Reasons name Site Reliability Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 0,
+        "promptIdx": 1,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-haiku-4-5"
+        },
+        "vars": {
+          "title": "Platform Engineer",
+          "company": "Initech",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 8, \"reasons\": [\"Platform Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.8
+        },
+        "cost": 0.001,
+        "latencyMs": 1200,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 8",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected apply, got apply (score 8)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.8,
+              "reason": "Reasons name Platform Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 1,
+        "promptIdx": 1,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-haiku-4-5"
+        },
+        "vars": {
+          "title": "Backend Developer",
+          "company": "Globex",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 6, \"reasons\": [\"Backend Developer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": false,
+        "score": 0,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 0,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.7
+        },
+        "cost": 0.001,
+        "latencyMs": 1200,
+        "gradingResult": {
+          "pass": false,
+          "score": 0,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 6",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": false,
+              "score": 0,
+              "reason": "expected apply, got maybe (score 6)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.7,
+              "reason": "Reasons name Backend Developer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 2,
+        "promptIdx": 1,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-haiku-4-5"
+        },
+        "vars": {
+          "title": "Data Engineer",
+          "company": "Hooli",
+          "expected": "maybe",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 5, \"reasons\": [\"Data Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": true,
+        "score": 1,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 1,
+          "rubric_reasons": 0.5
+        },
+        "cost": 0.001,
+        "latencyMs": 1200,
+        "gradingResult": {
+          "pass": true,
+          "score": 1,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 5",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected maybe, got maybe (score 5)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "every dealbreaker quote is in the posting",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.5,
+              "reason": "Reasons name Data Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      },
+      {
+        "testIdx": 3,
+        "promptIdx": 1,
+        "provider": {
+          "id": "file://provider.py",
+          "label": "claude-haiku-4-5"
+        },
+        "vars": {
+          "title": "Site Reliability Engineer",
+          "company": "Vandelay Industries",
+          "expected": "apply",
+          "case_set": "ci"
+        },
+        "response": {
+          "output": "{\"score\": 8, \"reasons\": [\"Site Reliability Engineer fits\"], \"red_flags\": [], \"dealbreakers\": []}"
+        },
+        "success": false,
+        "score": 0,
+        "namedScores": {
+          "parses": 1,
+          "verdict": 1,
+          "no_personal": 1,
+          "grounded": 0,
+          "rubric_reasons": 0.6
+        },
+        "cost": 0.001,
+        "latencyMs": 1200,
+        "gradingResult": {
+          "pass": false,
+          "score": 0,
+          "componentResults": [
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "score 8",
+              "assertion": {
+                "type": "python",
+                "metric": "parses"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "expected apply, got apply (score 8)",
+              "assertion": {
+                "type": "python",
+                "metric": "verdict"
+              }
+            },
+            {
+              "pass": true,
+              "score": 1,
+              "reason": "no personal mentions",
+              "assertion": {
+                "type": "python",
+                "metric": "no_personal"
+              }
+            },
+            {
+              "pass": false,
+              "score": 0,
+              "reason": "dealbreaker quote not in the posting: on-site five days",
+              "assertion": {
+                "type": "python",
+                "metric": "grounded"
+              }
+            },
+            {
+              "pass": true,
+              "score": 0.6,
+              "reason": "Reasons name Site Reliability Engineer's stack; nothing personal.",
+              "assertion": {
+                "type": "llm-rubric",
+                "metric": "rubric_reasons"
+              }
+            }
+          ]
+        }
+      }
+    ],
+    "stats": {
+      "successes": 0,
+      "failures": 0
+    }
+  },
+  "config": {
+    "description": "example"
+  }
+}

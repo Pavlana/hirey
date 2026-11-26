@@ -1,0 +1,310 @@
+{
+  "schema": 1,
+  "runner": "evals.run",
+  "created_at": "2026-01-14T10:15:00Z",
+  "set": "ci",
+  "cases_file": "evals/ci/cases.jsonl",
+  "model": "claude-sonnet-5",
+  "threshold": 7,
+  "skip_max": 3,
+  "dealbreakers": 2,
+  "commit": "2222222bbbbbbb",
+  "prompt_sha": "a1b2c3d4e5f6",
+  "counts": {
+    "total": 10,
+    "agree": 9
+  },
+  "agreement": {
+    "hits": 9,
+    "total": 10,
+    "rate": 0.9
+  },
+  "apply_precision": {
+    "hits": 4,
+    "total": 5,
+    "rate": 0.8
+  },
+  "apply_recall": {
+    "hits": 4,
+    "total": 4,
+    "rate": 1.0
+  },
+  "confusion": {
+    "apply": {
+      "apply": 4,
+      "maybe": 0,
+      "skip": 0,
+      "unscored": 0
+    },
+    "maybe": {
+      "apply": 1,
+      "maybe": 2,
+      "skip": 0,
+      "unscored": 0
+    },
+    "skip": {
+      "apply": 0,
+      "maybe": 0,
+      "skip": 3,
+      "unscored": 0
+    }
+  },
+  "sweep": [
+    {
+      "threshold": 5,
+      "sent": 7,
+      "precision": {
+        "hits": 4,
+        "total": 7,
+        "rate": 0.5714
+      },
+      "recall": {
+        "hits": 4,
+        "total": 4,
+        "rate": 1.0
+      }
+    },
+    {
+      "threshold": 6,
+      "sent": 6,
+      "precision": {
+        "hits": 4,
+        "total": 6,
+        "rate": 0.6667
+      },
+      "recall": {
+        "hits": 4,
+        "total": 4,
+        "rate": 1.0
+      }
+    },
+    {
+      "threshold": 7,
+      "sent": 5,
+      "precision": {
+        "hits": 4,
+        "total": 5,
+        "rate": 0.8
+      },
+      "recall": {
+        "hits": 4,
+        "total": 4,
+        "rate": 1.0
+      }
+    },
+    {
+      "threshold": 8,
+      "sent": 2,
+      "precision": {
+        "hits": 2,
+        "total": 2,
+        "rate": 1.0
+      },
+      "recall": {
+        "hits": 2,
+        "total": 4,
+        "rate": 0.5
+      }
+    },
+    {
+      "threshold": 9,
+      "sent": 0,
+      "precision": {
+        "hits": 0,
+        "total": 0,
+        "rate": null
+      },
+      "recall": {
+        "hits": 0,
+        "total": 4,
+        "rate": 0.0
+      }
+    }
+  ],
+  "personal_mentions": 0,
+  "cost_usd": 0.049,
+  "min_agreement": 8,
+  "passed": true,
+  "cases": [
+    {
+      "job_id": "example:initech",
+      "title": "Platform Engineer",
+      "company": "Initech",
+      "expected": "apply",
+      "label_reason": "fictional label",
+      "score": 8,
+      "raw_score": 8,
+      "predicted": "apply",
+      "agree": true,
+      "reasons": [
+        "Platform Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:globex",
+      "title": "Backend Developer",
+      "company": "Globex",
+      "expected": "apply",
+      "label_reason": "fictional label",
+      "score": 7,
+      "raw_score": 7,
+      "predicted": "apply",
+      "agree": true,
+      "reasons": [
+        "Backend Developer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:hooli",
+      "title": "Data Engineer",
+      "company": "Hooli",
+      "expected": "maybe",
+      "label_reason": "fictional label",
+      "score": 6,
+      "raw_score": 6,
+      "predicted": "maybe",
+      "agree": true,
+      "reasons": [
+        "Data Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:vandelay",
+      "title": "Site Reliability Engineer",
+      "company": "Vandelay Industries",
+      "expected": "apply",
+      "label_reason": "fictional label",
+      "score": 8,
+      "raw_score": 8,
+      "predicted": "apply",
+      "agree": true,
+      "reasons": [
+        "Site Reliability Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:umbrella",
+      "title": "Frontend Engineer",
+      "company": "Umbrella Labs",
+      "expected": "skip",
+      "label_reason": "fictional label",
+      "score": 2,
+      "raw_score": 2,
+      "predicted": "skip",
+      "agree": true,
+      "reasons": [
+        "Frontend Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:wonka",
+      "title": "ML Engineer",
+      "company": "Wonka Analytics",
+      "expected": "maybe",
+      "label_reason": "fictional label",
+      "score": 5,
+      "raw_score": 5,
+      "predicted": "maybe",
+      "agree": true,
+      "reasons": [
+        "ML Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:stark",
+      "title": "DevOps Engineer",
+      "company": "Stark Logistics",
+      "expected": "apply",
+      "label_reason": "fictional label",
+      "score": 7,
+      "raw_score": 7,
+      "predicted": "apply",
+      "agree": true,
+      "reasons": [
+        "DevOps Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:acme",
+      "title": "QA Lead",
+      "company": "Acme Retail",
+      "expected": "skip",
+      "label_reason": "fictional label",
+      "score": 2,
+      "raw_score": 2,
+      "predicted": "skip",
+      "agree": true,
+      "reasons": [
+        "QA Lead matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:soylent",
+      "title": "Staff Engineer",
+      "company": "Soylent Foods",
+      "expected": "maybe",
+      "label_reason": "fictional label",
+      "score": 7,
+      "raw_score": 7,
+      "predicted": "apply",
+      "agree": false,
+      "reasons": [
+        "Staff Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    },
+    {
+      "job_id": "example:tyrell",
+      "title": "Support Engineer",
+      "company": "Tyrell Systems",
+      "expected": "skip",
+      "label_reason": "fictional label",
+      "score": 1,
+      "raw_score": 1,
+      "predicted": "skip",
+      "agree": true,
+      "reasons": [
+        "Support Engineer matches the made-up CV's stack",
+        "Remote-friendly"
+      ],
+      "red_flags": [],
+      "dealbreakers": [],
+      "personal_mentions": []
+    }
+  ]
+}

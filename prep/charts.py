@@ -195,3 +195,30 @@ def trend(points: list[tuple[str, int]], low: int = 1, high: int = 5, color: str
     ]
     return (f'<svg class="chart trend" viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Trend of {len(points)} scores">{"".join(parts)}</svg>')
+
+
+def lines(labels: list[str], series: list[tuple[str, str, list[float | None]]], width: int = 360,
+          height: int = 150) -> str:
+    """Rates (0..1) over a shared x axis, one line per series (name, shade, values; None leaves a gap
+    in the dots). Gridlines at 0, 50 and 100%; each x label under its column."""
+    if not labels or not any(v is not None for _, _, vals in series for v in vals):
+        return ""
+    left, right, top, bottom = 36, 8, 8, 22
+    plot_w, plot_h = width - left - right, height - top - bottom
+    step = plot_w / max(len(labels) - 1, 1)
+    x_of = lambda i: left + (i * step if len(labels) > 1 else plot_w / 2)  # noqa: E731
+    y_of = lambda v: top + plot_h * (1 - min(max(v, 0.0), 1.0))  # noqa: E731
+    parts = [f'<line class="grid" x1="{left}" x2="{width - right}" y1="{_n(y_of(m))}" y2="{_n(y_of(m))}"/>'
+             f'<text class="axis" x="{left - 6}" y="{_n(y_of(m) + 4)}" text-anchor="end">{m:.0%}</text>'
+             for m in (0.0, 0.5, 1.0)]
+    parts += [f'<text class="axis" x="{_n(x_of(i))}" y="{height - 6}" text-anchor="middle">{_e(label)}</text>'
+              for i, label in enumerate(labels)]
+    for name, shade, values in series:
+        pts = [(i, v) for i, v in enumerate(values) if v is not None]
+        if len(pts) > 1:
+            coords = " ".join(f"{_n(x_of(i))},{_n(y_of(v))}" for i, v in pts)
+            parts.append(f'<polyline class="trend-line {_c(shade)}" points="{coords}" fill="none" stroke="currentColor"/>')
+        parts += [f'<circle class="{_c(shade)}" cx="{_n(x_of(i))}" cy="{_n(y_of(v))}" r="3.5" fill="currentColor">'
+                  f"<title>{_e(name)} at {_e(labels[i])}: {v:.0%}</title></circle>" for i, v in pts]
+    return (f'<svg class="chart lines" viewBox="0 0 {width} {height}" role="img" '
+            f'aria-label="{_e(", ".join(n for n, _, _ in series))} over {len(labels)} points">{"".join(parts)}</svg>')
