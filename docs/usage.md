@@ -529,16 +529,26 @@ took an item from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
 
 ### Draft a reply (recruiter messages)
 
-Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies. Open the
-application (or the job offer, or use the box's own form for the whole search), unfold **Draft a
-reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email, paste the recruiter's message
-(needed for a reply) and add a line on what to say ("free Tue/Wed after 2, ask about hybrid"). The
-draft arrives in the Applications Assistant box with **Copy** (email: **Copy subject** and **Copy
+Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies.
+
+- **From a message already in the box.** A recruiter's message pasted into the Applications
+  Assistant box (for example to ask for feedback on it) gets an action row: **Draft reply ·
+  LinkedIn | Email**. One click asks for the reply; nothing is pasted again.
+- **From the form.** Open the application (or the job offer, or use the box's own form for the whole
+  search), unfold **Draft a reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email,
+  and add a line on what to say ("free Tue/Wed after 2, ask about hybrid"). Paste the recruiter's
+  message, or leave the box empty: a reply then uses the latest message sent about this application,
+  named under the box ("Left empty, a reply uses your message of Nov 26, 14:02: '…'"). With no such
+  message, a reply needs the paste. A follow-up or a thank-you note needs none.
+
+The draft arrives in the Applications Assistant box with **Copy** (email: **Copy subject** and **Copy
 body**); paste it and send it yourself. Nothing is sent from Hirey. An interview the message books is
 recorded on the application; a rejection or anything else is only proposed in the note above the
 draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
 /reply in any Claude Code session.
 
+![Draft reply under a message in the box](screenshots/draft-reply-from-message.png)
+![The draft in the same thread](screenshots/draft-reply-from-message-draft.png)
 ![Draft a reply form](screenshots/draft-reply-form.png)
 ![A LinkedIn draft with Copy](screenshots/draft-linkedin.png)
 ![An email draft with Copy subject and Copy body](screenshots/draft-email.png)

@@ -542,8 +542,11 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # draft_body: the draft text on the agent's reply, shown with Copy. NULL on every other message.
     # worker: the dev3 task seq the router sent it to (several workers on one route), or that took it;
     # NULL: whoever handles its route.
+    # source_id: on a draft request, the user's own thread message holding the recruiter's text (Draft reply
+    # on a message, or the form with nothing pasted); NULL when the text was pasted or none is needed.
     "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT", "card_id": "INTEGER", "comms": "TEXT",
-                       "channel": "TEXT", "draft_subject": "TEXT", "draft_body": "TEXT", "worker": "INTEGER"},
+                       "channel": "TEXT", "draft_subject": "TEXT", "draft_body": "TEXT", "worker": "INTEGER",
+                       "source_id": "INTEGER"},
     # worker: as on agent_messages. reason: why a worker marked it blocked (`research block`, `brief block`).
     "agent_requests": {"worker": "INTEGER", "reason": "TEXT"},
     "brief_requests": {"worker": "INTEGER", "reason": "TEXT"},
@@ -2283,18 +2286,28 @@ def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id:
 
 
 def add_draft_request(conn: sqlite3.Connection, app_id: int | None, kind: str, channel: str, pasted: str = "",
-                      notes: str = "", job_id: str | None = None) -> int:
+                      notes: str = "", job_id: str | None = None, source_id: int | None = None) -> int:
     """A "Draft a reply" request: a user message (pending) about application `app_id`, getjo job `job_id`
     (not yet tracked) or the whole search, with comms `kind` and `channel`. The body is built here in fixed
     sections: a first line naming what to write, then the user's notes and the pasted message (each under
-    its heading, the pasted one marked as data). A reply needs the pasted message; a follow-up or a
-    thank-you note may have notes only."""
+    its heading, the pasted one marked as data). A reply needs the pasted message or `source_id`: the
+    user's own thread message that holds the recruiter's text (is_draft_source), referred to by id (its text
+    is not copied) and taking that message's application or job. A follow-up or a thank-you note may have
+    notes only."""
     if kind not in COMMS_KINDS:
         raise ValueError(f"kind must be one of {', '.join(COMMS_KINDS)}")
     if channel not in CHANNELS:
         raise ValueError(f"channel must be one of {', '.join(CHANNELS)}")
     pasted, notes = pasted.replace("\r\n", "\n").strip(), notes.replace("\r\n", "\n").strip()
-    if kind == "reply" and not pasted:
+    source = None
+    if source_id is not None:
+        if pasted:
+            raise ValueError("a draft answers the pasted message or a thread message, not both")
+        source = get_message(conn, source_id)
+        if not is_draft_source(source):
+            raise LookupError(f"message {source_id} is not one of your messages a reply can be drafted from")
+        app_id, job_id = source["application_id"], None if source["application_id"] is not None else source["getjo_job_id"]
+    if kind == "reply" and not pasted and source is None:
         raise ValueError("paste the message to reply to")
     if app_id is not None and job_id is not None:
         raise ValueError("a draft is about an application or a job, not both")
@@ -2308,16 +2321,59 @@ def add_draft_request(conn: sqlite3.Connection, app_id: int | None, kind: str, c
         parts.append(f"{NOTES_HEADING}\n{notes}")
     if pasted:
         parts.append(f"{PASTED_HEADING}\n{pasted}")
+    if source is not None:
+        parts.append(f"{SOURCE_LINE.format(id=source['id'])} \"{source_preview(source['body'])}\"")
     body = _message_body("\n\n".join(parts))
     with conn:
         cursor = conn.execute(
-            "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, status, created_at, comms, channel) "
-            "VALUES (?, ?, 'user', ?, 'pending', ?, ?, ?)",
-            (app_id, job_id, body, now_iso(), kind, channel),
+            "INSERT INTO agent_messages (application_id, getjo_job_id, author, body, status, created_at, comms, channel, "
+            "source_id) VALUES (?, ?, 'user', ?, 'pending', ?, ?, ?, ?)",
+            (app_id, job_id, body, now_iso(), kind, channel, source_id),
         )
         if app_id is not None or job_id is not None:
             _add_targets(conn, cursor.lastrowid, [(app_id, job_id, None)])
     return cursor.lastrowid
+
+
+SOURCE_LINE = "Their message is in my message {id} in this thread:"
+SOURCE_PREVIEW = 60
+
+
+def source_preview(body: str, limit: int = SOURCE_PREVIEW) -> str:
+    """The first `limit` characters of a message on one line, "…" when cut: names a draft's source."""
+    text = " ".join(body.split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "…"
+
+
+def is_draft_source(msg: dict | None) -> bool:
+    """A message a reply can be drafted from: the user's own message in the Applications thread about an
+    application, a job offer or the whole search; not a draft request, a comparison, a CV or Learn message,
+    a fixed mock-interview start, or a cancelled message."""
+    return bool(msg) and msg["author"] == "user" and not msg["comms"] and msg["topic"] is None \
+        and msg["status"] != "cancelled" and not msg["body"].startswith(MOCK_START.split(":")[0])
+
+
+def draft_source(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None) -> dict | None:
+    """The message an empty Draft a reply form answers: the user's latest is_draft_source message about
+    application `app_id`, else untracked job `job_id`, else (neither) the whole search. None when there is none."""
+    if app_id is not None:
+        where, key = "application_id = ?", app_id
+    elif job_id:
+        where, key = "application_id IS NULL AND getjo_job_id = ?", job_id
+    else:
+        where, key = "application_id IS NULL AND getjo_job_id IS NULL AND ? IS NULL", None
+    rows = conn.execute(f"SELECT id FROM agent_messages WHERE author = 'user' AND comms IS NULL AND topic IS NULL "
+                        f"AND status != 'cancelled' AND {where} ORDER BY id DESC LIMIT 20", (key,))
+    for (msg_id,) in rows:
+        msg = get_message(conn, msg_id)
+        if is_draft_source(msg):
+            return msg
+    return None
+
+
+def request_source(conn: sqlite3.Connection, request: dict) -> dict | None:
+    """The thread message a draft request answers (its source_id), or None."""
+    return get_message(conn, request["source_id"]) if request.get("source_id") else None
 
 
 # A pay figure: a currency sign or a "60k"-style number. Pay words alone (salary, range) are PAY_PATTERN.
@@ -2333,16 +2389,20 @@ def request_parts(body: str) -> dict[str, str]:
         if start < 0:
             continue
         text = body[start + len(heading):]
-        if key == "notes" and PASTED_HEADING in text:
-            text = text[:text.find(PASTED_HEADING)]
+        if key == "notes":
+            for end in (PASTED_HEADING, SOURCE_LINE.split("{")[0]):
+                if end in text:
+                    text = text[:text.find(end)]
         found[key] = text.strip()
     return found
 
 
-def check_draft_pay(request_body: str, draft: str) -> None:
+def check_draft_pay(request_body: str, draft: str, source: str = "") -> None:
     """The pay guard on a draft: a pay figure only when the user's own notes give one; pay wording ("the
-    range") only when the notes or the pasted message raise pay. ValueError otherwise."""
+    range") only when the notes or the pasted message (or the `source` thread message's text) raise pay.
+    ValueError otherwise."""
     parts = request_parts(request_body)
+    parts["pasted"] = f'{parts["pasted"]}\n{source}'.strip()
     if PAY_FIGURE.search(draft) and not PAY_FIGURE.search(parts["notes"]):
         raise ValueError("the draft names a pay figure the user's notes do not give; leave the number out")
     if PAY_PATTERN.search(draft) and not (PAY_PATTERN.search(parts["notes"]) or PAY_PATTERN.search(parts["pasted"])):
@@ -2370,7 +2430,7 @@ def save_draft(conn: sqlite3.Connection, to_id: int, draft: str, subject: str | 
         raise ValueError("a LinkedIn message has no subject line")
     if len(subject) > MAX_SUBJECT:
         raise ValueError(f"a subject can be at most {MAX_SUBJECT} characters")
-    check_draft_pay(msg["body"], f"{subject}\n{draft}")
+    check_draft_pay(msg["body"], f"{subject}\n{draft}", (request_source(conn, msg) or {}).get("body", ""))
     body = _message_body(note or "Draft ready: copy it and send it yourself.")
     stamp = now_iso()
     with conn:
@@ -2652,9 +2712,9 @@ def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) 
 
 def get_message(conn: sqlite3.Connection, msg_id: int) -> dict | None:
     """One message: id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, created_at,
-    claimed_at, comms, channel, draft_subject, draft_body, worker."""
+    claimed_at, comms, channel, draft_subject, draft_body, worker, source_id."""
     row = conn.execute("SELECT id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, "
-                       "created_at, claimed_at, comms, channel, draft_subject, draft_body, worker FROM agent_messages "
+                       "created_at, claimed_at, comms, channel, draft_subject, draft_body, worker, source_id FROM agent_messages "
                        "WHERE id = ?", (msg_id,)).fetchone()
     return dict(row) if row else None
 
