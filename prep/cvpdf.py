@@ -2,8 +2,9 @@
 committed template prep/cv_template.html, standard library) -> PDF (WeasyPrint, the one third-party library).
 
 The layout: a header with the name on two lines, the title line and a focus line on the left, and the
-summary with the contact line under it on the right; below, a narrow column (skills, education...)
-and a wide one (experience, projects...). The CV's words are kept as written, only grouped: no heading is renamed.
+summary with the contact line under it on the right; below, one full-width column: skills first (one line
+per group), then experience, projects and the rest, then education and the like. Each role's dates sit at
+the right margin. The CV's words are kept as written, only grouped: no heading is renamed.
 
 The PDF goes next to the Markdown file, same name with .pdf. WeasyPrint is imported only here and
 only when a PDF is made, so the rest of the app runs without it. When this interpreter cannot load it
@@ -54,11 +55,11 @@ def cv_title(body: str, fallback: str) -> str:
     return fallback
 
 
-# "## " sections that go in the narrow column (matched by a word in the heading); the rest go in the wide one
-# the first narrow-column section named like this is shown in the header, top right
+# "## " sections are placed by a word in the heading: the first one named like SUMMARY_WORDS is shown in the
+# header, top right; TOP_WORDS sections come first under the header, END_WORDS ones last; the rest in between
 SUMMARY_WORDS = ("summary", "profile", "about")
-SIDE_WORDS = SUMMARY_WORDS + ("skills", "expertise", "tools", "education", "training",
-              "courses", "certification", "languages", "awards", "interests")
+TOP_WORDS = ("skills", "expertise", "tools")
+END_WORDS = ("education", "training", "courses", "certification", "languages", "awards", "interests")
 # a header item that is contact detail: a label, an email, a link or a phone number (or a _LOCATION)
 _LABEL = re.compile(r"^(location|address|mobile|phone|tel|email|e-mail|linkedin|github|web|website)\s*:", re.I)
 # "Town, UK", "Town, NY" or "Town, Country": a location, not a focus list like "Python, Kubernetes"
@@ -139,17 +140,30 @@ def _roles(section: str) -> str:
     return re.sub(r"<h4>(.*?)</h4>", _role_heading, section)
 
 
+# a skills group: "- **Group**" with one indented "  - item" per skill
+_SKILL_GROUPS = re.compile(r"<ul>((?:<li><strong>[^<]*</strong><ul>.*?</ul></li>)+)</ul>", re.S)
+_SKILL_GROUP = re.compile(r"<li><strong>([^<]*)</strong><ul>(.*?)</ul></li>", re.S)
+
+
+def _skill_lines(section: str) -> str:
+    """Skills groups as one line each: "Group: a, b, c"."""
+    def lines(found: re.Match) -> str:
+        return "".join(f'<p class="skl"><strong>{group}:</strong> {", ".join(re.findall(r"<li>(.*?)</li>", items))}</p>'
+                       for group, items in _SKILL_GROUP.findall(found.group(1)))
+    return _SKILL_GROUPS.sub(lines, section)
+
+
 def cv_layout(body: str) -> str:
     """The CV's Markdown (no front matter) as the page's HTML: the header (with the summary section),
-    then the other sections in two columns. A CV without a "# Name" heading is rendered as it is, in
-    one column."""
+    then the other sections in one column: skills-like sections first, education-like ones last. A CV
+    without a "# Name" heading is rendered as it is."""
     lines = body.splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("# ")), None)
     if start is None:
         return render_markdown(body, empty="", links=True)
     end = next((i for i, line in enumerate(lines) if line.startswith("## ")), len(lines))
     before = render_markdown("\n".join(lines[:start]), empty="", links=True)
-    summary, side, main = "", [], []
+    summary, top, middle, last = "", [], [], []
     for part in re.split(r"(?=<h3>)", render_markdown("\n".join(lines[end:]), empty="", links=True)):
         if not part:
             continue
@@ -158,11 +172,14 @@ def cv_layout(body: str) -> str:
         if not summary and any(w in heading for w in SUMMARY_WORDS):
             summary = '<section class="summary">' + re.sub(r"^<h3>.*?</h3>", "", part) + "</section>"
             continue
-        to_side = any(w in heading for w in SIDE_WORDS)
-        (side if to_side else main).append(f'<section class="block">{_roles(part)}</section>')
+        if any(w in heading for w in TOP_WORDS):
+            top.append(f'<section class="block keep">{_skill_lines(_roles(part))}</section>')
+        elif any(w in heading for w in END_WORDS):
+            last.append(f'<section class="block keep">{_roles(part)}</section>')
+        else:
+            middle.append(f'<section class="block">{_roles(part)}</section>')
     head = masthead(lines[start], [line for line in lines[start + 1:end] if line.strip()], summary)
-    return (before + head + '<div class="cols"><div class="side">' + "".join(side)
-            + '</div><div class="main">' + "".join(main) + "</div></div>")
+    return before + head + '<div class="sections">' + "".join(top + middle + last) + "</div>"
 
 
 def cv_html(text: str, fallback_title: str = "CV") -> str:
