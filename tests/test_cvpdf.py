@@ -120,22 +120,25 @@ class LayoutTest(IsolatedTestCase):
         self.assertIn('<div class="about"><section class="summary"><p>Engineer who builds example platforms.</p>'
                       "</section></div>", page, "the summary text top right, without its heading")
         order = [page.index(x) for x in ('class="name"', 'class="title"', 'class="focus"', 'class="contact"',
-                                         'class="summary"', 'class="side"', 'class="main"')]
-        self.assertEqual(order, sorted(order), "name, title lines, contact, summary, then the columns")
+                                         'class="summary"', 'class="sections"')]
+        self.assertEqual(order, sorted(order), "name, title lines, contact, summary, then the sections")
 
-    def test_sections_split_into_two_columns(self) -> None:
+    def test_sections_in_one_column_skills_first(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
-        head, cols = page.split('<div class="cols">')
-        side, main = cols.split('<div class="main">')
+        head, sections = page.split('<div class="sections">')
         self.assertNotIn("<h3>Summary</h3>", page)
         self.assertIn('<section class="summary">', head)
-        for heading in ("Skills", "Education &amp; Training"):
-            self.assertIn(f"<h3>{heading}</h3>", side)
-        for heading in ("Experience", "Projects"):
-            self.assertIn(f"<h3>{heading}</h3>", main)
-        self.assertEqual(page.count('<section class="block">'), 4)
-        self.assertIn("<h3>Skills</h3><ul><li><strong>Languages</strong><ul><li>Python</li><li>Go</li></ul></li></ul>",
-                      side, "a skills group: its name, then one item per bullet")
+        order = [sections.index(f"<h3>{heading}</h3>")
+                 for heading in ("Skills", "Experience", "Projects", "Education &amp; Training")]
+        self.assertEqual(order, sorted(order), "skills, then experience and projects, then education")
+        self.assertEqual(page.count('<section class="block keep">'), 2, "skills and education never split")
+        self.assertEqual(page.count('<section class="block">'), 2)
+        self.assertIn('<h3>Skills</h3><p class="skl"><strong>Languages:</strong> Python, Go</p>', sections,
+                      "a skills group: its name, then its items on one line")
+        lines = cvpdf.cv_layout(HEADED_CV.replace("- **Languages**\n  - Python\n  - Go",
+                                                  "- **Languages:** Python, Go"))
+        self.assertIn("<h3>Skills</h3><ul><li><strong>Languages:</strong> Python, Go</li></ul>", lines,
+                      "skills already written as lines stay as they are")
         bullets = cvpdf.cv_layout(HEADED_CV.replace("Engineer who builds example platforms.",
                                                     "- **Lead:** example → platform\n- **Next:** example role"))
         self.assertIn('<section class="summary"><ul><li><strong>Lead:</strong> example → platform</li>'

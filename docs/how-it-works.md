@@ -327,22 +327,22 @@
    `prep/cv_template.html`. Layout: a header with, on the left, the name on two lines (Helvetica Neue Bold,
    uppercase), the title line, a focus line ("A • B • C", when there is one) and the contact block,
    one item per line; on the right, the text of the first section named like `cvpdf.SUMMARY_WORDS`
-   (summary, profile, about), without its heading. Below, a narrow column (sections whose heading has a word of `cvpdf.SIDE_WORDS`: skills, education…) and a
-   wide one (experience, projects, anything else). Skills groups (`- **Group**` with indented
-   `  - item` sub-bullets) show the group name, then one item per bullet in two tight columns, at 8.5pt. `cvpdf.masthead` sorts the " · " items of
+   (summary, profile, about), without its heading. Below, one full-width column: first the sections whose heading has a word of `cvpdf.TOP_WORDS` (skills…),
+   then experience, projects and anything else, last those with a word of `cvpdf.END_WORDS` (education, training…). Skills groups (`- **Group**` with indented
+   `  - item` sub-bullets) become one line each, "Group: a, b, c"; skills already written as lines stay as they are. `cvpdf.masthead` sorts the " · " items of
    the lines between `# Name` and the first `##`: contact details (a `Mobile:`/`Email:`/`LinkedIn:`-style
    label, an email, a link, a phone number, or "Town, UK"/"Town, Country") go to the contact block in
    the order location, mobile, email, LinkedIn, GitHub, shown as values only (labels dropped); the first other item is the title (or a role
    after " — " in the name line), the rest, split at commas, the focus line. A role, written as
    `### Title · Company · Mon YYYY – Present` or `**Title — Company**, City, YYYY–YYYY`, becomes the
-   title, the dates (the first later part with a year or "Present") and the company line. A role with a company line (a job or project) has its title in the name's mint; one without
+   title, the dates (the first later part with a year or "Present", at the right margin) and the company line. A role with a company line (a job or project) has its title in the name's mint; one without
    (a break) is slate like the section headings; dates are grey caps, company lines plain. The summary starts level with the title line under the name. Words are
    kept as written; only grouped (no heading renamed). A CV without a `# Name` heading stays one
    column. Black on white; the name in mint (#3eb489), section headings and rules in slate (#59656f); a
    system font (no font file), real selectable text, ligatures off, bullets as text in the line, no
-   tables, images, headers or footers. The HTML (and so the text order applicant tracking systems
-   read) is name, title, focus, contact, summary, narrow column, wide column; a CSS grid puts the
-   summary beside the name. A narrow-column section that does not fit moves whole to the next page.
+   tables, images, headers or footers. Bullets and paragraphs are justified. The HTML (and so the text order applicant tracking systems
+   read) is name, title, focus, contact, summary, then the sections in the order shown; a CSS grid puts the
+   summary beside the name. A skills or education section that does not fit moves whole to the next page.
    WeasyPrint
    renders it (the only third-party library, `requirements.txt`, imported only here). `tailor save`
    makes the PDF of the version it saves and prints the page count, with a warning above two
