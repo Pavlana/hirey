@@ -140,3 +140,9 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
   details (evals.run metrics, confusion matrix, threshold sweep, disagreements; promptfoo case × model
   grid with judge text and the saved report) and each eval's history. Read only; results file names
   are checked against one pattern inside `evals/results`.
+- Metrics split into pages with one purpose each: Usage & cost (`/usage`: cost today / 7 / 30 days,
+  cache hit rate, typical job time, a plain "where the money goes" summary, cost and time per kind of
+  job from the runs, per model with response time, cost and tokens over time, the most expensive jobs
+  and tasks) and Pipeline stats (`/stats`, the application numbers unchanged). Response time per
+  model call recorded from the transcripts (`usage_messages.latency_ms`, one re-read of old
+  transcripts). Run history moved to `/runs` (off the nav); old `/metrics` URLs redirect.

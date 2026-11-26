@@ -49,7 +49,7 @@ Everything comes from getjo's checkout, the `getjo_repo` setting
    first-listed dimension or place; the rest show as tags. Gaps come last in a group.
 4. **Eval cards** per group.
 
-The page has its own nav item between Learn and Metrics and the eucalyptus theme.
+The page has its own nav item between Learn and Usage & cost and the eucalyptus theme.
 
 ## Eval cards
 

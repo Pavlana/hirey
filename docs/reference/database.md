@@ -140,7 +140,7 @@ Details: [learn.md](learn.md).
 | Table | One row per | Key columns |
 | --- | --- | --- |
 | `usage_files` | transcript file | `path`, `size`, `offset` (bytes read) |
-| `usage_messages` | API response (`message.id`) | `day`, `session`, `cwd`, `model`, token counts, `cache_write_1h`, `speed`, `geo` |
+| `usage_messages` | API response (`message.id`) | `day`, `session`, `cwd`, `model`, token counts, `cache_write_1h`, `speed`, `geo`, `latency_ms` (response time) |
 | `usage_projects` | dev3 project | `name`, `path` |
 | `usage_tasks` | dev3 task seen in usage | `seq`, `title`, `task_type`, `status`, `pr_merged`, `fetched_at` |
 
@@ -181,13 +181,13 @@ Columns added by `MIGRATIONS`:
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
 | `tailored_cv_checks` | `summary` |
 | `cards` | `prompt` |
-| `usage_messages` | `cache_write_1h`, `speed`, `geo` |
+| `usage_messages` | `cache_write_1h`, `speed`, `geo`, `latency_ms` |
 
 One-off steps run when a column is first added or on every connect:
 
 - Adding `tasks.stage` fills it from each auto task's title and turns each open application's typed
   next action into an admin task (`db.next_actions_to_tasks`).
-- Adding `usage_messages.cache_write_1h` empties `usage_files`, so transcripts still on disk are read
+- Adding `usage_messages.cache_write_1h` or `latency_ms` empties `usage_files`, so transcripts still on disk are read
   again (rows merge by message id).
 - `db._backfill_tailored_versions`: a tailored copy saved before versions were kept becomes one version
   row (the file keeps its old name).

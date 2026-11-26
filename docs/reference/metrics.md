@@ -1,58 +1,72 @@
-# Metrics: application numbers and token usage
+# Metrics: Usage & cost and Pipeline stats
 
 [Overview](../how-it-works.md) · [Reference index](README.md)
 
-The Metrics page (`/metrics`) and the definitions behind its numbers: application stats from
-`prep/stats.py` and Claude Code token usage and cost from `prep/usage.py` and `prep/prices.py`.
+Two pages with one purpose each, and the definitions behind their numbers: **Usage & cost** (`/usage`,
+Claude Code tokens, cost and response time from `prep/usage.py` and `prep/prices.py`, with the cost and
+time of each worker job) and **Pipeline stats** (`/stats`, application numbers from `prep/stats.py`).
 
 ## Contents
 
-- [The Metrics page](#the-metrics-page)
-- [Usage tab](#usage-tab)
-- [Applications tab](#applications-tab)
+- [Pages and old URLs](#pages-and-old-urls)
+- [Usage & cost page](#usage--cost-page)
+- [Pipeline stats page](#pipeline-stats-page)
 - [Definitions](#definitions)
 - [Token usage: reading transcripts](#token-usage-reading-transcripts)
+- [Response time](#response-time)
+- [Cost and time per job](#cost-and-time-per-job)
 - [Places and roles](#places-and-roles)
 - [Where to save](#where-to-save)
 - [Dollars](#dollars)
 
-## The Metrics page
+## Pages and old URLs
 
-- `/metrics` has three tabs, as pill links next to the title (`web.metrics_filters`):
-  - `tab=usage`, the default: [Usage tab](#usage-tab);
-  - `tab=applications`: [Applications tab](#applications-tab);
-  - `/metrics/runs`: Run history, see
-    [assistants.md](assistants.md#workers-sidebar-and-run-history).
-- `/dashboard` and `/progress` redirect to `/metrics`.
-- The page never reads pay and shows no message content.
-- The nav shows the new offers count next to Applications on every page.
+- The nav lists Usage & cost and Pipeline stats after Evals. Neither page has tabs.
+- Run history (`/runs`) is off the nav: the Workers sidebar's "Run history →", a worker popover's
+  "All runs →" and the Usage & cost page's jobs card link to it
+  ([assistants.md](assistants.md#workers-sidebar-and-run-history)).
+- Old URLs redirect (303, `web._moved`):
 
-## Usage tab
+| Old | New |
+| --- | --- |
+| `/metrics`, `/metrics?tab=usage&project=P&days=D` | `/usage` with the same `project` and `days` |
+| `/metrics?tab=applications`, `/dashboard`, `/progress` | `/stats` |
+| `/metrics/runs?…` | `/runs?…` (same filters) |
 
-`web.usage_tab` runs `usage.sync` first (reads appended transcript lines, refreshes dev3 task details
-when needed), then `usage.report` for the filters:
+- Neither page reads pay or shows message content.
+
+## Usage & cost page
+
+`web.usage_page` runs `usage.sync` (reads appended transcript lines, refreshes dev3 task details when
+needed), `db.sync_runs`, then `usage.report` and `usage.jobs` for the filters (`web.usage_filters`):
 
 | Filter | Values |
 | --- | --- |
 | `project` | A project name or `all`; default this repo's project (`usage.home_project`). |
-| `days` | 7, 14 or 30. |
+| `days` | 7, 14 or 30 (default 14). |
 
-Top to bottom:
+Headline numbers first, detail below:
 
-1. **Dollars** (`web.money_section`): the API-price estimate note; Today / Last 7 days / Last 30 days
-   tiles; cost per day by role for 30 days; where the money goes.
-2. **Who spends what** and **top tasks by cost**, sorted by dollars, following `days`.
-3. **Tiles**: tokens, turns, sessions; cache-read share; how many assistants are over
-   `context_warn_tokens`.
-4. **Tokens per day** (`charts.stacked_columns`, full card width).
-5. **Top tasks by cost**.
-6. **Who spends what** (`charts.share_bar` and a table).
-7. **Context size per turn**: each day's last turn (`charts.trend`).
-8. **Where to save**: the rules in `usage.report` ([below](#where-to-save)).
+1. **Tiles**: cost today, last 7 days, last 30 days (fixed windows); cache hit rate; typical job time
+   (median of done jobs, with the slowest 10%).
+2. **Where the money goes** (`web.money_summary`): a few sentences from the numbers (total, the role that
+   spent most, the costliest model and its typical response, the largest part of the bill, the
+   costliest kind of job, the workers' share), then [Where to save](#where-to-save).
+3. **Cost by part** (30 days: cache read, cache write, output, input) and **Who spends what** (per role:
+   cost, share, tokens, typical response).
+4. **Cost and time per kind of job** ([below](#cost-and-time-per-job)), with a link to Run history.
+5. **By model**: cost, share, responses, the four token counts, typical and slowest-10% response time.
+6. **Cost per day by role** (30 days) and **Tokens per day** (`charts.stacked_columns`).
+7. **Most expensive jobs** (top 10 runs) and **Most expensive tasks** (top 10 dev3 tasks).
+8. **Context size per response**: each day's last response per assistant, worker or coordinator
+   (`charts.trend`).
 
-## Applications tab
+Cache hit rate is cache read / (input + cache read + cache write): the share of the input read from
+the cache.
 
-`web.applications_tab`:
+## Pipeline stats page
+
+`web.stats_page` (`web.applications_tab`):
 
 - tiles: sent, response rate (with a warning), interviews, offers;
 - applications per week: 12 weeks, with a target line (`weekly_target`), full width;
@@ -86,15 +100,17 @@ Used everywhere the numbers appear (`prep/stats.py`).
 
 ## Token usage: reading transcripts
 
-The Usage tab reads Claude Code transcripts read-only: every `*.jsonl` below `claude_projects_dir`
+The Usage & cost page reads Claude Code transcripts read-only: every `*.jsonl` below `claude_projects_dir`
 (default `~/.claude/projects`).
 
 What is read:
 
-- A line is decoded only when it contains the text `"usage"`.
-- Of it, only these are copied out: the timestamp, `cwd`, `sessionId`, `message.id`,
+- A line is decoded only when it contains the text `"usage"`, or (for [response time](#response-time))
+  the text `"type":"api-request"` or `"type":"user"`.
+- Of a usage line, only these are copied out: the timestamp, `cwd`, `sessionId`, `message.id`,
   `message.model`, the four token counts, `cache_creation.ephemeral_1h_input_tokens`
   (`cache_write_1h`, NULL when the line has no split), `usage.speed` and `usage.inference_geo`.
+- Of a request line, only `type` and `timestamp`.
 - Message content is never stored, logged or shown.
 
 How it stays fast and exact (tables: [database.md](database.md#token-usage)):
@@ -103,14 +119,43 @@ How it stays fast and exact (tables: [database.md](database.md#token-usage)):
   only appended bytes. A file that shrank is read again.
 - `usage_messages` has one row per `message.id`. A streamed response spans several lines with the
   same id, and each count keeps its largest value, so lines read twice never count twice.
-- Adding the `cache_write_1h` column empties `usage_files` once, so transcripts still on disk are
-  read again (rows merge by message id).
+- Adding the `cache_write_1h` or `latency_ms` column empties `usage_files` once, so transcripts still
+  on disk are read again (rows merge by message id).
 - Days are local dates.
 
 Terms:
 
 - A **turn** is one API response.
 - **Context size** is input + cache read + cache write.
+
+## Response time
+
+`usage_messages.latency_ms` (`usage._Latency`, while a file is read):
+
+- Claude Code writes an `api-request` line when it sends a request. A response's start is the latest
+  request line before its first line; its response time is its last line's timestamp minus that start.
+- A file with no `api-request` lines (older transcripts) uses the latest `user` line instead.
+- Unknown (NULL, shown as "–"): no request line before it in the part being read, a negative time, or
+  more than 30 minutes (`MAX_LATENCY_MS`).
+- It includes streaming, so it measures how long a response takes to finish, not time to first token.
+- The page shows the median ("Typical") and the 90th percentile ("Slowest 10%") per model and per role
+  (`usage.spread`).
+
+## Cost and time per job
+
+A **job** is a run (`db.runs`): a worker's item from `started_at` to `finished_at`
+([assistants.md](assistants.md#workers-sidebar-and-run-history)).
+
+- `usage.run_costs` charges a run with the responses of its worker's dev3 task (the seq in this repo's
+  project, `usage.worker_cwds`) whose timestamp, to the second, is inside the run. A response inside
+  several runs of one worker is split evenly.
+- `usage.jobs` covers the runs finished in the last `days` days, per kind (`workers.KIND_LABELS`):
+  - **Done**: runs with result `done`;
+  - **Cost**: all its runs, also blocked, stopped and lapsed;
+  - **Per job**, **Tokens per job**, **Typical time**: medians over done runs; **Slowest 10%**: their
+    90th percentile time.
+- Job time is wall-clock time from claim to result, so it includes waiting on tools.
+- Runs are recorded since the Workers sidebar shipped; older work has no jobs.
 
 ## Places and roles
 
@@ -135,16 +180,17 @@ Roles (`usage.ROLES`), checked in this order:
 | --- | --- |
 | Applications Assistant | `assistant_task` seq in this repo's project (or `assistant_project`). |
 | Learn Assistant | `prep_assistant_task` seq. |
-| Research worker | The `[workers] research` seqs ([configuration.md](configuration.md)). A comms worker counts as a build task. |
+| Research worker | The `[workers] research` seqs ([configuration.md](configuration.md)). |
+| Comms worker | The `[workers] comms` seqs. |
 | Coordinator | `coordinator_task` seq, or a dev3 task of type coordinator. |
 | Build tasks | Other tasks. |
 | Main checkouts | Sessions with no dev3 task id (not in a worktree). |
 
 ## Where to save
 
-Rules in `usage.report`; each match is a line in the Where to save card:
+Rules in `usage.report`; each match is a line under Where to save in the Where the money goes card:
 
-- an assistant or coordinator whose latest turn is over `context_warn_tokens` (default 300,000);
+- an assistant, worker or coordinator whose latest turn is over `context_warn_tokens` (default 300,000);
 - an open task whose PR merged (not the assistants or the coordinator, which stay open);
 - a session whose cache writes are at least 25% of its tokens and at least 1M tokens.
 
@@ -181,6 +227,7 @@ Modifiers:
 
 ### What `usage.report` returns
 
-- per task and per role, for the `days` filter;
+- per task, per role and per model (with response times), the cache hit rate and the total cost, for
+  the `days` filter;
 - under `money`: fixed windows (today, 7 and 30 days), dollars per day per role for 30 days, the
   split, and the unpriced models with their tokens.

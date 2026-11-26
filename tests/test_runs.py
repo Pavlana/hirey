@@ -238,7 +238,7 @@ class SidebarTest(ResendCancelBase):
             conn.commit()
             rid = db.queue_request(conn, ACME, "tailor")[0]
             db.claim_request(conn, rid, 71)
-        for body in (self.get("/")[2], self.workers_json()["html"], self.get("/metrics/runs?result=running")[2]):
+        for body in (self.get("/")[2], self.workers_json()["html"], self.get("/runs?result=running")[2]):
             self.assertNotIn("<script>alert(1)", body)
             self.assertIn("&lt;script&gt;alert(1)", body)
 
@@ -249,7 +249,7 @@ class SidebarTest(ResendCancelBase):
         self.assertIn('class="workers" data-workers', body)
         self.assertEqual(body.count('<details class="worker-pop">'), 4)
         self.assertIn('<form method="post" action="/workers/stop"', body)  # Stop works as a plain form
-        self.assertIn('href="/metrics/runs"', body)
+        self.assertIn('href="/runs"', body)
 
     def test_no_workers_no_section(self) -> None:
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (), "assistant_task": None,
@@ -281,13 +281,13 @@ class SidebarTest(ResendCancelBase):
             body = self.get(path)[2]
             return body[body.index("<main"):]  # the sidebar names what workers do now
 
-        body = main("/metrics/runs")
+        body = main("/runs")
         self.assertIn("no posting", body)
         self.assertIn("Run history", body)
         self.assertNotIn("Stark Example Ltd", body)  # still running: not a finished run
-        self.assertIn("Stark Example Ltd", main("/metrics/runs?result=running"))
-        self.assertNotIn("no posting", main("/metrics/runs?worker=22"))
-        self.assertIn("no posting", main("/metrics/runs?result=blocked&worker=71"))
+        self.assertIn("Stark Example Ltd", main("/runs?result=running"))
+        self.assertNotIn("no posting", main("/runs?worker=22"))
+        self.assertIn("no posting", main("/runs?result=blocked&worker=71"))
 
 
 if __name__ == "__main__":

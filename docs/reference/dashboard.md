@@ -46,9 +46,10 @@ Static files are served from `prep/static/`: `style.css`, `app.js`, `vim.js` (Le
 `explainer.css` / `explainer.js` (Learn explainer pages).
 
 - `style.css` holds the design tokens: one dark grey theme where each page has its own muted hue:
-  Applications ochre, Metrics sage (dark olive to pale lime), Learn dusty violet, Evals eucalyptus
+  Applications ochre, Usage & cost sage (dark olive to pale lime), Pipeline stats dusty blue, Learn dusty
+  violet, Evals eucalyptus
   (`web.PAGE_THEMES`).
-- More themes (dusty blue, slate indigo, mauve rose, terracotta) are ready for new pages.
+- More themes (slate indigo, mauve rose, terracotta) are ready for new pages.
   Each is ten shades `s1`–`s10`, set by a `theme-*` class on `<body>` and used by badges, charts,
   buttons and meters.
 - Installed Helvetica Neue-style fonts only; responsive down to phone width.
@@ -298,7 +299,8 @@ ignored.
 | Tailored CV PDF | `/research/pdf?app=ID&v=N` | [cv.md](cv.md) |
 | Learn | `/learn` | [learn.md](learn.md) |
 | Evals | `/evals` | [evals.md](evals.md) |
-| Metrics: Usage, Applications | `/metrics` | [metrics.md](metrics.md) |
-| Metrics: Run history | `/metrics/runs` | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
+| Usage & cost | `/usage` | [metrics.md](metrics.md#usage--cost-page) |
+| Pipeline stats | `/stats` | [metrics.md](metrics.md#pipeline-stats-page) |
+| Run history (not in the nav) | `/runs` | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 
-`/dashboard` and `/progress` redirect to `/metrics`.
+Old URLs (`/metrics`, `/metrics/runs`, `/dashboard`, `/progress`) redirect ([routes.md](routes.md#redirects-from-old-urls)).

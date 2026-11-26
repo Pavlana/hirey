@@ -3,7 +3,8 @@
 A personal job-search and interview-prep workspace. It tracks applications, tasks and
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
 skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`: Applications,
-with Pipeline and New offers views, at `/`; Dashboard at `/dashboard`; Learn at `/learn`).
+with Pipeline and New offers views, at `/`; Learn at `/learn`;
+Evals at `/evals`; Usage & cost at `/usage`; Pipeline stats at `/stats`).
 Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,
@@ -144,7 +145,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`,
   `research block APP [--kind K] --reason R` / `brief block --job ID --reason R` (the worker cannot do it; shown in
-  the Workers sidebar and Run history, `/metrics/runs`)
+  the Workers sidebar and Run history, `/runs`)
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)

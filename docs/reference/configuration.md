@@ -34,7 +34,7 @@ it without a shell environment. The committed template is `config/settings.examp
 | `prep_db` | Hirey's database | `data/prep.db` in the repo root |
 | `private_dir` | folder of private files (CV, notes, sessions, research, …) | none: features that need it say so |
 | `dashboard_port` | dashboard port, 1-65535 | 8765 |
-| `weekly_target` | applications per week (Metrics target line), 1-1000 | 10 |
+| `weekly_target` | applications per week (Pipeline stats target line), 1-1000 | 10 |
 | `no_response_days` | days in Applied before No response, 1-365 | 14 |
 | `research_max_age_days` | a company profile older than this is researched again, 1-3650 | 90 |
 | `stale_days` | a getjo job not listed for longer reads "may be closed", 1-365 | 3 |
@@ -46,11 +46,11 @@ it without a shell environment. The committed template is `config/settings.examp
 | `pdf_python` | a Python with WeasyPrint, for tailored CV PDFs | the running Python |
 | `facts_file` | the facts bank tailored CV claims may trace to | `private_dir/cv-facts.md` |
 | `getjo_repo` | getjo's git checkout, read only: the Learn explainers' check and the Evals page | getjo_db's grandparent when it holds `.git` |
-| `claude_projects_dir` | Claude Code transcripts, read only, for the Usage tab | `~/.claude/projects` |
+| `claude_projects_dir` | Claude Code transcripts, read only, for Usage & cost | `~/.claude/projects` |
 | `coordinator_task` | dev3 task seq of the coordinator (Usage roles) | tasks of dev3 type coordinator |
-| `context_warn_tokens` | context per turn above which the Usage tab warns | 300000 |
+| `context_warn_tokens` | context per turn above which Usage & cost warns | 300000 |
 | `[workers]` | routes queued work to worker tasks | unset: everything to `assistant_task` |
-| `[prices."<model>"]` | API prices for the Usage tab's cost estimate | built-in list prices |
+| `[prices."<model>"]` | API prices for Usage & cost's estimate | built-in list prices |
 
 ## Workers table
 
@@ -82,7 +82,7 @@ built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](me
 | `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`, `PREP_BRIEF_AUTO_MIN_SCORE` | numbers |
 | `PREP_ASSISTANT_TASK`, `PREP_PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` | assistants |
 | `PREP_PDF_PYTHON`, `PREP_FACTS_FILE` | CV |
-| `PREP_CLAUDE_PROJECTS_DIR`, `PREP_COORDINATOR_TASK`, `PREP_CONTEXT_WARN_TOKENS` | Usage tab |
+| `PREP_CLAUDE_PROJECTS_DIR`, `PREP_COORDINATOR_TASK`, `PREP_CONTEXT_WARN_TOKENS` | Usage & cost |
 | `PREP_WORKER_RESEARCH`, `PREP_WORKER_COMMS` | `[workers]` routes; a list as `"71,72"` |
 
 - Each env var overrides one key.
@@ -110,5 +110,5 @@ built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](me
 - Output goes to the main checkout's `data/dashboard.log` (gitignored).
 - launchd starts processes without a shell profile, so the server finds `prep_db` and `getjo_db`
   through `~/.config/inter_prep/settings.toml`.
-- `http://localhost:8765/` opens Applications; Metrics is at `/metrics`.
+- `http://localhost:8765/` opens Applications; Usage & cost is at `/usage`, Pipeline stats at `/stats`.
 - Install and uninstall steps are in [usage.md](../usage.md).

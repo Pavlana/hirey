@@ -12,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/?view=offers", "/metrics", "/metrics?tab=applications", "/metrics/runs", "/evals", "/learn", "/learn?card=1")
+PAGES = ("/", "/?view=offers", "/usage", "/stats", "/runs", "/evals", "/learn", "/learn?card=1")
 PAY = "PAY-MARKER-31337"
 h = web.h
 
@@ -47,7 +47,7 @@ class PagesTest(WebTestCase):
                 self.assertNotIn("http://", body.replace("https://", ""), "no external requests")
 
     def test_applications_tab_numbers(self) -> None:
-        _, _, body = self.get("/metrics?tab=applications")
+        _, _, body = self.get("/stats")
         self.assertIn("43%", body)  # 3 of 7 replied
         self.assertIn("3 of 7 got a reply, call or rejection", body)
         self.assertNotIn('class="warning"', body)
@@ -56,7 +56,7 @@ class PagesTest(WebTestCase):
         with self.conn() as conn:
             for i in range(25):
                 db.add_application(conn, f"Example {i}", "Engineer", status="applied", date_applied="2026-01-02")
-        _, _, body = self.get("/metrics?tab=applications")
+        _, _, body = self.get("/stats")
         self.assertIn('class="warning"', body)
 
     def test_static_css(self) -> None:
@@ -94,12 +94,14 @@ class PagesTest(WebTestCase):
         for path in PAGES:
             with self.subTest(path=path):
                 body = self.get(path)[2]
+                if path == "/runs":  # Run history is off the nav (reached from the Workers sidebar)
+                    self.assertNotIn('aria-current="page"', body)
+                    continue
                 self.assertEqual(body.count('aria-current="page"'), 1)
-                nav = "/metrics" if path.startswith("/metrics") else path.split("?")[0]  # Run history is under Metrics
-                self.assertIn(f'<a href="{nav}" aria-current="page">', body)
+                self.assertIn(f'<a href="{path.split("?")[0]}" aria-current="page">', body)
 
     def test_applications_tab(self) -> None:
-        body = self.get("/metrics?tab=applications")[2]
+        body = self.get("/stats")[2]
         for chart in ("funnel", "columns"):
             self.assertIn(f'class="chart {chart}"', body)
         for gone in ("donut", "treemap", "Practice", "Applied in the last 7 days"):
@@ -132,21 +134,29 @@ class PagesTest(WebTestCase):
     def test_pay_never_on_metrics(self) -> None:
         with self.conn() as conn:
             db.add_application(conn, "Example Pay", "Engineer", status="applied", date_applied="2026-01-19", pay=PAY)
-        for path in ("/metrics", "/metrics?tab=applications"):
+        for path in ("/usage", "/stats", "/runs"):
             self.assertNotIn(PAY, self.get(path)[2])
 
     def test_usage_tab_empty(self) -> None:
-        body = self.get("/metrics")[2]  # the tests' transcripts folder does not exist
+        body = self.get("/usage")[2]  # the tests' transcripts folder does not exist
         self.assertIn("No Claude Code usage in the last 14 days.", body)
-        self.assertIn('class="view-tab is-active" href="/metrics?tab=usage"', body)
+        self.assertNotIn('class="view-switch" aria-label="Metrics"', body)  # one page, no tabs
 
-    def test_metrics_filters(self) -> None:
-        f = web.metrics_filters({"tab": ["evil"], "days": ["99"], "project": ["<x>"]})
-        self.assertEqual(f, {"tab": "usage", "days": 14, "project": "<x>"})
-        self.assertEqual(web.metrics_filters({"tab": ["applications"], "days": ["30"]})["days"], 30)
-        self.assertEqual(web.metrics_url(f, project="getjo", days=7), "/metrics?tab=usage&project=getjo&days=7")
-        self.assertEqual(web.metrics_url(f, tab="applications"), "/metrics?tab=applications")
-        self.assertEqual(web.metrics_url(f, project=""), "/metrics?tab=usage")  # 14 days is the default
+    def test_usage_filters(self) -> None:
+        f = web.usage_filters({"tab": ["evil"], "days": ["99"], "project": ["<x>"]})
+        self.assertEqual(f, {"days": 14, "project": "<x>"})
+        self.assertEqual(web.usage_filters({"days": ["30"]})["days"], 30)
+        self.assertEqual(web.usage_url(f, project="getjo", days=7), "/usage?project=getjo&days=7")
+        self.assertEqual(web.usage_url(f, project=""), "/usage")  # 14 days is the default
+
+    def test_old_metrics_urls_redirect(self) -> None:
+        cases = {"/metrics": "/usage", "/metrics?tab=usage&project=getjo&days=30": "/usage?project=getjo&days=30",
+                 "/metrics?tab=applications": "/stats", "/metrics?days=99": "/usage",
+                 "/metrics/runs": "/runs", "/metrics/runs?worker=71&result=blocked": "/runs?worker=71&result=blocked"}
+        for path, location in cases.items():
+            with self.subTest(path=path):
+                status, headers, _ = self.get(path)
+                self.assertEqual((status, headers["Location"]), (303, location))
 
     def test_each_page_has_its_hue(self) -> None:
         for path, theme in web.PAGE_THEMES.items():
@@ -158,10 +168,10 @@ class PagesTest(WebTestCase):
                       "terracotta", "ochre"):
             self.assertIn(f".theme-{theme} {{", css)
 
-    def test_dashboard_and_progress_redirect_to_metrics(self) -> None:
+    def test_dashboard_and_progress_redirect_to_stats(self) -> None:
         for path in ("/dashboard", "/progress"):
             status, headers, _ = self.get(path)
-            self.assertEqual((status, headers["Location"]), (303, "/metrics"))
+            self.assertEqual((status, headers["Location"]), (303, "/stats"))
 
     def test_not_found(self) -> None:
         self.assertEqual(self.get("/static/../web.py")[0], 404)
@@ -353,7 +363,7 @@ class OffersViewTest(WebTestCase):
         body = self.get("/?view=offers&q=globex&loc=london")[2]
         self.assertIn('New offers <span class="count">3</span>', body)
         self.assertIn("Nothing matches these filters.", body)
-        self.assertIn('<span class="nav-count" title="New offers">3</span>', self.get("/metrics")[2])
+        self.assertIn('<span class="nav-count" title="New offers">3</span>', self.get("/usage")[2])
 
     def test_filter_form_keeps_values(self) -> None:
         body = self.get("/?view=offers&score=8&q=%3Cb%3E&loc=remote")[2]
@@ -412,8 +422,8 @@ class OffersViewTest(WebTestCase):
             "/applications": "/",
             "/applications?app=3&stage=interviewing": "/?app=3&stage=interviewing",
             "/tasks?app=3": "/?app=3",
-            "/progress": "/metrics",
-            "/dashboard": "/metrics",
+            "/progress": "/stats",
+            "/dashboard": "/stats",
         }
         for path, location in cases.items():
             with self.subTest(path=path):
@@ -784,7 +794,7 @@ class LandingPageTest(WebTestCase):
     def test_nav_and_switch(self) -> None:
         body = self.get("/")[2]
         nav = body[body.index('<nav aria-label="Pages">'):body.index("</nav>", body.index('<nav aria-label="Pages">'))]
-        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Learn", "Evals", "Metrics"])
+        self.assertEqual([n.split("</span>")[0] for n in nav.split("<span>")[1:]], ["Applications", "Learn", "Evals", "Usage &amp; cost", "Pipeline stats"])
         self.assertIn('<a href="/" aria-current="page">', nav)
         self.assertIn('<span class="nav-count" title="New offers">3</span>', nav)
         self.assertIn("<title>Applications · Hirey</title>", body)
@@ -793,9 +803,10 @@ class LandingPageTest(WebTestCase):
         self.assertIn('href="/?view=offers" data-view="offers">New offers <span class="count">3</span>', switch)
         self.assertIn('<table id="app-list">', body)
         self.assertNotIn('id="offer-list"', body)
-        dash = self.get("/metrics")[2]
-        self.assertIn('<a href="/metrics" aria-current="page">', dash)
+        dash = self.get("/usage")[2]
+        self.assertIn('<a href="/usage" aria-current="page">', dash)
         self.assertIn('<body class="theme-sage">', dash)
+        self.assertIn('<a href="/stats"><svg', dash)
 
     def test_switch_keeps_the_panel_and_drops_the_other_views_filters(self) -> None:
         body = self.get("/?stage=interviewing&app=3")[2]
@@ -827,7 +838,7 @@ class LandingPageTest(WebTestCase):
                      'tabindex="0"', 'aria-valuenow="50"', "aria-label="):
             self.assertIn(attr, split)
         self.assertNotIn("style=", split)
-        self.assertNotIn("apps-split", self.get("/metrics")[2])
+        self.assertNotIn("apps-split", self.get("/usage")[2])
 
     def test_split_is_remembered_by_the_script(self) -> None:
         js = self.get("/static/app.js")[2]
@@ -1170,7 +1181,7 @@ class ApplicationsPageTest(WebTestCase):
             self.assertEqual(db.timeline(conn, app_id)[-1]["comment"], "auto: no reply in 14 days")
 
     def test_dashboard_counts_applications_not_tasks(self) -> None:
-        body = self.get("/metrics")[2]
+        body = self.get("/usage")[2]
         for gone in ("Overdue", "Tasks done", "Revise networking basics", 'class="chart line"'):
             self.assertNotIn(gone, body)
 
@@ -1254,7 +1265,7 @@ class LearnPageTest(WebTestCase):
         self.assertIn('class="theme-dusty-violet"', body)
 
     def test_badge_on_every_page_and_gone_when_all_done(self) -> None:
-        self.assertIn('title="Cards to do">3<', self.get("/metrics")[2])
+        self.assertIn('title="Cards to do">3<', self.get("/usage")[2])
         with self.conn() as conn:
             for card_id in (1, 2, 3):
                 learn.set_status(conn, card_id, "done")

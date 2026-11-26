@@ -31,11 +31,12 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
 | GET | `/` | Applications page: Pipeline or New offers view, panels, My CV | [dashboard.md](dashboard.md) |
-| GET | `/metrics` | Metrics: Usage and Applications tabs (`tab=`) | [metrics.md](metrics.md) |
+| GET | `/usage` | Usage & cost (`project=`, `days=`) | [metrics.md](metrics.md#usage--cost-page) |
+| GET | `/stats` | Pipeline stats | [metrics.md](metrics.md#pipeline-stats-page) |
 | GET | `/evals` | Evals: eval map (`group=dimension\|where`), or one eval's history (`eval=ID`) | [evals.md](evals.md) |
 | GET | `/evals/run?file=NAME` | one results file in detail | [evals.md](evals.md#run-details) |
 | GET | `/evals/report/NAME.html` | a saved promptfoo report, sandboxed, own headers | [evals.md](evals.md#the-promptfoo-report) |
-| GET | `/metrics/runs` | Run history, filters by worker and result | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
+| GET | `/runs` | Run history, filters by worker and result | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 | GET | `/learn` | Learn: tracks grid, track, card view | [learn.md](learn.md) |
 | GET | `/research/file?app=ID&kind=K[&v=N]` | a company profile, CV fit file or tailored CV, read-only | [research.md](research.md) |
 | GET | `/offers/skip?job_id=…` | no-script Skip form for an offer | [dashboard.md](dashboard.md#forms-without-javascript) |
@@ -118,7 +119,9 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 
 | Old path | Goes to |
 | --- | --- |
-| `/dashboard`, `/progress` | `/metrics` |
+| `/dashboard`, `/progress`, `/metrics?tab=applications` | `/stats` |
+| `/metrics` | `/usage` with `project` and `days` kept |
+| `/metrics/runs` | `/runs` with the same query |
 | `/applications`, `/tasks` | `/` with the same query |
 | `/offers`, `/matches` | `/?view=offers` with `score` and `loc` kept, `company`/`role` → `q`, `show=skipped` → `skipped=1` |
 | `/offers?show=interested\|applied` | `/?stage=interested\|applied` (the pipeline) |

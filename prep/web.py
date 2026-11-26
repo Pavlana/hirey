@@ -1,7 +1,8 @@
 """Local dashboard over prep.db: Applications (the landing page, whose left column switches
 between the pipeline and New offers from getjo), Learn, Evals (getjo's eval catalogue and results files,
-read only, prep/evals.py) and Metrics (tabs Usage: Claude Code tokens
-from its transcripts, read only, prep/usage.py; and Applications: the search's numbers), plus a
+read only, prep/evals.py), Usage & cost (Claude Code tokens, cost and response time from its
+transcripts, read only, prep/usage.py, with cost and time per worker job), Pipeline stats (the search's
+numbers) and Run history (/runs, from the Workers sidebar), plus a
 read-only view of the agent's research and CV fit files.
 
     python -m prep.web [--port 8765]
@@ -86,8 +87,11 @@ PAGES = (
                         '<path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/>'),
     ("/evals", "Evals", '<path d="M9 3h6"/><path d="M10 3v6l-5.6 9.4A1.7 1.7 0 0 0 5.9 21h12.2a1.7 1.7 0 0 0 1.5-2.6L14 9V3"/>'
                         '<path d="M7.5 15h9"/>'),
-    ("/metrics", "Metrics", '<rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/>'
-                          '<rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/>'),
+    ("/usage", "Usage & cost", '<circle cx="12" cy="12" r="9"/><path d="M12 6.5v11"/>'
+                               '<path d="M15 9.3c-.5-.9-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.1s1.3 1.8 3 2.1 3 .9 3 2.1-1.3 2.1-3 2.1'
+                               'c-1.4 0-2.5-.6-3-1.5"/>'),
+    ("/stats", "Pipeline stats", '<path d="M3 21h18"/><rect x="4" y="11" width="4" height="7" rx="1"/>'
+                                 '<rect x="10" y="5" width="4" height="13" rx="1"/><rect x="16" y="14" width="4" height="4" rx="1"/>'),
 )
 EMPTY_ICON = ('<path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.5 5.1 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6'
               'l-3.5-6.9A2 2 0 0 0 16.8 4H7.2a2 2 0 0 0-1.7 1.1z"/>')
@@ -157,7 +161,7 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: dusty-blue,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "ochre", "/metrics": "sage", "/learn": "dusty-violet", "/evals": "eucalyptus"}
+PAGE_THEMES = {"/": "ochre", "/usage": "sage", "/stats": "dusty-blue", "/learn": "dusty-violet", "/evals": "eucalyptus"}
 # Closed outcomes take s1-s3, then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -265,12 +269,13 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return eval_report(settings, path)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
-        "/metrics": lambda s, c, t: metrics_page(s, c, t, query),
+        "/usage": lambda s, c, t: usage_page(s, c, t, query),
+        "/stats": lambda s, c, t: stats_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
         "/research/file": lambda s, c, t: research_file_page(s, c, t, query),
         "/learn": lambda s, c, t: learn_page(s, c, t, query),
-        "/metrics/runs": lambda s, c, t: runs_page(s, c, t, query),
+        "/runs": lambda s, c, t: runs_page(s, c, t, query),
         "/evals": lambda s, c, t: evals_page(s, c, t, query),
         "/evals/run": lambda s, c, t: eval_run_page(s, c, t, query),
     }
@@ -286,8 +291,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         cards_todo = learn.counts(conn)["todo"]
         side = workers_section(settings, conn, path)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    active = ("/metrics" if path.startswith("/metrics") else "/evals" if path.startswith("/evals")
-              else path if path == "/learn" else "/")
+    active = ("/evals" if path.startswith("/evals") else path if path in ("/learn", "/usage", "/stats")
+              else "" if path == "/runs" else "/")
     return _page(200, title, subtitle, notice + content, active, offers, head[0] if head else "", cards_todo, side)
 
 
@@ -295,10 +300,17 @@ OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers 
 
 
 def _moved(path: str, query: dict[str, list[str]]) -> str | None:
-    """Where an old page lives now, or None: the Dashboard (and /progress, merged into it earlier) is
-    now Metrics, Applications and /tasks moved to /, and Job Offers to /?view=offers with its filters."""
+    """Where an old page lives now, or None: Metrics was split into /usage (its Usage tab, with project and
+    days) and /stats (its Applications tab, earlier the Dashboard and /progress), its Run history moved to
+    /runs, Applications and /tasks moved to /, and Job Offers to /?view=offers with its filters."""
     if path in ("/progress", "/dashboard"):
-        return "/metrics"
+        return "/stats"
+    if path == "/metrics":
+        if (query.get("tab") or [""])[0] == "applications":
+            return "/stats"
+        return usage_url(usage_filters(query))
+    if path == "/metrics/runs":
+        return "/runs" + (f"?{urlencode(query, doseq=True)}" if query else "")
     if path in ("/applications", "/tasks"):
         return "/" + (f"?{urlencode(query, doseq=True)}" if query else "")
     if path in OLD_OFFERS:
@@ -1162,31 +1174,25 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
 # --- pages (GET) ------------------------------------------------------------------------
 # Each returns (title, subtitle, HTML content). Only columns that are shown are read; never pay.
 
-METRICS_TABS = (("usage", "Usage"), ("applications", "Applications"))
-RUNS_TAB = ("/metrics/runs", "Runs")  # its own page (Run history), shown as a third Metrics tab
 TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
 COST_SHADES = {"Cache read": "s4", "Cache write": "s6", "Output": "s8", "Input": "s10"}
 ESTIMATE_NOTE = "Estimated at API prices. Your Claude subscription is billed differently."
-ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Research worker": "s6", "Coordinator": "s5", "Build tasks": "s3",
-               "Main checkouts": "s1"}
+ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Research worker": "s6", "Comms worker": "s4",
+               "Coordinator": "s5", "Build tasks": "s3", "Main checkouts": "s1"}
 
 
-def metrics_filters(query: dict[str, list[str]]) -> dict:
-    """tab (usage | applications), days (7, 14 or 30) and project (a name, "all" or "" for the default)."""
-    tab = (query.get("tab") or [""])[0]
+def usage_filters(query: dict[str, list[str]]) -> dict:
+    """days (7, 14 or 30) and project (a name, "all" or "" for the default) of /usage."""
     days = (query.get("days") or [""])[0]
     project = (query.get("project") or [""])[0].strip()
-    return {"tab": tab if tab in dict(METRICS_TABS) else "usage",
-            "days": int(days) if days.isdigit() and int(days) in usage.DAYS else 14,
-            "project": project[:100]}
+    return {"days": int(days) if days.isdigit() and int(days) in usage.DAYS else 14, "project": project[:100]}
 
 
-def metrics_url(f: dict, **changes: object) -> str:
+def usage_url(f: dict, **changes: object) -> str:
     pairs = {**f, **changes}
-    q = {"tab": pairs["tab"]}
-    if pairs["tab"] == "usage":
-        q.update({"project": pairs["project"], "days": pairs["days"] if pairs["days"] != 14 else ""})
-    return "/metrics?" + urlencode({k: v for k, v in q.items() if v not in ("", None)})
+    q = {"project": pairs["project"], "days": pairs["days"] if pairs["days"] != 14 else ""}
+    q = {k: v for k, v in q.items() if v not in ("", None)}
+    return "/usage" + (f"?{urlencode(q)}" if q else "")
 
 
 def _switch(label: str, options: list[tuple[str, str, bool]]) -> str:
@@ -1196,15 +1202,17 @@ def _switch(label: str, options: list[tuple[str, str, bool]]) -> str:
     return f'<nav class="view-switch" aria-label="{h(label)}">{tabs}</nav>'
 
 
-def metrics_page(settings: Settings, conn: sqlite3.Connection, today: str,
-                 query: dict[str, list[str]]) -> tuple[str, str, str, str]:
-    """/metrics: Usage (Claude Code tokens, prep/usage.py) and Applications (search numbers) tabs."""
-    f = metrics_filters(query)
-    tabs = _switch("Metrics", [(metrics_url(f, tab=t), name, f["tab"] == t) for t, name in METRICS_TABS]
-                   + [(*RUNS_TAB, False)])
-    if f["tab"] == "applications":
-        return "Metrics", f"Job search · {today}", applications_tab(settings, conn, today), tabs
-    return "Metrics", f"Claude Code tokens · {today}", usage_tab(settings, conn, today, f), tabs
+def stats_page(settings: Settings, conn: sqlite3.Connection, today: str,
+               query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """/stats: the search's numbers (applications per week, response rate, funnel, job boards)."""
+    return "Pipeline stats", f"Job search · {today}", applications_tab(settings, conn, today)
+
+
+def usage_page(settings: Settings, conn: sqlite3.Connection, today: str,
+               query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """/usage: what Claude Code costs, where the money goes and how long work takes (prep/usage.py)."""
+    return ("Usage & cost", f"Claude Code tokens, cost and time · {today}",
+            usage_content(settings, conn, today, usage_filters(query)))
 
 
 def _tok(n: float) -> str:
@@ -1224,6 +1232,29 @@ def _usd_axis(x: float) -> str:
     return f"${x:,.0f}" if x >= 10 or x == 0 else f"${x:,.2f}"
 
 
+def _secs(x: float | None) -> str:
+    """A duration in seconds as "–", "4.2s", "38s", "4m 10s" or "1h 5m"."""
+    if x is None:
+        return "–"
+    if x < 10:
+        return f"{x:.1f}s"
+    if x < 60:
+        return f"{x:.0f}s"
+    m, sec = divmod(int(round(x)), 60)
+    if m < 60:
+        return f"{m}m {sec}s" if sec else f"{m}m"
+    hr, m = divmod(m, 60)
+    return f"{hr}h {m}m" if m else f"{hr}h"
+
+
+def _ms(x: float | None) -> str:
+    return _secs(None if x is None else x / 1000)
+
+
+def _share(part: float, whole: float) -> str:
+    return f"{part / whole:.0%}" if whole else "–"
+
+
 def _money_tile(label: str, w: dict) -> str:
     unknown = f" · {h(_tok(w['unpriced']))} price unknown" if w["unpriced"] else ""
     return _tile(label, _usd(w["cost"]), f"<small>{h(_tok(w['tokens']))} tokens{unknown}</small>", "accent")
@@ -1235,39 +1266,40 @@ def _cost_cell(dollars: float, unpriced: int, tokens: int) -> str:
     return h(_usd(dollars)) + ("*" if unpriced else "")
 
 
-def money_section(r: dict) -> tuple[str, str]:
-    """The Usage tab's cost parts: (today / 7 / 30-day tiles with the cost per day by role, the card
-    "Where the money goes")."""
-    m = r["money"]
-    tiles = (_money_tile("Today", m["today"]) + _money_tile("Last 7 days", m["week"])
-             + _money_tile(f"Last {usage.MONEY_DAYS} days", m["month"]))
-    series = [(name, ROLE_SHADES.get(name, "s3")) for name in usage.ROLES]
-    days = [(f"{date.fromisoformat(d).day}", v) for d, v in m["days"]]
-    used = [s for k, s in enumerate(series) if any(v[k] for _, v in days)]
-    keep = [k for k, s in enumerate(series) if s in used]
-    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in used)
-    chart = charts.stacked_columns([(label, [v[k] for k in keep]) for label, v in days], used, _usd_axis)
-    per_day = (f'<div class="stack-legend">{legend}</div>' + (chart or _empty("Nothing priced in this period."))
-               + _note(f"Last {usage.MONEY_DAYS} days, day of the month under each column. " + ESTIMATE_NOTE))
-    total = sum(c for _, c, _ in m["kinds"])
-    kinds = [(name, c, COST_SHADES[name]) for name, c, _ in m["kinds"]]
-    split_rows = [(f'<span class="swatch {COST_SHADES[name]}"></span>{h(name)}', h(_usd(c)),
-                   f"{c / total:.0%}" if total else "–", h(_tok(n)))
-                  for name, c, n in sorted(m["kinds"], key=lambda k: -k[1])]
-    unknown = ""
-    if m["unknown_models"]:
-        unknown = _note("Price unknown (not counted in $): " + ", ".join(
-            f"{model} {_tok(n)} tokens" for model, n in m["unknown_models"]) + ".")
-    where = (charts.share_bar(kinds) + _table(("Part", ("Cost", "num"), ("Share", "num"), ("Tokens", "num")),
-                                              split_rows, "Nothing priced.")
-             + _note("Cache write includes 5-minute and 1-hour writes at their own prices. Last "
-                     f"{usage.MONEY_DAYS} days.") + unknown)
-    return (f'<p class="card-note">{h(ESTIMATE_NOTE)}</p><div class="tiles">{tiles}</div>'
-            + _card(f"Cost per day by role, last {usage.MONEY_DAYS} days", per_day, cls="card-wide"),
-            _card("Where the money goes", where))
+def money_summary(r: dict, j: dict, days: int, jobs_count: bool) -> list[str]:
+    """"Where the money goes" in a few plain sentences, biggest first. `jobs_count`: the page shows this
+    repo's project (or all), so the workers' jobs are part of its cost."""
+    lines = [f"{_usd(r['cost'])} in the last {days} days: {_tok(r['total'])} tokens over {r['turns']:,} responses."]
+    if r["roles"] and r["cost"]:
+        name, _, c = r["roles"][0]
+        lines.append(f"{name} spent the most: {_usd(c)} ({_share(c, r['cost'])}).")
+    priced = [m for m in r["models"] if m["cost"]]
+    if priced:
+        m = priced[0]
+        wait = f", typical response {_ms(m['median'])}" if m["median"] is not None else ""
+        lines.append(f"{m['model']} took {_share(m['cost'], r['cost'])} of the cost{wait}.")
+    kinds = sorted(r["money"]["kinds"], key=lambda k: -k[1])
+    month = sum(c for _, c, _ in kinds)
+    if month:
+        name, c, _ = kinds[0]
+        tip = (" Cache writes mean the context was rebuilt: long pauses let the cache expire."
+               if name == "Cache write" else "")
+        lines.append(f"{name} is the largest part of the bill over {usage.MONEY_DAYS} days ({_share(c, month)}).{tip}")
+    done = [k for k in j["kinds"] if k["jobs"] and k["per_job"]]
+    if done:
+        k = max(done, key=lambda k: k["per_job"])
+        lines.append(f"{workers.KIND_LABELS.get(k['kind'], k['kind'])} is the costliest job: {_usd(k['per_job'])} "
+                     f"and {_secs(k['time'])} each (median).")
+    spent = sum(k["cost"] for k in j["kinds"])
+    if jobs_count and spent and r["cost"]:
+        lines.append(f"Worker jobs are {_share(spent, r['cost'])} of the cost; the rest is conversation, "
+                     "coordination and build tasks.")
+    return lines
 
 
-def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict) -> str:
+def usage_content(settings: Settings, conn: sqlite3.Connection, today: str, f: dict) -> str:
+    """Headline numbers first (cost, cache hit rate, job time), then where the money goes, per kind of job,
+    per model, over time, the most expensive jobs and tasks, and the context size per turn."""
     try:
         usage.sync(conn, settings)
     except (OSError, sqlite3.Error) as e:
@@ -1277,66 +1309,149 @@ def usage_tab(settings: Settings, conn: sqlite3.Connection, today: str, f: dict)
     project = f["project"] or (home if home in names else "all")
     r = usage.report(conn, settings, today, f["days"], None if project == "all" else project)
     filters = ('<div class="metrics-filters">'
-               + _switch("Project", [(metrics_url(f, project=p), p, project == p) for p in [*names, "all"]]
-                         if names else [])
-               + _switch("Days", [(metrics_url(f, project=project, days=d), f"{d} days", f["days"] == d)
+               + _switch("Project", [(usage_url(f, project=p), p, project == p) for p in [*names, "all"]])
+               + _switch("Days", [(usage_url(f, project=project, days=d), f"{d} days", f["days"] == d)
                                   for d in usage.DAYS])
                + "</div>") if names else ""
     if not r["total"]:
         where = h(str(settings.claude_projects_dir))
         return filters + _card("Usage", _empty(f"No Claude Code usage in the last {f['days']} days.",
                                                f"Transcripts are read from {where} (setting claude_projects_dir)."))
-    share = "–" if r["cache_read_share"] is None else f"{r['cache_read_share']:.0%}"
-    over = [c for c in r["context"] if c["over"]]
-    tiles = (
-        _tile(f"Tokens, last {f['days']} days", _tok(r["total"]),
-              f"<small>{r['turns']:,} turns · {r['sessions']} sessions</small>")
-        + _tile("Cache-read share", share, "<small>context re-read from the cache, the cheap part</small>",
-                "success" if r["cache_read_share"] and r["cache_read_share"] >= .8 else "")
-        + _tile(f"Context over {_tok(settings.context_warn_tokens)}", str(len(over)),
-                "<small>" + (h(", ".join(c["role"] for c in over)) + ": time to /compact" if over
-                             else "assistants and coordinator") + "</small>", "warning" if over else "")
-    )
+    db.sync_runs(conn)
+    j = usage.jobs(conn, settings, today, f["days"])
+    m = r["money"]
+    hit = "–" if r["cache_hit"] is None else f"{r['cache_hit']:.0%}"
+    tiles = (_money_tile("Today", m["today"]) + _money_tile("Last 7 days", m["week"])
+             + _money_tile(f"Last {usage.MONEY_DAYS} days", m["month"])
+             + _tile("Cache hit rate", hit, "<small>input read from the cache, the cheap part</small>",
+                     "success" if r["cache_hit"] and r["cache_hit"] >= .8 else "")
+             + _tile("Typical job time", _secs(j["time"]["median"]),
+                     f"<small>{j['time']['n']} jobs done · slowest 10% {h(_secs(j['time']['p90']))}</small>"
+                     if j["time"]["n"] else "<small>no worker jobs in this period</small>"))
+    summary = "".join(f"<li>{h(t)}</li>" for t in money_summary(r, j, f["days"], project in (home, "all")))
+    save = ("<h3>Where to save</h3><ul class=\"save-list\">" + "".join(f"<li>{h(t)}</li>" for t in r["save"])
+            + "</ul>") if r["save"] else ""
+    where = _card("Where the money goes", f'<ul class="save-list">{summary}</ul>{save}', cls="card-wide")
+    return (filters + _note(ESTIMATE_NOTE) + f'<div class="tiles tiles-five">{tiles}</div>' + where
+            + '<div class="columns">' + _cost_parts_card(m) + _roles_card(r, f["days"]) + "</div>"
+            + _jobs_card(j, f["days"]) + _models_card(r, f["days"])
+            + _cost_per_day_card(m) + _tokens_per_day_card(r)
+            + _top_runs_card(settings, conn, j, f["days"]) + _top_tasks_card(r, f["days"])
+            + _context_card(settings, r))
+
+
+def _cost_parts_card(m: dict) -> str:
+    total = sum(c for _, c, _ in m["kinds"])
+    kinds = [(name, c, COST_SHADES[name]) for name, c, _ in m["kinds"]]
+    rows = [(f'<span class="swatch {COST_SHADES[name]}"></span>{h(name)}', h(_usd(c)), _share(c, total), h(_tok(n)))
+            for name, c, n in sorted(m["kinds"], key=lambda k: -k[1])]
+    unknown = ""
+    if m["unknown_models"]:
+        unknown = _note("Price unknown (not counted in $): " + ", ".join(
+            f"{model} {_tok(n)} tokens" for model, n in m["unknown_models"]) + ".")
+    return _card(f"Cost by part, last {usage.MONEY_DAYS} days",
+                 charts.share_bar(kinds) + _table(("Part", ("Cost", "num"), ("Share", "num"), ("Tokens", "num")),
+                                                  rows, "Nothing priced.")
+                 + _note("Cache write includes 5-minute and 1-hour writes at their own prices.") + unknown)
+
+
+def _roles_card(r: dict, days: int) -> str:
+    total = r["cost"]
+    roles = [(name, c if total else n, ROLE_SHADES.get(name, "s3")) for name, n, c in r["roles"]]
+    rows = [(f'<span class="swatch {ROLE_SHADES.get(name, "s3")}"></span>{h(name)}', h(_usd(c)), _share(c, total),
+             h(_tok(n)), h(_ms(r["role_latency"].get(name, {}).get("median"))))
+            for name, n, c in r["roles"]]
+    return _card(f"Who spends what, last {days} days", charts.share_bar(roles) + _table(
+        ("Who", ("Cost", "num"), ("Share", "num"), ("Tokens", "num"), ("Typical response", "num")), rows, "No usage.")
+                 + _note("Typical response: the median time from a request to the end of its response."))
+
+
+def _jobs_card(j: dict, days: int) -> str:
+    rows = [(h(workers.KIND_LABELS.get(k["kind"], k["kind"])), str(k["jobs"]), h(_usd(k["cost"])),
+             h(_usd(k["per_job"]) if k["per_job"] is not None else "–"),
+             h(_tok(k["tokens_per_job"]) if k["tokens_per_job"] is not None else "–"),
+             h(_secs(k["time"])), h(_secs(k["slow"]))) for k in j["kinds"]]
+    table = _table(("Kind of job", ("Done", "num"), ("Cost", "num"), ("Per job", "num"), ("Tokens per job", "num"),
+                    ("Typical time", "num"), ("Slowest 10%", "num")), rows,
+                   "No worker jobs in this period.",
+                   hint="Each item a worker takes from the queue is a job: its cost and time show here.")
+    return _card(f"Cost and time per kind of job, last {days} days", table + _note(
+        "A job's cost: its worker's responses between the job's start and finish. Per job, tokens and times are "
+        "medians of done jobs; Cost counts every run (also blocked, stopped or lapsed).")
+                 + '<p class="card-note"><a href="/runs">Run history →</a></p>', count=j["runs"], cls="card-wide")
+
+
+def _models_card(r: dict, days: int) -> str:
+    rows = [(_mono(h(m["model"])), _cost_cell(m["cost"], m["unpriced"], m["tokens"]), _share(m["cost"], r["cost"]),
+             f"{m['turns']:,}", h(_tok(m["input"])), h(_tok(m["output"])), h(_tok(m["cache_read"])),
+             h(_tok(m["cache_write"])), h(_ms(m["median"])), h(_ms(m["p90"]))) for m in r["models"]]
+    return _card(f"By model, last {days} days", _table(
+        ("Model", ("Cost", "num"), ("Share", "num"), ("Responses", "num"), ("Fresh input", "num"), ("Output", "num"),
+         ("Cache read", "num"), ("Cache write", "num"), ("Typical", "num"), ("Slowest 10%", "num")),
+        rows, "No usage.") + _note("Typical and Slowest 10%: response time, from the request to the response's last "
+                                   "line (streaming included), median and 90th percentile. – : not known (older "
+                                   "transcripts)."),
+                 cls="card-wide")
+
+
+def _cost_per_day_card(m: dict) -> str:
+    series = [(name, ROLE_SHADES.get(name, "s3")) for name in usage.ROLES]
+    days = [(f"{date.fromisoformat(d).day}", v) for d, v in m["days"]]
+    used = [s for k, s in enumerate(series) if any(v[k] for _, v in days)]
+    keep = [k for k, s in enumerate(series) if s in used]
+    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in used)
+    chart = charts.stacked_columns([(label, [v[k] for k in keep]) for label, v in days], used, _usd_axis)
+    return _card(f"Cost per day by role, last {usage.MONEY_DAYS} days",
+                 f'<div class="stack-legend">{legend}</div>' + (chart or _empty("Nothing priced in this period."))
+                 + _note(f"Day of the month under each column. {ESTIMATE_NOTE}"), cls="card-wide")
+
+
+def _tokens_per_day_card(r: dict) -> str:
     days = [(f"{date.fromisoformat(d).day} {date.fromisoformat(d):%b}", [cr, cw, o, i]) for d, i, o, cr, cw in r["days"]]
     legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in TOKEN_SERIES)
-    per_day = (f'<div class="stack-legend">{legend}</div>'
-               + charts.stacked_columns(days, list(TOKEN_SERIES), _tok)
-               + _note("Stacked from the bottom: cache read, cache write, output, fresh input. A turn is one "
-                       "API response."))
-    top = _table(("Task", "Title", ("Cost", "num"), ("Turns", "num"), ("Tokens", "num"), ("Per turn", "num")),
-                 [(_mono(h(t["ref"])), h(t["title"]), _cost_cell(t["cost"], t["unpriced"], t["tokens"]),
-                   f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"]))) for t in r["top"]], "No tasks.")
-    total_cost = sum(c for _, _, c in r["roles"])
-    roles = [(name, c if total_cost else n, ROLE_SHADES.get(name, "s3")) for name, n, c in r["roles"]]
-    who = charts.share_bar(roles) + _table(
-        ("Role", ("Cost", "num"), ("Share of $", "num"), ("Tokens", "num")),
-        [(f'<span class="swatch {ROLE_SHADES.get(name, "s3")}"></span>{h(name)}', h(_usd(c)),
-          f"{c / total_cost:.0%}" if total_cost else "–", h(_tok(n)))
-         for name, n, c in r["roles"]], "No usage.")
-    ctx_rows = []
+    return _card("Tokens per day", f'<div class="stack-legend">{legend}</div>'
+                 + charts.stacked_columns(days, list(TOKEN_SERIES), _tok)
+                 + _note("Stacked from the bottom: cache read, cache write, output, fresh input."), cls="card-wide")
+
+
+def _top_runs_card(settings: Settings, conn: sqlite3.Connection, j: dict, days: int) -> str:
+    names = {w["seq"]: w["name"] for w in workers.configured(settings)}
+    job_names = _job_name_lookup(settings, conn)({r["getjo_job_id"] for r in j["top"]
+                                                   if not r.get("application_id") and r.get("getjo_job_id")})
+    rows = [(h(workers.KIND_LABELS.get(r["kind"], r["kind"])),
+             f'<a href="{h(workers.href(r))}">{h(workers.about(r, job_names))}</a>',
+             h(names.get(r["worker"], f"seq {r['worker']}" if r["worker"] else "–")),
+             _cost_cell(r["cost"], r["unpriced"], r["tokens"]), h(_tok(r["tokens"])), f"{r['turns']:.0f}",
+             h(_secs(r["seconds"])), h(r["result"] or ""), _mono(h(_clock(r["finished_at"]))))
+            for r in j["top"] if r["tokens"]]
+    return _card(f"Most expensive jobs, last {days} days", _table(
+        ("Kind", "About", "Worker", ("Cost", "num"), ("Tokens", "num"), ("Responses", "num"), ("Time", "num"),
+         "Result", "Finished"), rows, "No priced worker jobs in this period."), cls="card-wide")
+
+
+def _top_tasks_card(r: dict, days: int) -> str:
+    rows = [(_mono(h(t["ref"])), h(t["title"]), h(t["role"]), _cost_cell(t["cost"], t["unpriced"], t["tokens"]),
+             f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"]))) for t in r["top"]]
+    starred = _note("* part of its tokens has no price") if any(0 < t["unpriced"] < t["tokens"] for t in r["top"]) else ""
+    return _card(f"Most expensive tasks, last {days} days", _table(
+        ("Task", "Title", "Who", ("Cost", "num"), ("Responses", "num"), ("Tokens", "num"), ("Per response", "num")),
+        rows, "No tasks.") + starred, count=len(r["top"]), cls="card-wide")
+
+
+def _context_card(settings: Settings, r: dict) -> str:
+    rows = []
     for c in r["context"]:
         top_v = max(max(v for _, v in c["trend"]), settings.context_warn_tokens)
         warn = '<span class="warn-text">time to /compact</span>' if c["over"] else ""
-        points = [(d, v) for d, v in c["trend"]]
-        ctx_rows.append((h(c["role"]), _mono(h(c["ref"])), charts.trend(points, 0, top_v), h(_tok(c["latest"])) + warn))
-    ctx = _table(("Who", "Task", "By day", ("Latest", "num")), ctx_rows,
-                 "No assistant or coordinator turns in this period.",
-                 hint="Settings assistant_task, prep_assistant_task and coordinator_task name them.")
-    save = ("<ul class=\"save-list\">" + "".join(f"<li>{h(t)}</li>" for t in r["save"]) + "</ul>" if r["save"]
-            else _empty("Nothing stands out."))
-    money, where = money_section(r)
-    starred = _note("* part of its tokens has no price") if any(0 < t["unpriced"] < t["tokens"] for t in r["top"]) else ""
-    return (filters + money
-            + '<div class="columns">' + where + _card(f"Who spends what, last {f['days']} days", who) + "</div>"
-            + _card(f"Top tasks by cost, last {f['days']} days", top + starred, count=len(r["top"]), cls="card-wide")
-            + f'<div class="tiles">{tiles}</div>'
-            + _card("Tokens per day", per_day, cls="card-wide")
-            + '<div class="columns">'
-            + _card("Context size per turn", ctx + _note(
-                f"Input plus cache read and written per response: each day's last turn, up to {usage.CONTEXT_DAYS} "
-                f"active days, latest on the right. "
-                f"Warning above {_tok(settings.context_warn_tokens)} (setting context_warn_tokens)."))
-            + _card("Where to save", save) + "</div>")
+        rows.append((h(c["role"]), _mono(h(c["ref"])), charts.trend(list(c["trend"]), 0, top_v),
+                     h(_tok(c["latest"])) + warn))
+    table = _table(("Who", "Task", "By day", ("Latest", "num")), rows,
+                   "No assistant, worker or coordinator turns in this period.",
+                   hint="Settings assistant_task, prep_assistant_task, [workers] and coordinator_task name them.")
+    return _card("Context size per response", table + _note(
+        f"Input plus cache read and written per response: each day's last one, up to {usage.CONTEXT_DAYS} active "
+        f"days, latest on the right. Warning above {_tok(settings.context_warn_tokens)} (setting "
+        "context_warn_tokens)."), cls="card-wide")
 
 
 def applications_tab(settings: Settings, conn: sqlite3.Connection, today: str) -> str:
@@ -3526,7 +3641,7 @@ def _worker_rows(ws: dict, here: str) -> str:
             f'<section><h3>Now</h3>{_worker_now(w, here)}</section>'
             f'<section><h3>Queued · {len(w["queued"])}</h3>{_worker_queue(w)}</section>'
             f'<section><h3>Last runs</h3>{_worker_last(w)}'
-            f'<a class="pop-more" href="/metrics/runs?{urlencode([("worker", w["seq"])])}">All runs →</a></section>'
+            f'<a class="pop-more" href="/runs?{urlencode([("worker", w["seq"])])}">All runs →</a></section>'
             '</div></details></li>')
     return "".join(rows)
 
@@ -3541,7 +3656,7 @@ def workers_section(settings: Settings, conn: sqlite3.Connection, here: str = "/
     return (f'<section class="workers" data-workers data-since="{h(db.now_iso())}" aria-label="Workers">'
             f'<div class="workers-head"><h2>Workers</h2><span class="workers-sum">{h(_worker_summary(ws))}</span></div>'
             f'<ul class="worker-list">{_worker_rows(ws, here)}</ul>'
-            '<a class="workers-runs" href="/metrics/runs">Run history →</a></section>')
+            '<a class="workers-runs" href="/runs">Run history →</a></section>')
 
 
 def workers_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
@@ -3620,17 +3735,15 @@ def runs_filters(settings: Settings, query: dict[str, list[str]]) -> dict:
 
 def runs_url(f: dict, **changes: object) -> str:
     q = {**f, **changes}
-    return "/metrics/runs" + (f"?{urlencode({k: v for k, v in q.items() if v not in ('', None)})}"
+    return "/runs" + (f"?{urlencode({k: v for k, v in q.items() if v not in ('', None)})}"
                               if any(v not in ("", None) for v in q.values()) else "")
 
 
 def runs_page(settings: Settings, conn: sqlite3.Connection, today: str,
-              query: dict[str, list[str]]) -> tuple[str, str, str, str]:
-    """/metrics/runs: one row per run (worker, kind, application, queued, started, finished, duration,
+              query: dict[str, list[str]]) -> tuple[str, str, str]:
+    """/runs: one row per run (worker, kind, application, queued, started, finished, duration,
     result and the blocked reason), newest first, filtered by worker and result."""
     f = runs_filters(settings, query)
-    tabs = _switch("Metrics", [(metrics_url(metrics_filters({}), tab=t), name, False) for t, name in METRICS_TABS]
-                   + [(*RUNS_TAB, True)])
     db.sync_runs(conn)
     configured = workers.configured(settings)
     names_by_seq = {w["seq"]: f'{w["name"]} · seq {w["seq"]}' for w in configured}
@@ -3656,7 +3769,8 @@ def runs_page(settings: Settings, conn: sqlite3.Connection, today: str,
     note = ("" if configured else _note("No workers are set: runs by any Claude session still show here "
                                         "(assistant_task, [workers] in the settings)."))
     return ("Run history", f"Workers' runs · {today}",
-            note + _card("Runs", filters + table, count=len(found)), tabs)
+            note + _card("Runs", filters + table + '<p class="card-note">Cost and time per kind of job: '
+                         '<a href="/usage">Usage &amp; cost →</a></p>', count=len(found)))
 
 
 # --- Evals (getjo's evals: catalogue, run details, history; prep/evals.py, read only) ------------
@@ -4005,7 +4119,7 @@ def _page(status: int, title: str, subtitle: str, content: str, active: str, off
     title (Applications' My CV button)."""
     current = ' aria-current="page"'
     nav = "".join(
-        f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{name}</span>'
+        f'<a href="{href}"{current if href == active else ""}>{_icon(icon)}<span>{h(name)}</span>'
         + (f'<span class="nav-count" title="New offers">{h(offers)}</span>' if href == "/" and offers else "")
         + (f'<span class="nav-count" title="Cards to do">{h(cards_todo)}</span>' if href == "/learn" and cards_todo
            else "")
