@@ -27,7 +27,7 @@ separate project that scores public job posts.
   - [E. Learn](#e-learn)
   - [F. Master CV to tailored CV](#f-master-cv-to-tailored-cv)
   - [G. Workers sidebar and run history](#g-workers-sidebar-and-run-history)
-  - H. Evals (planned; page to come)
+- Evals (planned: its own dashboard page, `/evals`; docs to come)
 - [Data model](#data-model)
 - [Configuration](#configuration)
 - [Boundaries and safety](#boundaries-and-safety)
