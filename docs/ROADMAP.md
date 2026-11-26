@@ -129,4 +129,9 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
   thank-you note; LinkedIn or email) in the panels and the box, routed to a Comms worker
   (`[workers] comms`, else the Applications Assistant), written by /reply, shown with Copy. Nothing is
   sent; interview bookings are recorded, anything else only proposed; a pay guard on drafts.
-  Next: several research workers in parallel.
+- Assistant scaling, step 3: several workers per route (`research = [71, 72]`: first idle worker,
+  else round-robin; own work first; atomic claims), a runs record (done, blocked with a reason,
+  stopped, lapsed; `research block`, `brief block`), a Workers sidebar on every page (state dot, short
+  line, popover with Now / Stop / Queued / Last runs, polled every 15 s; no message text or pay), a
+  toast when a long item finishes, Run history at /metrics/runs, and a lighter Applications Assistant
+  box (short "→ worker" tags).

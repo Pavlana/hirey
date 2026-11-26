@@ -69,7 +69,9 @@ private_dir = "/absolute/path/to/inter_prep"
 # AI CV checks and job briefs to that standing dev3 task instead of assistant_task; thread messages
 # always stay with assistant_task. comms = <seq> sends "Draft a reply" requests (/reply: drafts of
 # replies to recruiters, follow-ups, thank-you notes) to a Comms worker; unset, they go to assistant_task.
-# Env PREP_WORKER_RESEARCH / PREP_WORKER_COMMS override (empty turns it off).
+# A list runs several workers in parallel (research = [44, 46]): each new item goes to the first one with
+# nothing claimed or waiting, else round-robin; two workers never take the same item.
+# Env PREP_WORKER_RESEARCH / PREP_WORKER_COMMS override ("44,46"; empty turns it off).
 #   [workers]
 #   research = 44
 #   comms = 45

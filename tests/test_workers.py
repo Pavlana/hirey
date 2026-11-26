@@ -164,16 +164,13 @@ class DashboardTest(ResendCancelBase):
     def test_queued_work_names_its_handler_and_time(self) -> None:
         with self.conn() as conn:
             db.queue_request(conn, ACME, "cv_fit")
-        self.assertIn("CV fit (no assistant task set: run /research, queued ", self.get(f"/?app={ACME}")[2])
+        self.assertIn("CV fit (no assistant task set: run /research)", self.get(f"/?app={ACME}")[2])
         self.with_tasks()
-        self.assertIn("CV fit (Applications Assistant, queued ", self.get(f"/?app={ACME}")[2])
+        self.assertIn("CV fit → Applications Assistant", self.get(f"/?app={ACME}")[2])
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("research", 70),)})
         body = self.get(f"/?app={ACME}")[2]
-        self.assertIn("CV fit (Research worker, queued ", body)
-        with self.conn() as conn:
-            rid = db.open_requests(conn, ACME)[0]["id"]
-            db.claim_request(conn, rid)
-        self.assertIn("CV fit (Research worker, started ", self.get(f"/?app={ACME}")[2])
+        self.assertIn("CV fit → Research worker", body)
+        self.assertNotIn("queued Nov", body)  # times live in the Workers sidebar now
 
     def test_a_lapsed_message_claim_shows_resend_at_once(self) -> None:
         self.with_tasks()
@@ -181,7 +178,7 @@ class DashboardTest(ResendCancelBase):
             msg = db.add_message(conn, ACME, "Is this remote?")
             db.claim_message(conn, msg)
         body = self.get("/")[2]
-        self.assertIn("Applications Assistant is working", body)
+        self.assertIn("→ Applications Assistant", body)
         self.assertNotIn("no reply in 30 min", body)
         with self.conn() as conn:
             conn.execute("UPDATE agent_messages SET claimed_at = ?, created_at = ? WHERE id = ?",
@@ -190,8 +187,7 @@ class DashboardTest(ResendCancelBase):
         assistant._PINGS[msg] = (time.time(), True)  # a fresh ping would hide Resend for 30 s
         body = self.get("/")[2]
         self.assertIn("no reply in 30 min", body)
-        self.assertIn("No reply in 30 min", body)
-        self.assertNotIn("Applications Assistant is working", body)
+        self.assertNotIn("→ Applications Assistant", body)  # the flag replaces the route tag
         self.assertRegex(body, r'data-resend-due="\d+" title=')  # not hidden
         self.assertIn('action="/applications/stop"', body)
 

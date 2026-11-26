@@ -45,6 +45,7 @@
     python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
     python -m prep.cli research queue APP_ID [--kind research|cv_fit|tailor|cv_eval] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
+    python -m prep.cli research block APP_ID [--kind K] --reason "no posting"   (the worker cannot do it)
     python -m prep.cli fit save APP_ID [--file PATH]
     python -m prep.cli tailor path APP_ID [--role-short X] [--copy]   (the next version's file)
     python -m prep.cli tailor save APP_ID [--to MSG] [--file PATH]   (the thread note on stdin; makes the PDF, checks it)
@@ -61,6 +62,7 @@
     python -m prep.cli reply save --to MSG [--subject S] [--note TEXT] [--file PATH]   (the draft on stdin; email needs --subject)
     python -m prep.cli brief next | queue (--job ID | APP_ID) [--redo]   (job briefs for the panel)
     python -m prep.cli brief save (--job ID | APP_ID) [--file PATH] | show (--job ID | APP_ID)   (text on stdin)
+    python -m prep.cli brief block (--job ID | APP_ID) --reason "no description"
     python -m prep.cli tracks list | add TITLE [--subtitle T] [--cover C] [--slug S]   (Learn tracks)
     python -m prep.cli cards add [--file PATH]   (a JSON card or list of cards on stdin; all or none)
     python -m prep.cli cards import FILE [--dry-run]   (Markdown: docs/learn-format.md; same track + front updated)
@@ -87,7 +89,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes, research, usage
-from prep.config import ConfigError, Settings, load_settings, worker_task
+from prep.config import ConfigError, Settings, load_settings, worker_task, worker_tasks
 
 log = logging.getLogger("prep")
 
@@ -882,9 +884,10 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     text = " ".join(line for line in lines if line)
     if text:
-        worker = worker_task(settings, "research")
-        routed = (f" Research and job briefs go to the Research worker (dev3 task seq {worker}): other sessions "
-                  "leave them." if worker else "")
+        seqs = worker_tasks(settings, "research")
+        worker = " or ".join(map(str, seqs))
+        routed = (f" Research and job briefs go to the Research worker{'s' if len(seqs) > 1 else ''} (dev3 task seq "
+                  f"{worker}): other sessions leave them." if seqs else "")
         comms = worker_task(settings, "comms")
         routed += (f" Draft replies go to the Comms worker (dev3 task seq {comms}): other sessions leave them."
                    if comms and "Draft replies" in text else "")
@@ -897,6 +900,13 @@ def _private_dir(settings: Settings) -> Path:
     if not settings.private_dir:
         raise SystemExit("error: private_dir is not set (settings or PREP_PRIVATE_DIR)")
     return settings.private_dir
+
+
+def me() -> int | None:
+    """This session's dev3 task seq (DEV3_TASK_SEQ, set in every dev3 task), recorded on each claim so the
+    Workers sidebar knows which worker took it; None outside dev3."""
+    value = os.environ.get("DEV3_TASK_SEQ", "").strip()
+    return int(value) if value.isdigit() else None
 
 
 def cmd_research(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -912,6 +922,13 @@ def cmd_research(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
         return _research_next(args, settings, conn)
     if args.research_cmd == "save":
         return _research_save(args, settings, conn)
+    if args.research_cmd == "block":
+        if db.get_application(conn, args.app_id) is None:
+            raise LookupError(f"no application with id {args.app_id}")
+        count = db.block_requests(conn, args.app_id, args.reason, args.kind)
+        print(f"Blocked {count} request{'s' if count != 1 else ''} for #{args.app_id}" if count
+              else f"Nothing open for #{args.app_id} to block.")
+        return 0
     return 2
 
 
@@ -923,12 +940,15 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     tailoring = {r["application_id"] for r in requests if r["kind"] == "tailor"}
     # The AI check waits until the new version is saved (and never blocks other applications' work).
     pending = [r for r in requests if not r["claimed"] and not (r["kind"] == "cv_eval" and r["application_id"] in tailoring)]
+    worker = me()
+    # This worker's own (or unassigned) work first; another worker's waiting work only when none is left.
+    pending.sort(key=lambda r: r["worker"] not in (None, worker))
     if not pending:
         others = [r for r in requests if r["claimed"] or r["kind"] == "cv_eval"]
         print("Nothing pending" + (" (some requests are being done by another session)" if others else "") + ".")
         return 0
     app_id = args.app_id or pending[0]["application_id"]
-    claimed = [r for r in pending if r["application_id"] == app_id and db.claim_request(conn, r["id"])]
+    claimed = [r for r in pending if r["application_id"] == app_id and db.claim_request(conn, r["id"], worker)]
     if not claimed:
         print("Another session claimed this work first; run research next again.")
         return 0
@@ -1141,6 +1161,10 @@ def cmd_brief(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
         log.info("job brief saved")  # never the text
         print(f"Saved the brief of job {job_id}; the panel shows it.")
         return 0
+    if args.brief_cmd == "block":
+        count = db.block_brief(conn, job_id, args.reason)
+        print(f"Blocked the brief of job {job_id}." if count else f"No open brief request for job {job_id}.")
+        return 0
     if args.brief_cmd == "queue":
         created = db.queue_brief(conn, job_id, force=args.redo)
         print(f"Job brief for {job_id}: {'queued' if created else 'already queued'}")
@@ -1166,8 +1190,10 @@ def _brief_job(args: argparse.Namespace, conn: sqlite3.Connection) -> str:
 
 def _brief_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
     """Claim the oldest waiting brief and print the job, its description and the format."""
-    waiting = [r for r in db.open_briefs(conn) if not r["claimed"]]
-    job_id = next((r["getjo_job_id"] for r in waiting if db.claim_brief(conn, r["getjo_job_id"])), None)
+    worker = me()
+    waiting = sorted((r for r in db.open_briefs(conn) if not r["claimed"]),
+                     key=lambda r: r["worker"] not in (None, worker))  # own or unassigned first
+    job_id = next((r["getjo_job_id"] for r in waiting if db.claim_brief(conn, r["getjo_job_id"], worker)), None)
     if job_id is None:
         busy = any(r["claimed"] for r in db.open_briefs(conn))
         print("Nothing pending" + (" (some briefs are being written by another session)" if busy else "") + ".")
@@ -1441,7 +1467,7 @@ def cmd_thread(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
 
 def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
     """The application (never pay), the files and commands /ask may need, and the thread."""
-    claimed = db.claim_messages(conn, app["id"]) if args.claim else []
+    claimed = db.claim_messages(conn, app["id"], worker=me()) if args.claim else []
     slug = db.company_slug(app["company"])
     print(f"Application #{app['id']}: {app['company']} — {app['role']} [{db.status_label(app['status'])}]")
     if app["link"]:
@@ -1496,7 +1522,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
 def _general_show(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     """`thread show` with no application: messages about the whole search ("which tasks need me?").
     Prints the open applications, the review order and the latest of the conversation."""
-    claimed = db.claim_messages(conn, None) if args.claim else []
+    claimed = db.claim_messages(conn, None, worker=me()) if args.claim else []
     print("Messages about the whole search (no application). Context:")
     tasks = db.app_tasks(conn)
     latest = db.latest_comments(conn)
@@ -1520,7 +1546,7 @@ def _job_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     """`thread show --job ID`: a getjo job not yet tracked (questions before deciding: "is this remote?",
     "how does my CV fit?"). Prints the job, its open/closed state, the company research file if one
     exists, cv.md, the job description and the job's messages. No application, no tasks."""
-    claimed = db.claim_messages(conn, None, args.job) if args.claim else []
+    claimed = db.claim_messages(conn, None, args.job, worker=me()) if args.claim else []
     try:
         with closing(getjo.connect_ro(settings.getjo_db)) as gconn:
             job = getjo.get_job(gconn, args.job)
@@ -1566,7 +1592,7 @@ def _cv_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
     """`thread show --cv`: a request about the master CV ("add Terraform to my skills", "copy the summary
     from CV_…"). Prints cv.md's path and state, how to change it, its skills, the saved versions, the
     tailored CV files (to copy wording from) and the CV messages."""
-    claimed = db.claim_messages(conn, None, topic="cv") if args.claim else []
+    claimed = db.claim_messages(conn, None, topic="cv", worker=me()) if args.claim else []
     private_dir = _private_dir(settings)
     cv = cvfile.cv_path(private_dir)
     text = cvfile.read_cv(private_dir)
@@ -1601,7 +1627,7 @@ def _compare_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Co
     """`thread show --message MSG` for a comparison (2-4 ticked jobs, applications or My CV): each
     target's context (stage, tier, brief, file paths, CV fit score, job description), then the
     messages about any of them. --claim takes this one message only."""
-    claimed = [args.message] if args.claim and db.claim_message(conn, args.message) else []
+    claimed = [args.message] if args.claim and db.claim_message(conn, args.message, me()) else []
     targets = db.message_targets(conn, [args.message]).get(args.message, [])
     print(f"Message {args.message} compares {len(targets)} targets. Answer per target, then the differences, "
           "pros and cons and the fit of each. Context:")
@@ -1762,7 +1788,7 @@ def cmd_reply(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     if msg["status"] == "cancelled":
         print(f"Request {args.message} was cancelled by the user: do not draft it.")
         return 0
-    claimed = args.claim and db.claim_message(conn, args.message)
+    claimed = args.claim and db.claim_message(conn, args.message, me())
     context = argparse.Namespace(claim=False, context_only=True, app_id=msg["application_id"], job=None,
                                  message=None, cv=False)
     if msg["application_id"] is not None:
@@ -1847,7 +1873,7 @@ def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
     """A Learn Assistant message: the open card in full (front, key points, follow-ups, Learn sources with
     links), its track's chapters, the private context files to read, the latest of the Learn
     conversation, and the commands that answer it. --claim takes this one message."""
-    claimed = [args.message] if args.claim and db.claim_message(conn, args.message) else []
+    claimed = [args.message] if args.claim and db.claim_message(conn, args.message, me()) else []
     msg = db.get_message(conn, args.message)
     try:
         card = learn.get_card(conn, msg["card_id"]) if msg["card_id"] is not None else None
@@ -2323,6 +2349,11 @@ def build_parser() -> argparse.ArgumentParser:
     r = rsub.add_parser("save", help="store the company profile from companies/<slug>.md")
     r.add_argument("app_id", type=int)
     r.add_argument("--file", help="default: private_dir/companies/<slug>.md")
+    r = rsub.add_parser("block", help="mark an application's open requests blocked: the worker cannot do them")
+    r.add_argument("app_id", type=int)
+    r.add_argument("--kind", choices=db.REQUEST_KINDS, help="only this kind (default: every open one)")
+    r.add_argument("--reason", required=True, help=f"short, shown in the Workers sidebar (at most {db.MAX_REASON} "
+                   "characters, no pay), e.g. \"no posting\"")
     p.set_defaults(func=cmd_research)
 
     p = sub.add_parser("fit", help="CV fit results (used by /research)")
@@ -2398,7 +2429,8 @@ def build_parser() -> argparse.ArgumentParser:
     bsub = p.add_subparsers(dest="brief_cmd", required=True)
     bsub.add_parser("next", help="claim the oldest waiting brief and print the job, its description and the format")
     for name, text in (("save", "store the brief (text on stdin or --file)"), ("show", "print the brief"),
-                       ("queue", "ask for a brief (--redo: write it again)")):
+                       ("queue", "ask for a brief (--redo: write it again)"),
+                       ("block", "mark the open brief request blocked (--reason): it cannot be written")):
         t = bsub.add_parser(name, help=text)
         t.add_argument("app_id", type=int, nargs="?", help="an application linked to a getjo job")
         t.add_argument("--job", help="a getjo job id")
@@ -2406,6 +2438,8 @@ def build_parser() -> argparse.ArgumentParser:
             t.add_argument("--file", help="a file holding the brief (default: stdin)")
         if name == "queue":
             t.add_argument("--redo", action="store_true")
+        if name == "block":
+            t.add_argument("--reason", required=True, help="short, e.g. \"no description\"; no pay")
     p.set_defaults(func=cmd_brief)
 
     p = sub.add_parser("tracks", help="Learn tracks: list (done / total, percent) or add")

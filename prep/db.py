@@ -79,7 +79,8 @@ REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": 
 RESEARCH_KINDS = ("research", "cv_fit")
 # claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
 # cancelled: the user pressed Stop in the Applications Assistant box (kept; queueing it again adds a new row).
-REQUEST_STATUSES = ("pending", "claimed", "done", "cancelled")
+# blocked: the worker could not do it (`research block`, with a short reason, e.g. "no posting"); kept.
+REQUEST_STATUSES = ("pending", "claimed", "done", "cancelled", "blocked")
 CLAIM_HOURS = 6
 # Lease of a claimed Applications or Learn message: a chat reply takes minutes, so a claim with no reply
 # after this long counts as stalled (the dashboard flags it and shows Resend at once; another session may
@@ -382,6 +383,30 @@ CREATE TABLE IF NOT EXISTS brief_requests (
     done_at      TEXT
 );
 
+-- One row per time a session took a queued item (a request, a job brief or a user message): who took it
+-- (worker: the dev3 task seq from DEV3_TASK_SEQ, NULL for a session outside dev3), when, and how it ended.
+-- result is NULL while it runs; sync_runs() closes it from the item's state: done (done or answered),
+-- blocked (with the worker's reason), stopped (cancelled or Stop) or lapsed (the claim lapsed and the item
+-- went back to the queue or to another session). item: the request or message id, or the getjo job id.
+-- Never holds message text or pay.
+CREATE TABLE IF NOT EXISTS runs (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    source         TEXT NOT NULL,       -- request / brief / message
+    item           TEXT NOT NULL,
+    worker         INTEGER,
+    kind           TEXT NOT NULL,       -- REQUEST_KINDS, brief, ask, comms, learn
+    application_id INTEGER,
+    getjo_job_id   TEXT,
+    card_id        INTEGER,
+    topic          TEXT,                -- a message's topic (cv, compare, learn); NULL otherwise
+    queued_at      TEXT,
+    started_at     TEXT NOT NULL,
+    finished_at    TEXT,
+    result         TEXT,
+    reason         TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_runs_open ON runs(result, worker);
+
 -- The master CV's saved versions (private_dir/cv-history/<file_name>): each row is a state of cv.md
 -- and the note says what changed into it. Files and notes never go into git.
 CREATE TABLE IF NOT EXISTS cv_versions (
@@ -515,8 +540,13 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # card_id: the Learn card open when a Learn Assistant message (topic "learn") was sent; the reply carries it.
     # comms, channel: a draft request (COMMS_KINDS, CHANNELS) and its draft reply; draft_subject (email) and
     # draft_body: the draft text on the agent's reply, shown with Copy. NULL on every other message.
+    # worker: the dev3 task seq the router sent it to (several workers on one route), or that took it;
+    # NULL: whoever handles its route.
     "agent_messages": {"getjo_job_id": "TEXT", "topic": "TEXT", "card_id": "INTEGER", "comms": "TEXT",
-                       "channel": "TEXT", "draft_subject": "TEXT", "draft_body": "TEXT"},
+                       "channel": "TEXT", "draft_subject": "TEXT", "draft_body": "TEXT", "worker": "INTEGER"},
+    # worker: as on agent_messages. reason: why a worker marked it blocked (`research block`, `brief block`).
+    "agent_requests": {"worker": "INTEGER", "reason": "TEXT"},
+    "brief_requests": {"worker": "INTEGER", "reason": "TEXT"},
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
     "tailored_cv_checks": {"summary": "TEXT"},
@@ -1911,7 +1941,7 @@ def open_requests(conn: sqlite3.Connection, app_id: int | None = None) -> list[d
     where = "WHERE r.status IN ('pending', 'claimed')" + (" AND r.application_id = ?" if app_id is not None else "")
     rows = conn.execute(
         f"""
-        SELECT r.id, r.application_id, r.kind, r.status, r.force, r.requested_at, r.claimed_at,
+        SELECT r.id, r.application_id, r.kind, r.status, r.force, r.requested_at, r.claimed_at, r.worker,
                a.company, a.role
         FROM agent_requests r JOIN applications a ON a.id = r.application_id
         {where} ORDER BY r.id
@@ -1927,14 +1957,18 @@ def open_requests(conn: sqlite3.Connection, app_id: int | None = None) -> list[d
     return found
 
 
-def claim_request(conn: sqlite3.Connection, request_id: int) -> bool:
-    """Take a request for this session. Only one caller wins: the update applies while the
-    request is still pending (or its claim has gone stale)."""
+def claim_request(conn: sqlite3.Connection, request_id: int, worker: int | None = None) -> bool:
+    """Take a request for this session (`worker`: its dev3 task seq, recorded on the item and its run).
+    Only one caller wins: the update applies while the request is still pending (or its claim has gone
+    stale)."""
+    stamp = now_iso()
     cursor = conn.execute(
-        "UPDATE agent_requests SET status = 'claimed', claimed_at = ? "
+        "UPDATE agent_requests SET status = 'claimed', claimed_at = ?, worker = COALESCE(?, worker) "
         "WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
-        (now_iso(), request_id, _claim_cutoff()),
+        (stamp, worker, request_id, _claim_cutoff()),
     )
+    if cursor.rowcount == 1:
+        _start_run(conn, "request", request_id, worker, stamp)
     conn.commit()
     return cursor.rowcount == 1
 
@@ -2489,7 +2523,7 @@ def claim_lapsed(msg: dict) -> bool:
 
 
 def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | None = None,
-                   topic: str | None = None) -> list[int]:
+                   topic: str | None = None, worker: int | None = None) -> list[int]:
     """Take the waiting user messages about an application (or an untracked job with `job_id`, a
     `topic`, or, with none of them, the whole search) for this session; returns their ids, oldest first. Draft
     requests (comms) are left out: /reply claims each on its own (claim_message). Only one
@@ -2510,23 +2544,27 @@ def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | N
     won = []
     for msg_id in ids:
         cursor = conn.execute(
-            "UPDATE agent_messages SET status = 'claimed', claimed_at = ? "
+            "UPDATE agent_messages SET status = 'claimed', claimed_at = ?, worker = COALESCE(?, worker) "
             "WHERE id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
-            (stamp, msg_id, cutoff),
+            (stamp, worker, msg_id, cutoff),
         )
         if cursor.rowcount == 1:
             won.append(msg_id)
+            _start_run(conn, "message", msg_id, worker, stamp)
     conn.commit()
     return won
 
 
-def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
+def claim_message(conn: sqlite3.Connection, msg_id: int, worker: int | None = None) -> bool:
     """Take one waiting user message for this session (a comparison is claimed on its own); True if
     this caller won it."""
     stamp, cutoff = now_iso(), _message_cutoff()
     cursor = conn.execute(
-        "UPDATE agent_messages SET status = 'claimed', claimed_at = ? WHERE id = ? AND author = 'user' "
-        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, msg_id, cutoff))
+        "UPDATE agent_messages SET status = 'claimed', claimed_at = ?, worker = COALESCE(?, worker) "
+        "WHERE id = ? AND author = 'user' "
+        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, worker, msg_id, cutoff))
+    if cursor.rowcount == 1:
+        _start_run(conn, "message", msg_id, worker, stamp)
     conn.commit()
     return cursor.rowcount == 1
 
@@ -2594,6 +2632,7 @@ def reopen_message(conn: sqlite3.Connection, msg_id: int, learn: bool = False) -
     with conn:
         conn.execute("UPDATE agent_messages SET status = 'pending', claimed_at = NULL WHERE id = ? "
                      "AND status IN ('pending', 'claimed')", (msg_id,))
+        _close_open_runs(conn, "message", msg_id, "lapsed")
     return msg
 
 
@@ -2612,9 +2651,9 @@ def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) 
 
 def get_message(conn: sqlite3.Connection, msg_id: int) -> dict | None:
     """One message: id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, created_at,
-    claimed_at, comms, channel, draft_subject, draft_body."""
+    claimed_at, comms, channel, draft_subject, draft_body, worker."""
     row = conn.execute("SELECT id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, "
-                       "created_at, claimed_at, comms, channel, draft_subject, draft_body FROM agent_messages "
+                       "created_at, claimed_at, comms, channel, draft_subject, draft_body, worker FROM agent_messages "
                        "WHERE id = ?", (msg_id,)).fetchone()
     return dict(row) if row else None
 
@@ -2783,8 +2822,8 @@ def queue_brief(conn: sqlite3.Connection, job_id: str, force: bool = False) -> b
         cursor = conn.execute(
             "INSERT INTO brief_requests (getjo_job_id, status, force, requested_at) VALUES (?, 'pending', ?, ?) "
             "ON CONFLICT(getjo_job_id) DO UPDATE SET status = 'pending', force = excluded.force, "
-            "requested_at = excluded.requested_at, claimed_at = NULL, done_at = NULL "
-            "WHERE brief_requests.status IN ('done', 'cancelled') "
+            "requested_at = excluded.requested_at, claimed_at = NULL, done_at = NULL, worker = NULL, reason = NULL "
+            "WHERE brief_requests.status IN ('done', 'cancelled', 'blocked') "
             "OR (brief_requests.status = 'claimed' AND brief_requests.claimed_at < ?)",
             (job_id, int(force), stamp, _claim_cutoff()))
     return cursor.rowcount == 1
@@ -2820,11 +2859,231 @@ def open_briefs(conn: sqlite3.Connection, job_id: str | None = None) -> list[dic
     return [{**dict(r), "claimed": r["status"] == "claimed" and (r["claimed_at"] or "") >= cutoff} for r in rows]
 
 
-def claim_brief(conn: sqlite3.Connection, job_id: str) -> bool:
+def claim_brief(conn: sqlite3.Connection, job_id: str, worker: int | None = None) -> bool:
     """Take one brief request for this session; True if this caller won it."""
     stamp = now_iso()
     cursor = conn.execute(
-        "UPDATE brief_requests SET status = 'claimed', claimed_at = ? WHERE getjo_job_id = ? "
-        "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, job_id, _claim_cutoff()))
+        "UPDATE brief_requests SET status = 'claimed', claimed_at = ?, worker = COALESCE(?, worker) "
+        "WHERE getjo_job_id = ? AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))",
+        (stamp, worker, job_id, _claim_cutoff()))
+    if cursor.rowcount == 1:
+        _start_run(conn, "brief", job_id, worker, stamp)
     conn.commit()
     return cursor.rowcount == 1
+
+
+# --- runs (workers) --------------------------------------------------------------------
+# Every claim opens a run (claim_request, claim_brief, claim_messages, claim_message); sync_runs closes
+# it from the item's own state, so the many places that finish an item (saves, replies, Stop) need no
+# change. The Workers sidebar, its popover and /metrics/runs read them (prep/workers.py).
+RUN_SOURCES = ("request", "brief", "message")
+RUN_RESULTS = ("done", "blocked", "stopped", "lapsed")
+MAX_REASON = 200  # characters in a blocked reason
+_RUN_TABLES = {"request": ("agent_requests", "id"), "brief": ("brief_requests", "getjo_job_id"),
+               "message": ("agent_messages", "id")}
+
+
+def message_kind(topic: str | None, comms: str | None) -> str:
+    """The run kind of a user message: comms (a draft request), learn (Learn Assistant) or ask."""
+    return "comms" if comms else "learn" if topic == LEARN else "ask"
+
+
+def _start_run(conn: sqlite3.Connection, source: str, item: int | str, worker: int | None, stamp: str) -> None:
+    """Open a run for an item just claimed (inside the caller's transaction). A run still open for the
+    same item belonged to a claim that lapsed: it is closed as lapsed."""
+    _close_open_runs(conn, source, item, "lapsed", stamp)
+    if source == "request":
+        r = conn.execute("SELECT application_id, kind, requested_at FROM agent_requests WHERE id = ?", (item,)).fetchone()
+        values = (r["kind"], r["application_id"], None, None, None, r["requested_at"])
+    elif source == "brief":
+        r = conn.execute("SELECT requested_at FROM brief_requests WHERE getjo_job_id = ?", (item,)).fetchone()
+        app = conn.execute("SELECT id FROM applications WHERE getjo_job_id = ? ORDER BY id LIMIT 1", (item,)).fetchone()
+        values = ("brief", app[0] if app else None, item, None, None, r["requested_at"])
+    else:
+        r = conn.execute("SELECT application_id, getjo_job_id, card_id, topic, comms, created_at FROM agent_messages "
+                         "WHERE id = ?", (item,)).fetchone()
+        values = (message_kind(r["topic"], r["comms"]), r["application_id"], r["getjo_job_id"], r["card_id"],
+                  r["topic"], r["created_at"])
+    conn.execute("INSERT INTO runs (source, item, worker, kind, application_id, getjo_job_id, card_id, topic, "
+                 "queued_at, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (source, str(item), worker, *values, stamp))
+
+
+def _close_open_runs(conn: sqlite3.Connection, source: str, item: int | str, result: str,
+                     stamp: str | None = None, reason: str | None = None) -> None:
+    conn.execute("UPDATE runs SET result = ?, finished_at = ?, reason = ? WHERE source = ? AND item = ? "
+                 "AND result IS NULL", (result, stamp or now_iso(), reason, source, str(item)))
+
+
+def sync_runs(conn: sqlite3.Connection) -> int:
+    """Close the open runs whose item has moved on: done (done, or answered), blocked (with its reason),
+    stopped (cancelled) or lapsed (back to pending, or claimed again since). Returns how many closed."""
+    closed = 0
+    stamp = now_iso()
+    for run in conn.execute("SELECT id, source, item, started_at FROM runs WHERE result IS NULL").fetchall():
+        table, key = _RUN_TABLES[run["source"]]
+        if run["source"] == "message":
+            row = conn.execute("SELECT status, claimed_at, answered_at AS done_at, NULL AS reason FROM agent_messages "
+                               "WHERE id = ?", (int(run["item"]),)).fetchone()
+        else:
+            item = run["item"] if run["source"] == "brief" else int(run["item"])
+            row = conn.execute(f"SELECT status, claimed_at, done_at, reason FROM {table} WHERE {key} = ?",
+                               (item,)).fetchone()
+        if row is None:
+            result, finished, reason = "stopped", stamp, None
+        elif row["status"] in ("done", "answered"):
+            result, finished, reason = "done", row["done_at"] or stamp, None
+        elif row["status"] == "blocked":
+            result, finished, reason = "blocked", row["done_at"] or stamp, row["reason"]
+        elif row["status"] == "cancelled":
+            result, finished, reason = "stopped", stamp, None
+        elif row["status"] == "claimed" and row["claimed_at"] == run["started_at"]:
+            continue  # still this run's claim
+        else:
+            result, finished, reason = "lapsed", stamp, None
+        conn.execute("UPDATE runs SET result = ?, finished_at = ?, reason = ? WHERE id = ? AND result IS NULL",
+                     (result, finished, reason, run["id"]))
+        closed += 1
+    conn.commit()
+    return closed
+
+
+def _check_reason(reason: str) -> str:
+    reason = " ".join((reason or "").split())
+    if not reason:
+        raise ValueError("give a short reason (e.g. \"no posting\")")
+    if len(reason) > MAX_REASON:
+        raise ValueError(f"the reason is {len(reason)} characters; keep it to {MAX_REASON}")
+    check_no_pay(reason, "the reason")
+    return reason
+
+
+def block_requests(conn: sqlite3.Connection, app_id: int, reason: str, kind: str | None = None) -> int:
+    """A worker cannot do an application's open requests (all, or one `kind`): they are marked blocked
+    with the reason (kept; queueing again adds a new one). Returns how many."""
+    reason = _check_reason(reason)
+    if kind is not None:
+        _check("kind", kind, REQUEST_KINDS)
+    with conn:
+        count = conn.execute(
+            "UPDATE agent_requests SET status = 'blocked', reason = ?, done_at = ? WHERE application_id = ? "
+            "AND status IN ('pending', 'claimed')" + (" AND kind = ?" if kind else ""),
+            (reason, now_iso(), app_id, *((kind,) if kind else ()))).rowcount
+    sync_runs(conn)
+    return count
+
+
+def block_brief(conn: sqlite3.Connection, job_id: str, reason: str) -> int:
+    """A worker cannot write a job's brief: its open request is marked blocked with the reason. 0 or 1."""
+    reason = _check_reason(reason)
+    with conn:
+        count = conn.execute("UPDATE brief_requests SET status = 'blocked', reason = ?, done_at = ? "
+                             "WHERE getjo_job_id = ? AND status IN ('pending', 'claimed')",
+                             (reason, now_iso(), job_id)).rowcount
+    sync_runs(conn)
+    return count
+
+
+def assign_requests(conn: sqlite3.Connection, request_ids: list[int], worker: int) -> None:
+    """The router sent these waiting requests to `worker` (several workers on one route)."""
+    with conn:
+        conn.executemany("UPDATE agent_requests SET worker = ? WHERE id = ? AND status = 'pending'",
+                         [(worker, i) for i in request_ids])
+
+
+def assign_briefs(conn: sqlite3.Connection, job_ids: list[str], worker: int) -> None:
+    with conn:
+        conn.executemany("UPDATE brief_requests SET worker = ? WHERE getjo_job_id = ? AND status = 'pending'",
+                         [(worker, j) for j in job_ids])
+
+
+def assign_message(conn: sqlite3.Connection, msg_id: int, worker: int) -> None:
+    with conn:
+        conn.execute("UPDATE agent_messages SET worker = ? WHERE id = ? AND status = 'pending'", (worker, msg_id))
+
+
+def busy_workers(conn: sqlite3.Connection) -> set[int]:
+    """Seqs with a run open (working, or stuck on a lapsed claim) or an item assigned and still waiting."""
+    sync_runs(conn)
+    busy = {r[0] for r in conn.execute("SELECT DISTINCT worker FROM runs WHERE result IS NULL AND worker IS NOT NULL")}
+    for table in ("agent_requests", "brief_requests", "agent_messages"):
+        busy |= {r[0] for r in conn.execute(f"SELECT DISTINCT worker FROM {table} WHERE status = 'pending' "
+                                            "AND worker IS NOT NULL")}
+    return busy
+
+
+def open_runs(conn: sqlite3.Connection, worker: int | None = None) -> list[dict]:
+    """Runs still open (after sync_runs), oldest first, with the application's company and role."""
+    rows = conn.execute(
+        "SELECT r.*, a.company, a.role FROM runs r LEFT JOIN applications a ON a.id = r.application_id "
+        "WHERE r.result IS NULL" + (" AND r.worker = ?" if worker is not None else "") + " ORDER BY r.started_at, r.id",
+        (worker,) if worker is not None else ())
+    return [dict(r) for r in rows]
+
+
+def runs(conn: sqlite3.Connection, worker: int | None = None, result: str | None = None, limit: int = 200,
+         finished_since: str | None = None) -> list[dict]:
+    """Finished runs, newest first, with company and role: one worker's, one result's, or those finished
+    at or after `finished_since`. `result` "running" lists the open ones instead."""
+    where, params = ["1 = 1"], []
+    if worker is not None:
+        where.append("r.worker = ?")
+        params.append(worker)
+    if result == "running":
+        where.append("r.result IS NULL")
+    elif result:
+        _check("result", result, RUN_RESULTS)
+        where.append("r.result = ?")
+        params.append(result)
+    else:
+        where.append("r.result IS NOT NULL")
+    if finished_since:
+        where.append("r.finished_at >= ?")
+        params.append(finished_since)
+    rows = conn.execute(
+        "SELECT r.*, a.company, a.role FROM runs r LEFT JOIN applications a ON a.id = r.application_id "
+        f"WHERE {' AND '.join(where)} ORDER BY COALESCE(r.finished_at, r.started_at) DESC, r.id DESC LIMIT ?",
+        (*params, limit))
+    return [dict(r) for r in rows]
+
+
+def stop_worker(conn: sqlite3.Connection, worker: int, requeue: bool = False) -> list[dict]:
+    """Stop in the Workers popover: `worker`'s open runs end as stopped, and each item it still holds
+    (claimed by that run) goes back to the queue unassigned (`requeue`) or is cancelled. Items of other
+    workers are never touched. Returns the runs stopped (source, item, kind, application_id, ...)."""
+    sync_runs(conn)
+    stamp = now_iso()
+    stopped = []
+    with conn:
+        for run in open_runs(conn, worker):
+            table, key = _RUN_TABLES[run["source"]]
+            item = run["item"] if run["source"] == "brief" else int(run["item"])
+            new = "status = 'pending', claimed_at = NULL, worker = NULL" if requeue else "status = 'cancelled'"
+            conn.execute(f"UPDATE {table} SET {new} WHERE {key} = ? AND status = 'claimed' AND claimed_at = ?",
+                         (item, run["started_at"]))
+            conn.execute("UPDATE runs SET result = 'stopped', finished_at = ?, reason = ? WHERE id = ? "
+                         "AND result IS NULL", (stamp, "back to the queue" if requeue else None, run["id"]))
+            stopped.append(run)
+    return stopped
+
+
+def waiting_items(conn: sqlite3.Connection) -> list[dict]:
+    """Every item waiting for a worker (pending; a lapsed claim shows as its worker's stuck run instead), oldest first: source, item, kind,
+    worker (assigned seq or None), application_id, getjo_job_id, card_id, company, role, queued_at, topic,
+    comms. Never message text."""
+    found = [{"source": "request", "item": str(r["id"]), "kind": r["kind"], "worker": r["worker"],
+              "application_id": r["application_id"], "getjo_job_id": None, "card_id": None,
+              "company": r["company"], "role": r["role"], "queued_at": r["requested_at"], "topic": None, "comms": None}
+             for r in open_requests(conn) if r["status"] == "pending"]
+    found += [{"source": "brief", "item": b["getjo_job_id"], "kind": "brief", "worker": b["worker"],
+               "application_id": None, "getjo_job_id": b["getjo_job_id"], "card_id": None, "company": None,
+               "role": None, "queued_at": b["requested_at"], "topic": None, "comms": None}
+              for b in open_briefs(conn) if b["status"] == "pending"]
+    workers = dict(conn.execute("SELECT id, worker FROM agent_messages WHERE author = 'user' "
+                                "AND status IN ('pending', 'claimed')").fetchall())
+    for topic in (None, LEARN):
+        found += [{"source": "message", "item": str(m["id"]), "kind": message_kind(m["topic"], m["comms"]),
+                   "worker": workers.get(m["id"]), "application_id": m["application_id"],
+                   "getjo_job_id": m["getjo_job_id"], "card_id": m["card_id"], "company": m["company"],
+                   "role": m["role"], "queued_at": m["created_at"], "topic": m["topic"], "comms": m["comms"]}
+                  for m in pending_messages(conn, topic=topic) if m["status"] == "pending"]
+    return sorted(found, key=lambda d: d["queued_at"] or "")

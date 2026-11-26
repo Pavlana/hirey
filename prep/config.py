@@ -40,6 +40,7 @@ Keys:
     [workers]       optional routing of queued work to worker tasks: `research = <dev3 task seq>` sends the
                     pings for company research, CV fit, tailored CVs, AI CV checks and job briefs to that
                     standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task);
+                    a list (`research = [71, 72]`, env "71,72") runs several workers in parallel;
                     `comms = <seq>` sends "Draft a reply" requests (/reply) to a Comms worker (env
                     PREP_WORKER_COMMS; unset: assistant_task)
     [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
@@ -129,12 +130,18 @@ class Settings:
     # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
     getjo_repo: Path | None = None
     prices: tuple[tuple[str, tuple[float, float, float, float, float]], ...] = ()
-    workers: tuple[tuple[str, int], ...] = ()  # (route, dev3 task seq) from [workers]
+    workers: tuple[tuple[str, int], ...] = ()  # (route, dev3 task seq) from [workers], one pair per seq
+
+
+def worker_tasks(settings: Settings, route: str) -> tuple[int, ...]:
+    """Every dev3 task seq set for a [workers] route, in the order given (empty when unset)."""
+    return tuple(seq for r, seq in settings.workers if r == route)
 
 
 def worker_task(settings: Settings, route: str) -> int | None:
-    """The dev3 task seq set for a [workers] route, or None."""
-    return dict(settings.workers).get(route)
+    """The first dev3 task seq set for a [workers] route, or None."""
+    seqs = worker_tasks(settings, route)
+    return seqs[0] if seqs else None
 
 
 def _resolve(value: str) -> Path:
@@ -218,7 +225,8 @@ def load_settings(path: Path | None = None) -> Settings:
 
 
 def _workers(value: object) -> tuple[tuple[str, int], ...]:
-    """[workers] route = seq, with PREP_WORKER_<ROUTE> overriding (empty clears it)."""
+    """[workers] route = seq or [seq, ...], with PREP_WORKER_<ROUTE> ("71" or "71,72") overriding (empty
+    clears it). One (route, seq) pair per seq, routes sorted, seqs in the order given, duplicates dropped."""
     if value is None:
         value = {}
     if not isinstance(value, dict):
@@ -231,11 +239,17 @@ def _workers(value: object) -> tuple[tuple[str, int], ...]:
     for route, seq in table.items():
         if route not in WORKER_ROUTES:
             raise ConfigError(f"workers.{route} is not a known route (known: {', '.join(WORKER_ROUTES)})")
-        if seq in ("", None):
-            continue
+        if isinstance(seq, str):
+            seq = [part.strip() for part in seq.split(",") if part.strip()]
+        seqs = seq if isinstance(seq, list) else [seq]
         key = f"workers.{route}"
-        out.append((route, _int({key: seq}, key, 0, 1, 10**9)))
-    return tuple(sorted(out))
+        seen: list[int] = []
+        for one in seqs:
+            number = _int({key: one}, key, 0, 1, 10**9)
+            if number not in seen:
+                seen.append(number)
+        out += [(route, number) for number in seen]
+    return tuple(sorted(out, key=lambda pair: pair[0]))
 
 
 def _getjo_repo(data: dict) -> Path | None:

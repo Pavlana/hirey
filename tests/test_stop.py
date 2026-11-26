@@ -31,7 +31,7 @@ class StopTest(ResendCancelBase):
             learn = db.add_learn_message(conn, None, "Quiz me.")
         body = self.get("/")[2]
         self.assertIn(STOP, body)
-        self.assertIn("(2 waiting)", body)
+        self.assertIn("2 waiting", body)
         status, reply = self.post_json("/applications/stop", {})
         self.assertEqual(status, 200)
         self.assertIn("Stopped", reply["message"])
@@ -46,7 +46,7 @@ class StopTest(ResendCancelBase):
             rid, _ = db.queue_request(conn, STARK, "research")
             db.claim_request(conn, rid)
         body = self.get(f"/?app={ACME}")[2]
-        self.assertIn("Working on CV fit", body)
+        self.assertIn("CV fit", body)
         self.assertIn(STOP, body)
         self.assertIn(f'name="panel_app" value="{ACME}"', body)
         self.assertTrue(json.loads(self.get(f"/applications/thread?app={ACME}")[2])["pending"])
@@ -98,7 +98,7 @@ class StopTest(ResendCancelBase):
             self.assertEqual(db.unreplied_before(conn, new), [old])
         body = self.get("/")[2]
         self.assertIn("no reply yet", body)
-        self.assertIn("(1 waiting)", body)
+        self.assertIn("1 waiting", body)
 
     def test_reply_warns_about_an_older_unreplied_message_and_close_cancels_it(self) -> None:
         with self.conn() as conn:

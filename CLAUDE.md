@@ -78,7 +78,8 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: two-column layout, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
              cveval.py (AI check of a tailored CV: grounding, fit, skim, from the agent's .eval.md),
-             assistant.py (optional dev3 message to a standing agent: /ask, /research, /reply, /learn-ask),
+             assistant.py (optional dev3 message to a standing agent: /ask, /research, /reply, /learn-ask; picks among several workers),
+             workers.py (Workers sidebar and Run history: each worker's state, queue and runs; no message text or pay),
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
              explainers.py (Learn explainer pages: private files, getjo staleness check, read only),
              static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check)
@@ -126,7 +127,9 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
   `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
-- Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`
+- Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`,
+  `research block APP [--kind K] --reason R` / `brief block --job ID --reason R` (the worker cannot do it; shown in
+  the Workers sidebar and Run history, `/metrics/runs`)
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
   `thread reply --to MSG`, `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)

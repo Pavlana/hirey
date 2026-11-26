@@ -12,7 +12,7 @@ from tests.helpers import IsolatedTestCase
 
 TODAY = "2026-01-20"  # the fixtures' anchor date
 HOST = {"Host": "localhost:8765"}
-PAGES = ("/", "/?view=offers", "/metrics", "/metrics?tab=applications", "/learn", "/learn?card=1")
+PAGES = ("/", "/?view=offers", "/metrics", "/metrics?tab=applications", "/metrics/runs", "/learn", "/learn?card=1")
 PAY = "PAY-MARKER-31337"
 h = web.h
 
@@ -95,7 +95,8 @@ class PagesTest(WebTestCase):
             with self.subTest(path=path):
                 body = self.get(path)[2]
                 self.assertEqual(body.count('aria-current="page"'), 1)
-                self.assertIn(f'<a href="{path.split("?")[0]}" aria-current="page">', body)
+                nav = "/metrics" if path.startswith("/metrics") else path.split("?")[0]  # Run history is under Metrics
+                self.assertIn(f'<a href="{nav}" aria-current="page">', body)
 
     def test_applications_tab(self) -> None:
         body = self.get("/metrics?tab=applications")[2]

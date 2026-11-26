@@ -479,8 +479,35 @@ Applications Assistant box, where the answers go to the Applications Assistant a
 
    (or `PREP_WORKER_RESEARCH=25`; an empty value turns it off). Keep `[workers]` at the end of the
    file: TOML puts every key after a table header inside that table.
-4. Restart the dashboard. A queued request now shows "(Research worker, queued …)" on the panel and
+4. Restart the dashboard. A queued request now shows "→ Research worker" on the panel and
    arrives in that task's terminal as `/research <id>`.
+
+Several Research workers. Create another task with the same description and list both seqs:
+`research = [25, 27]` (or `PREP_WORKER_RESEARCH=25,27`). Each new item goes to a worker with nothing
+claimed or waiting, else in turn; a worker takes its own items first, then unassigned ones, then
+another worker's waiting ones, and two workers never take the same item. `comms` takes a list the
+same way. When a worker cannot do an item (no posting, say), it marks it blocked with a short reason
+(`python -m prep.cli research block APP [--kind K] --reason "no posting"`, `brief block --job ID
+--reason ...`); queue it again from the panel once fixed.
+
+### Workers sidebar and Run history
+
+With any worker or assistant task set, every page's sidebar has a **Workers** block under the page
+links: "2 busy · 1 waiting", then one row per worker (Research, Applications, Communication, Learn)
+with a dot (green working, grey idle, amber stuck: no reply in 30 min, a claim past its lease, or
+blocked) and a short line ("Tailored CV · Acme · 12m", "idle", "no reply in 30 min"). It refreshes
+every 15 seconds while the tab is visible. Click a row for its popover: **Now** (the item, started
+when, **Open job**, **Stop**: "Back to queue" or "Cancel it", for that worker's item only),
+**Queued** and **Last runs**. Esc or a click outside closes it. When a long item (research, CV fit,
+tailored CV, AI check, brief, draft) finishes while a page is open, a toast says so with a link.
+**Run history →** opens `/metrics/runs` (also the Metrics page's Runs tab): every run with its
+worker, kind, application, queued, started and finished times, duration, result (done, blocked,
+stopped, lapsed) and the blocked reason, filtered by worker and result. Workers record which task
+took an item from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
+
+![Workers sidebar](screenshots/workers-sidebar.png)
+![A worker's popover with Stop](screenshots/workers-popover-stop.png)
+![Run history](screenshots/run-history.png)
 
 ### Draft a reply (recruiter messages)
 
@@ -513,7 +540,7 @@ A standing dev3 task that writes the drafts, so a long /ask conversation never d
    comms = 26                           # the Comms worker task's seq
    ```
 
-3. Restart the dashboard. A draft request now shows "Comms worker is working…" and arrives in that
+3. Restart the dashboard. A draft request now shows "→ Comms worker" and arrives in that
    task's terminal as `/reply <id> <msg>`.
 
 CLI: `python -m prep.cli reply show MSG [--claim]`, `reply save --to MSG [--subject S] [--note N]`
