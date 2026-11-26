@@ -16,10 +16,11 @@ the packet; the agent writes `cv-tailored/<version file stem>.eval.md` with TOML
     [[must_haves]]                       # the job's must-have requirements
     term = "Kubernetes"
     covered = true
-    [[editorial]]                        # wording that is true but sloppy (redundant, repeated, off-style)
+    [[editorial]]                        # wording that is true but sloppy, or a grammar or spelling mistake
     quote = "words copied from the tailored CV line"
     issue = "what is wrong with the wording"
     suggestion = "the better wording"
+    kind = "grammar"                     # wording (the default), grammar or spelling
 
 `save` maps it to findings with source "ai" (db.save_cv_eval merges them into the verdict): a claim with
 source "none" blocks (`save` refuses one whose quote is not in the CV, since a blocking finding needs
@@ -43,6 +44,8 @@ CLAIM_SOURCES = ("cv.md", "facts", "style", "none")
 SUFFIX = ".eval.md"
 LOW_SKIM = 2  # a skim score at or below this asks for a look
 MAX_NOTE = 160  # characters of the agent's note kept in a finding
+EDITORIAL_KINDS = ("wording", "grammar", "spelling")
+EDITORIAL_LABELS = {"wording": "Editorial", "grammar": "Grammar", "spelling": "Spelling"}
 
 
 def eval_file(version_path: Path) -> Path:
@@ -100,7 +103,11 @@ def read_eval(path: Path) -> dict:
             raise ValueError(f"editorial {i} needs an issue: what is wrong with the wording")
         if not isinstance(suggestion, str) or not suggestion.strip():
             raise ValueError(f"editorial {i} needs a suggestion: the better wording")
-        editorial.append({"quote": quote.strip(), "issue": issue.strip(), "suggestion": suggestion.strip()})
+        kind = e.get("kind", "wording")
+        if kind not in EDITORIAL_KINDS:
+            raise ValueError(f"editorial {i}: kind must be one of {', '.join(EDITORIAL_KINDS)}; got {kind!r}")
+        editorial.append({"quote": quote.strip(), "issue": issue.strip(), "suggestion": suggestion.strip(),
+                          "kind": kind})
     checked_at = data.get("checked_at")
     return {
         "version": version,
@@ -160,7 +167,8 @@ def findings(review: dict, cv_text: str, master_fit: int | None) -> list[dict]:
     for e in review["editorial"]:
         n, line = locate(e["quote"], lines)
         issue, suggestion = _safe(e["issue"]), _safe(e["suggestion"])
-        message = "Editorial" + (f": {issue}" if issue else "") + (f"; suggest: {suggestion}" if suggestion else "")
+        label = EDITORIAL_LABELS[e.get("kind", "wording")]
+        message = label + (f": {issue}" if issue else "") + (f"; suggest: {suggestion}" if suggestion else "")
         out.append(cvcheck._finding("editorial", "look", message, n, line or e["quote"]))
     if review["skim_score"] <= LOW_SKIM:
         why = _safe(review["skim_why"])
@@ -180,6 +188,7 @@ def summary(review: dict, master_fit: int | None) -> dict:
         "must_haves": len(review["must_haves"]),
         "covered": sum(1 for m in review["must_haves"] if m["covered"]),
         "editorial": len(review["editorial"]),
+        "grammar": sum(1 for e in review["editorial"] if e.get("kind") in ("grammar", "spelling")),
     }
 
 
@@ -234,4 +243,6 @@ def summary_line(found: dict | None) -> str:
     master = f" (master CV {s['master_fit']}/5)" if s.get("master_fit") is not None else ""
     return (f"fit {s['fit']}/5{master} · skim {s['skim']}/5 · {s['claims']} claims, {s['unsourced']} unsourced"
             f" · {s['covered']}/{s['must_haves']} must-haves"
-            + (f" · {s['editorial']} editorial" if s.get("editorial") else ""))
+            + (f" · {s['editorial']} editorial" if s.get("editorial") else "")
+            + (f" ({s['grammar']} grammar or spelling)" if s.get("grammar") else "")
+            + (" · out of date: the text was edited after this check" if s.get("stale") else ""))

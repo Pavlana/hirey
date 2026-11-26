@@ -70,8 +70,12 @@ AUTO_COMMENT = "auto: no reply in {days} days"
 # cv_eval: the AI check of the latest tailored version (grounding, fit, skim; prep/cveval.py), queued only
 # by the panel's AI check button (or `research queue APP --kind cv_eval`), done in a separate pass from the
 # one that wrote the CV.
-REQUEST_KINDS = ("research", "cv_fit", "tailor", "cv_eval")
-REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "tailor": "Tailored CV", "cv_eval": "AI CV check"}
+# plan: the tailoring plan written before the CV (what the role needs, the evidence, the order, questions;
+# prep/tailorplan.py). Tailor CV queues it (plan-first); Write the CV then queues tailor from the agreed plan,
+# and Just write it queues tailor straight away. Listed before tailor: the packet prints them in this order.
+REQUEST_KINDS = ("research", "cv_fit", "plan", "tailor", "cv_eval")
+REQUEST_LABELS = {"research": "Company research", "cv_fit": "CV fit", "plan": "Tailoring plan", "tailor": "Tailored CV",
+                  "cv_eval": "AI CV check"}
 # The two kinds entering Interested queues and the Research / CV fit buttons handle; tailor is asked for on its own.
 RESEARCH_KINDS = ("research", "cv_fit")
 # claimed: a session took it with claim_request; claims older than CLAIM_HOURS count as pending again.
@@ -151,6 +155,8 @@ CONTRACTS = ("permanent", "contract", "unknown")
 CHECK_SOURCES = ("import", "agent", "user")
 SCREEN_FIELDS = ("role_family", "level", "team", "location", "pay", "builds_agents", "evals", "contract")
 MAX_CHECK_NOTE = 300
+PLAN_STATUSES = ("draft", "agreed")
+EDIT_AUTHORS = ("user", "agent")
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -291,6 +297,45 @@ CREATE TABLE IF NOT EXISTS tailored_cvs (
     file_path      TEXT NOT NULL,
     version        INTEGER NOT NULL,
     updated_at     TEXT NOT NULL
+);
+
+-- The tailoring plan of an application (one, rewritten by Redo plan); the text is
+-- private_dir/cv-tailored/plans/PLAN_<Company>_<app id>.md. status: draft (the user reads, edits and answers it) or
+-- agreed (Write the CV was pressed: a tailor request was queued, the CV is written from it). Its answers stay in
+-- the plan; nothing writes them to the facts bank.
+CREATE TABLE IF NOT EXISTS tailor_plans (
+    application_id INTEGER PRIMARY KEY REFERENCES applications(id),
+    file_path      TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    updated_at     TEXT NOT NULL,
+    agreed_at      TEXT
+);
+
+-- Every in-place edit of a tailored CV version (the panel's editor, or `tailor edit` by the agent): the
+-- text it replaced is kept in backup_path (private_dir/cv-tailored/edits/), so Undo can bring it back.
+-- undone_at: Undo restored that backup (the text Undo replaced is kept beside it, .undone.md). Never deleted.
+CREATE TABLE IF NOT EXISTS tailored_cv_edits (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER NOT NULL REFERENCES applications(id),
+    version        INTEGER NOT NULL,
+    backup_path    TEXT NOT NULL,
+    author         TEXT NOT NULL,       -- user / agent
+    created_at     TEXT NOT NULL,
+    undone_at      TEXT
+);
+
+-- Comments for the agent on CV lines ("%% make this less junior" lines in the editor): kept here, never in
+-- the CV file, so they never reach the PDF or the checks. One set per tailored CV (application_id) or for
+-- the master CV (application_id NULL); each save of the editor or of the agent's draft replaces the set,
+-- so a comment removed from the text is handled. anchor: the line the comment sits under ("" = the top).
+CREATE TABLE IF NOT EXISTS cv_comments (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    application_id INTEGER REFERENCES applications(id),
+    anchor         TEXT NOT NULL,
+    body           TEXT NOT NULL,
+    position       INTEGER NOT NULL,
+    created_at     TEXT NOT NULL
 );
 
 -- The automatic check of one tailored CV version: the verdict and its findings (JSON list of
@@ -500,6 +545,7 @@ CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
 CREATE INDEX IF NOT EXISTS idx_comments_app ON application_comments(application_id);
+CREATE INDEX IF NOT EXISTS idx_cv_edits_app ON tailored_cv_edits(application_id, version);
 CREATE INDEX IF NOT EXISTS idx_agent_messages_app ON agent_messages(application_id);
 CREATE INDEX IF NOT EXISTS idx_targets_message ON agent_message_targets(message_id);
 CREATE INDEX IF NOT EXISTS idx_targets_app ON agent_message_targets(application_id);
@@ -1958,14 +2004,15 @@ def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
     return d
 
 
-def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
+def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str | None,
                      reply_to: int | None = None) -> int:
     """Record a saved tailored CV for an application: version + 1 (a new tailored_cv_versions row; each
     version is its own file and is kept), its open tailor request done, and
     `note` (what was done or changed, and any questions) posted in the thread as an agent message,
     all in one transaction. With `reply_to` (a revision asked for in the thread) the note answers
-    that user message, as reply_message does. Returns the new version."""
-    note = _message_body(note)
+    that user message, as reply_message does. `note` None (the user's own edit of a sent version,
+    saved as the next one) posts nothing. Returns the new version."""
+    note = _message_body(note) if note is not None else None
     if get_application(conn, app_id) is None:
         raise LookupError(f"no application with id {app_id}")
     if reply_to is not None:
@@ -1985,8 +2032,132 @@ def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note
             "AND status IN ('pending', 'claimed')",
             (stamp, app_id),
         )
-        _agent_message(conn, app_id, note, stamp, reply_to)
+        if note is not None:
+            _agent_message(conn, app_id, note, stamp, reply_to)
     return version
+
+
+# --- tailoring plans, in-place edits and comments (prep/tailorplan.py, prep/cvedit.py) ---------------------
+
+def tailor_plan(conn: sqlite3.Connection, app_id: int) -> dict | None:
+    """The application's tailoring plan row (file_path, status, created_at, updated_at, agreed_at), or None."""
+    row = conn.execute("SELECT * FROM tailor_plans WHERE application_id = ?", (app_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def save_tailor_plan(conn: sqlite3.Connection, app_id: int, file_path: str, note: str,
+                     reply_to: int | None = None) -> None:
+    """Record the agent's plan (a draft again, also after Redo plan), close the open plan request and post
+    `note` in the thread (answering `reply_to` when given), in one transaction."""
+    note = _message_body(note)
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    if reply_to is not None:
+        _check_user_message(conn, app_id, reply_to)
+    stamp = now_iso()
+    with conn:
+        conn.execute("INSERT INTO tailor_plans (application_id, file_path, status, created_at, updated_at) "
+                     "VALUES (?, ?, 'draft', ?, ?) ON CONFLICT (application_id) DO UPDATE SET "
+                     "file_path = excluded.file_path, status = 'draft', updated_at = excluded.updated_at, agreed_at = NULL",
+                     (app_id, file_path, stamp, stamp))
+        conn.execute("UPDATE agent_requests SET status = 'done', done_at = ? WHERE application_id = ? AND kind = 'plan' "
+                     "AND status IN ('pending', 'claimed')", (stamp, app_id))
+        _agent_message(conn, app_id, note, stamp, reply_to)
+
+
+def touch_tailor_plan(conn: sqlite3.Connection, app_id: int) -> None:
+    """The plan's text was edited (the panel, or an answer recorded by `plan answer`)."""
+    conn.execute("UPDATE tailor_plans SET updated_at = ? WHERE application_id = ?", (now_iso(), app_id))
+    conn.commit()
+
+
+def agree_tailor_plan(conn: sqlite3.Connection, app_id: int) -> tuple[int, bool]:
+    """Write the CV: mark the plan agreed and queue the tailor request (a Redo when versions exist), in
+    one step. Returns queue_request's (request id, newly queued)."""
+    if tailor_plan(conn, app_id) is None:
+        raise LookupError(f"application {app_id} has no tailoring plan yet")
+    stamp = now_iso()
+    conn.execute("UPDATE tailor_plans SET status = 'agreed', agreed_at = ?, updated_at = ? WHERE application_id = ?",
+                 (stamp, stamp, app_id))
+    conn.commit()
+    return queue_request(conn, app_id, "tailor", force=tailored_cv(conn, app_id) is not None)
+
+
+def add_cv_edit(conn: sqlite3.Connection, app_id: int, version: int, backup_path: str, author: str) -> int:
+    """Record an in-place edit of tailored version `version`; `backup_path` holds the text it replaced."""
+    _check("author", author, EDIT_AUTHORS)
+    cur = conn.execute("INSERT INTO tailored_cv_edits (application_id, version, backup_path, author, created_at) "
+                       "VALUES (?, ?, ?, ?, ?)", (app_id, version, backup_path, author, notes_stamp()))
+    conn.commit()
+    return cur.lastrowid
+
+
+def cv_edits(conn: sqlite3.Connection, app_id: int, version: int | None = None) -> list[dict]:
+    """The in-place edits of an application's tailored CV (of one version when given), oldest first."""
+    where, args = "application_id = ?", [app_id]
+    if version is not None:
+        where, args = where + " AND version = ?", args + [version]
+    rows = conn.execute(f"SELECT * FROM tailored_cv_edits WHERE {where} ORDER BY id", args)
+    return [dict(r) for r in rows]
+
+
+def last_undoable_edit(conn: sqlite3.Connection, app_id: int, version: int) -> dict | None:
+    """The newest edit of `version` that Undo has not brought back yet, or None."""
+    row = conn.execute("SELECT * FROM tailored_cv_edits WHERE application_id = ? AND version = ? AND undone_at IS NULL "
+                       "ORDER BY id DESC LIMIT 1", (app_id, version)).fetchone()
+    return dict(row) if row else None
+
+
+def mark_edit_undone(conn: sqlite3.Connection, edit_id: int) -> None:
+    conn.execute("UPDATE tailored_cv_edits SET undone_at = ? WHERE id = ?", (notes_stamp(), edit_id))
+    conn.commit()
+
+
+def mark_ai_check_stale(conn: sqlite3.Connection, app_id: int, version: int) -> bool:
+    """The text of `version` changed after its AI check: drop the AI findings (they quote the old text) and
+    keep the scores marked stale, so the panel says "out of date" and offers the AI check again. True when
+    there was an AI check to mark."""
+    check = cv_check(conn, app_id, version)
+    if not check or not check.get("summary") or check["summary"].get("stale"):
+        return False
+    save_cv_check(conn, app_id, version, "ai", [], summary={**check["summary"], "stale": True})
+    return True
+
+
+def cv_comments(conn: sqlite3.Connection, app_id: int | None) -> list[dict]:
+    """The open comments on an application's tailored CV, or on the master CV (`app_id` None), in order."""
+    where = "application_id = ?" if app_id is not None else "application_id IS NULL"
+    rows = conn.execute(f"SELECT id, anchor, body, created_at FROM cv_comments WHERE {where} ORDER BY position, id",
+                        (app_id,) if app_id is not None else ())
+    return [dict(r) for r in rows]
+
+
+def replace_cv_comments(conn: sqlite3.Connection, app_id: int | None, comments: list[tuple[str, str]]) -> None:
+    """Replace the comment set of a tailored CV (or the master CV) with (anchor, body) pairs. A comment
+    kept from before keeps its first date."""
+    where = "application_id = ?" if app_id is not None else "application_id IS NULL"
+    args = (app_id,) if app_id is not None else ()
+    with conn:
+        old = {(r["anchor"], r["body"]): r["created_at"]
+               for r in conn.execute(f"SELECT anchor, body, created_at FROM cv_comments WHERE {where}", args)}
+        conn.execute(f"DELETE FROM cv_comments WHERE {where}", args)
+        stamp = now_iso()
+        for i, (anchor, body) in enumerate(comments):
+            conn.execute("INSERT INTO cv_comments (application_id, anchor, body, position, created_at) "
+                         "VALUES (?, ?, ?, ?, ?)", (app_id, anchor, body, i, old.get((anchor, body), stamp)))
+
+
+def cv_effort(conn: sqlite3.Connection) -> list[dict]:
+    """For every application with a sent tailored CV: id, company, the version sent (= the versions it took,
+    since they count from 1) and the edits made to versions up to it before it was marked sent. Never pay."""
+    rows = conn.execute(
+        """
+        SELECT a.id, a.company, a.cv_sent_version AS versions,
+               (SELECT COUNT(*) FROM tailored_cv_edits e WHERE e.application_id = a.id
+                AND e.version <= a.cv_sent_version AND e.created_at <= COALESCE(a.cv_sent_at, e.created_at)) AS edits
+        FROM applications a WHERE a.cv_sent_version IS NOT NULL ORDER BY a.id
+        """)
+    return [dict(r) for r in rows]
 
 
 def tailored_cv(conn: sqlite3.Connection, app_id: int) -> dict | None:
@@ -2050,12 +2221,15 @@ def save_cv_eval(conn: sqlite3.Connection, app_id: int, version: int, findings: 
 
 def eval_state(conn: sqlite3.Connection, app_id: int, check: dict | None) -> str:
     """The AI check of the latest tailored version, whose stored check is `check`: "done" (its summary
-    is in), "pending" (a cv_eval request is open) or "none" (not asked for this version: the panel's AI check button queues it)."""
-    if check and check.get("summary") is not None:
+    is in), "pending" (a cv_eval request is open), "stale" (the text was edited after its AI check) or "none"
+    (not asked for this version: the panel's AI check button queues it)."""
+    if check and check.get("summary") is not None and not check["summary"].get("stale"):
         return "done"
     found = conn.execute("SELECT 1 FROM agent_requests WHERE application_id = ? AND kind = 'cv_eval' "
                          "AND status IN ('pending', 'claimed')", (app_id,)).fetchone()
-    return "pending" if found else "none"
+    if found:
+        return "pending"
+    return "stale" if check and check.get("summary") else "none"
 
 
 def cv_check(conn: sqlite3.Connection, app_id: int, version: int) -> dict | None:
@@ -2633,6 +2807,18 @@ def reply_message(conn: sqlite3.Connection, app_id: int | None, to_id: int, body
     with conn:
         return _agent_message(conn, app_id, body, stamp, to_id, message_subject(conn, to_id)[1],
                               message_topic(conn, to_id))
+
+
+def add_agent_note(conn: sqlite3.Connection, app_id: int | None, body: str) -> int:
+    """An agent message that answers nothing (e.g. what an in-place edit changed, asked for in no message)."""
+    body = _message_body(body)
+    with conn:
+        return _agent_message(conn, app_id, body, now_iso(), None)
+
+
+def check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int) -> None:
+    """LookupError unless `to_id` is a user message about application `app_id` (checked before a write)."""
+    _check_user_message(conn, app_id, to_id)
 
 
 def _check_user_message(conn: sqlite3.Connection, app_id: int | None, to_id: int) -> None:

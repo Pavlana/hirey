@@ -87,12 +87,14 @@ class ParseTest(IsolatedTestCase):
         found = self.read(eval_text(editorial=REDUNDANT))
         self.assertEqual(found["editorial"], [{"quote": "LLM APIs, Acme Model API, Globex Model API",
                                                "issue": "a general term next to its own examples",
-                                               "suggestion": "LLM APIs (Acme Model API, Globex Model API)"}])
+                                               "suggestion": "LLM APIs (Acme Model API, Globex Model API)",
+                                               "kind": "wording"}])
         self.assertEqual(self.read(eval_text())["editorial"], [], "editorial is optional")
         for text, why in (
             (editorial("", "x", "y"), "editorial 1 needs a quote"),
             (editorial("x", "", "y"), "editorial 1 needs an issue"),
             ('[[editorial]]\nquote = "x"\nissue = "y"\n', "editorial 1 needs a suggestion"),
+            (editorial("x", "y", "z") + 'kind = "style"\n', "kind must be one of wording, grammar, spelling"),
         ):
             with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
                 self.read(eval_text(editorial=text))

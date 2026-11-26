@@ -60,7 +60,7 @@ def last_ping(message_id: int) -> tuple[float, bool] | None:
 
 APPLICATIONS_ASSISTANT = "Applications Assistant"
 # Work kind -> [workers] route. Kinds not listed (thread messages) always go to assistant_task.
-ROUTES = {"research": "research", "cv_fit": "research", "tailor": "research", "cv_eval": "research",
+ROUTES = {"research": "research", "cv_fit": "research", "plan": "research", "tailor": "research", "cv_eval": "research",
           "brief": "research", "comms": "comms"}
 WORKER_NAMES = {"research": "Research worker", "comms": "Comms worker"}
 
@@ -125,8 +125,9 @@ def dev3_path(settings: Settings) -> str | None:
 
 
 def _subject(kinds: set[str]) -> str:
-    """Tailored CV or AI CV check when that is all that was queued, else Research."""
-    return {frozenset({"tailor"}): "Tailored CV", frozenset({"cv_eval"}): "AI CV check"}.get(frozenset(kinds), "Research")
+    """Tailored CV, Tailoring plan or AI CV check when that is all that was queued, else Research."""
+    return {frozenset({"tailor"}): "Tailored CV", frozenset({"cv_eval"}): "AI CV check",
+            frozenset({"plan"}): "Tailoring plan"}.get(frozenset(kinds), "Research")
 
 
 def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[str]]:

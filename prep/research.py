@@ -173,7 +173,7 @@ def inside(private_dir: Path | None, recorded: str | None) -> Path | None:
 def result_path(conn, private_dir: Path | None, app_id: int, kind: str,
                 version: int | None = None) -> tuple[bool, Path | None]:
     """For the dashboard's Open link: (a result is recorded, its path if it is inside private_dir).
-    kind: research, cv_fit or tailor (the latest tailored CV, or `version`)."""
+    kind: research, cv_fit, plan or tailor (the latest tailored CV, or `version`)."""
     app = db.get_application(conn, app_id)
     if app is None:
         return False, None
@@ -185,6 +185,8 @@ def result_path(conn, private_dir: Path | None, app_id: int, kind: str,
         record = next((v for v in db.tailored_versions(conn, app_id) if v["version"] == version), None)
     elif kind == "tailor":
         record = db.tailored_cv(conn, app_id)
+    elif kind == "plan":
+        record = db.tailor_plan(conn, app_id)
     else:
         return False, None
     if record is None:

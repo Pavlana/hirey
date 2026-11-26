@@ -3,14 +3,18 @@
 [Overview](../how-it-works.md) · [Reference index](README.md)
 
 The master CV is `private_dir/cv.md`. Every tailored CV starts from it and is a separate file;
-the master is changed only through `cv save`. Each tailored version gets a PDF and a rule check; the AI check runs when asked for,
-and the panel shows one verdict. (This page is named `cvs.md` because any file named
+the master is changed only through `cv save` or the My CV editor. A tailored CV is planned first, written
+once from the agreed plan, then edited in the panel. Each tailored version gets a PDF and a rule check;
+the AI check runs when asked for, and the panel shows one verdict. (This page is named `cvs.md` because any file named
 `cv.md` is gitignored and blocked by the privacy check.)
 
 ## Contents
 
 - [Master CV](#master-cv)
+- [Tailoring plan](#tailoring-plan)
 - [Tailored CV](#tailored-cv)
+- [Editor](#editor)
+- [Comments for the agent](#comments-for-the-agent)
 - [PDF](#pdf)
 - [Rule check](#rule-check)
 - [AI check](#ai-check)
@@ -25,8 +29,9 @@ and the panel shows one verdict. (This page is named `cvs.md` because any file n
   `- **Theme**` bullet with its items as indented `  - item` sub-bullets (`prep/cvfile.py`).
 - History: the current version, older versions folded under **Older versions**, each with its date,
   a one-line note, **Open**, **Compare** (a line diff against the current CV) and **Restore**.
-- There is no edit box. With the panel open the Applications Assistant box reads "About my CV"; the
-  agent ([assistants.md](assistants.md)) edits a draft and saves it with `cv save --note "…"`.
+- The CV section has an **Edit** box ([Editor](#editor)); a save goes through `cvfile.write_cv` like
+  `cv save`. With the panel open the Applications Assistant box reads "About my CV"; the agent
+  ([assistants.md](assistants.md)) edits a draft and saves it with `cv save --note "…"`.
 - `cv save` first stores the current text as a version, then replaces `cv.md` atomically (temp file
   and `os.replace`). Empty or unchanged text is refused ("No changes, nothing saved").
 - Restore keeps the text it replaces as a version, so the toast's **Undo** brings it back.
@@ -35,11 +40,42 @@ and the panel shows one verdict. (This page is named `cvs.md` because any file n
 - Versions live in `private_dir/cv-history/cv-<YYYYMMDD-HHMMSS>.md`; their notes and hashes in
   `cv_versions` ([database.md](database.md)). Nothing is deleted.
 
+## Tailoring plan
+
+A short plan agreed before any CV is written, so the discussion is about the role and the evidence
+rather than whole drafts (`prep/tailorplan.py`).
+
+- **Tailor CV** in an application's panel queues a `plan` request
+  ([research.md](research.md#requests-and-the-queue)); the Research worker, or the Applications
+  Assistant when none is set, writes it with the `/research` skill. **Just write it** beside it queues
+  the `tailor` request at once, with no plan, for a role that needs only small changes.
+- The file is `private_dir/cv-tailored/plans/PLAN_<Company>_<app id>.md`, about half a page, with four
+  sections:
+
+| Section | What it holds |
+| --- | --- |
+| `## What the role needs` | the must-haves and the seniority signals (scope, scale, ownership, production use) |
+| `## Evidence` | the cv.md line or facts-bank fact behind each need, and which to lead with |
+| `## Order` | the order of sections and bullets, the 2-3 summary lines in outline |
+| `## Questions` | numbered, only where the evidence is unclear, each with an `Answer:` line |
+
+- `plan save` refuses a plan without the four sections or with pay; it records the plan as a draft
+  (`tailor_plans`), closes the request and posts a note in the Applications Assistant box.
+- The panel's **Tailoring plan** card shows the plan (each question with its answer, or "not yet"),
+  how many questions are answered, **Edit** (stale-save protected, as the Notes card), **Write the CV**
+  (also "Save and write the CV" inside the editor) and **Redo plan**.
+- An answer given in the Applications Assistant box is written under its question by `/ask`
+  (`plan answer APP N`). Answers stay in the plan: nothing is written to the facts bank or
+  `stories.md` unless the user asks for it in words.
+- **Write the CV** (or `plan write APP`) marks the plan agreed and queues `tailor`; the tailoring packet
+  then names the agreed plan and the CV is written from it.
+- Wording the user approves for reuse goes to `cv-tailored/_style.md` with `style add [--app APP]`,
+  dated and tagged with its application.
+
 ## Tailored CV
 
-- **Tailor CV** in an application's panel queues a `tailor` request
-  ([research.md](research.md#requests-and-the-queue)); the Research worker, or the Applications
-  Assistant when none is set, writes it with the `/research` skill.
+- The `tailor` request comes from Write the CV (with an agreed plan) or Just write it (none); the
+  Research worker, or the Applications Assistant, writes it with the `/research` skill.
 - Each version is its own file:
   `private_dir/cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`. `cv.md` is never changed.
 - `tailor path APP [--role-short X] [--copy]` prints the next file name; `--copy` starts it from the
@@ -48,10 +84,51 @@ and the panel shows one verdict. (This page is named `cvs.md` because any file n
   version), posts the note and any questions in the Applications Assistant box, makes the PDF, runs
   the rule check. It does not queue the AI check.
 - Tailoring may rephrase, reorder and cut, never add experience. Missing facts become questions.
-- Changes are asked for in the Applications Assistant box and saved as the next version.
+- The user edits the latest version in the panel ([Editor](#editor)). Changes asked for in the
+  Applications Assistant box are made in place too (`tailor draft`, then `tailor edit APP --to MSG`);
+  a whole new version (`tailor path --copy`, `tailor save`) only when asked for.
 - `cv sent APP FILE_NAME` records which version was sent; the card shows "CV v2 · sent".
-- The panel's Tailored CV card shows the latest version and the sent one, with **Open**, **PDF** and
-  **Redo**; older versions fold under **Older versions**.
+- The panel's Tailored CV card shows the latest version and the sent one, with **Open**, **PDF**,
+  **Undo edit** (when there is one), **AI check** and **New from cv.md**; older versions fold under
+  **Older versions**; then the check, the comments count with **Revise commented lines** and **Edit**.
+
+## Editor
+
+The same editor serves the latest tailored version (Tailored CV card) and the master CV (My CV panel),
+in `prep/cvedit.py`: the Notes card's Edit form with its stale-save stamp, a monospace text box, Save
+(also Cmd/Ctrl-S) and the optional vim keys of the Learn notes editor. No autosave: each save remakes
+the PDF.
+
+- **Stamp**: the sha256 of the file the editor opened on. A save over a file that changed meanwhile is
+  refused (400); the editor comes back with the user's text and the current text above it.
+- **Tailored CV**: the body is saved over the latest version in place, its front matter kept. Before
+  each save the text it replaces is copied to `cv-tailored/edits/<version stem>_e<n>.md` and recorded
+  in `tailored_cv_edits`. **Undo edit** (or `tailor undo`) brings it back; the text Undo replaces is
+  kept beside it (`.undone.md`). Nothing is deleted.
+- Each save or undo remakes the PDF (a PDF of the old text is removed when WeasyPrint is not reachable),
+  runs the rule check again, and marks an AI check of that version out of date: its findings are
+  dropped and its scores kept with `stale`, the card says "AI check out of date" and offers **AI check
+  again**.
+- **Sent is frozen**: when the latest version is the one marked sent, a save writes the next version
+  instead (`CV_…_<n+1>.md`), so the text the company saw is kept.
+- **Agent edits**: `tailor draft APP` writes a working copy (`cv-tailored/drafts/`, with its stamp
+  beside it); `tailor edit APP [--to MSG]` saves it the same way, author `agent`, refused when the
+  version changed after the draft was made.
+- **Master CV**: a save goes through `cvfile.write_cv` (the replaced text kept as a version first, note
+  "Edited in the panel" unless one is typed); the toast's **Undo** restores that version.
+- CV text and comments are never logged.
+
+## Comments for the agent
+
+- In either editor, a line starting with `%%` is a comment on the nearest line above it
+  ("%% make this sound less junior").
+- Comments are split off before anything is written and kept in `cv_comments` (one set per tailored CV,
+  one for the master CV), so they never reach the file, the PDF or the checks. `cvpdf` and the rule
+  check also skip any `%%` line found in a file.
+- The editor, `tailor draft` and `cv draft` show them again under their line (a comment whose line is
+  gone goes to the top). Each save replaces the set: deleting a comment line handles it.
+- **Revise commented lines (N)** posts one message to the Applications Assistant (`/ask`) asking it to
+  change only those lines; the message names how many comments, never their text.
 
 ## PDF
 
@@ -100,6 +177,10 @@ one that wrote the CV and writes `cv-tailored/<version stem>.eval.md` (TOML fron
 - **Six-second skim**: does the top of page one show this role (1–5); 2 or less asks for a look.
 - **Editorial**: true but sloppy wording (a general term next to its own examples, a fact said
   twice, off-style wording), each a look with a suggestion that keeps the job's keywords.
+- **Grammar and spelling**: an editorial entry with `kind = "grammar"` or `"spelling"`, shown as
+  "Grammar: …" or "Spelling: …"; the summary counts them.
+- Grounding covers the user's own edits as well: every changed claim is traced, whoever wrote it.
+- An edit after the AI check marks it out of date ([Editor](#editor)).
 
 Findings are placed by their quoted words, so line numbers come from the file, not the model.
 
@@ -128,4 +209,7 @@ Until the AI check is asked for, the verdict is the rule check's alone. Once ask
 | `tailor save APP [--to MSG]` | record a version (note on stdin), PDF, rule check |
 | `tailor pdf APP [--version N]`, `tailor check APP [--version N]` | remake the PDF; check again |
 | `tailor eval APP [--version N]` | store the AI check |
+| `tailor draft APP`, `tailor edit APP [--to MSG]`, `tailor undo APP` | revise the latest version in place; undo |
+| `plan path`, `plan save`, `plan show`, `plan answer APP N`, `plan write` | the tailoring plan |
+| `style add [--app APP]` | add approved wording to `_style.md` |
 | `cv sent APP FILE_NAME` | record which version was sent |

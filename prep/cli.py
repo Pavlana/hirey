@@ -39,7 +39,7 @@
     python -m prep.cli feedback export [--out PATH]
     python -m prep.cli queue                          (read-only: counts and application ids)
     python -m prep.cli research next [APP_ID]          (claims the work, prints what to do)
-    python -m prep.cli research queue APP_ID [--kind research|cv_fit|tailor|cv_eval] [--redo]
+    python -m prep.cli research queue APP_ID [--kind research|cv_fit|plan|tailor|cv_eval] [--redo]
     python -m prep.cli research save APP_ID [--file PATH]
     python -m prep.cli research block APP_ID [--kind K] --reason "no posting"   (the worker cannot do it)
     python -m prep.cli fit save APP_ID [--file PATH]
@@ -48,6 +48,14 @@
     python -m prep.cli tailor pdf APP_ID [--version N]   (the PDF next to a version's file, default the latest; checks it again)
     python -m prep.cli tailor check APP_ID [--version N]   (checks a version again; pages from its PDF, no WeasyPrint)
     python -m prep.cli tailor eval APP_ID [--version N] [--file PATH]   (stores the AI check from <version>.eval.md)
+    python -m prep.cli tailor draft APP_ID     (the agent's working copy of the latest version, comments under their lines)
+    python -m prep.cli tailor edit APP_ID [--to MSG] [--file PATH]   (the draft saved over the latest version in place;
+                                                       note on stdin; undo with tailor undo; a sent version becomes the next)
+    python -m prep.cli tailor undo APP_ID      (the latest version's text before its newest edit)
+    python -m prep.cli plan path APP_ID | save APP_ID [--to MSG] | show APP_ID   (the tailoring plan; note on stdin)
+    python -m prep.cli plan answer APP_ID N [--to MSG]   (answer question N in the plan; the answer on stdin)
+    python -m prep.cli plan write APP_ID      (the plan is agreed: queue the CV from it, as the panel's Write the CV)
+    python -m prep.cli style add [--app APP_ID]   (wording the user approved, on stdin, to cv-tailored/_style.md)
     python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
                                                        (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
@@ -90,8 +98,8 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import (assistant, config, criteria, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes,
-                  research, search)
+from prep import (assistant, config, criteria, cvcheck, cvedit, cveval, cvfile, cvpdf, db, explainers, getjo, learn,
+                  learnnotes, research, search, tailorplan)
 from prep.config import ConfigError, Settings, load_settings, worker_task, worker_tasks
 
 log = logging.getLogger("prep")
@@ -500,14 +508,32 @@ def cmd_cv(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connectio
         _print_cv_history(conn, private_dir)
     elif args.cv_cmd == "draft":
         path = cvfile.make_draft(private_dir)
+        comments = db.cv_comments(conn, None)
+        if comments:  # the user's comments for the agent, under their lines ("%% …"), as in the editor
+            cvfile._write_atomic(path, cvedit.with_comments(path.read_text(encoding="utf-8").rstrip("\n"), comments) + "\n")
         print(path)
         print("  a copy of cv.md: edit it (never cv.md itself), then: python -m prep.cli cv save "
               "--note \"what changed\" [--to MSG]")
+        if comments:
+            print(f"  {len(comments)} comment(s) from the user, as \"%%\" lines under the line they are about: revise "
+                  "only those lines and delete each comment line you handled (the rest stay open)")
     elif args.cv_cmd == "save":
-        result = cvfile.save_draft(conn, private_dir, args.note, Path(args.file).expanduser() if args.file else None)
-        if result is None:
-            print("No changes, nothing saved: the text is the same as cv.md.")
+        source = Path(args.file).expanduser() if args.file else cvfile.draft_path(private_dir)
+        if not source.is_file():
+            raise LookupError(f"no file at {source}; run python -m prep.cli cv draft first")
+        text, comments = cvedit.split_comments(source.read_text(encoding="utf-8"))
+        had = len(db.cv_comments(conn, None))
+        if text.strip() == (cvfile.read_cv(private_dir) or "").strip():
+            db.replace_cv_comments(conn, None, comments)
+            print("No changes, nothing saved: the text is the same as cv.md."
+                  + (f" Comments: {len(comments)} open (were {had})." if had or comments else ""))
             return 0
+        result = cvfile.write_cv(conn, private_dir, text.strip("\n") + "\n", args.note)
+        db.replace_cv_comments(conn, None, comments)
+        if not args.file:
+            source.unlink(missing_ok=True)
+        if had or comments:
+            print(f"  comments: {had - len(comments) if had > len(comments) else 0} handled, {len(comments)} still open")
         _cv_saved(conn, args, result, "Saved")
     elif args.cv_cmd == "restore":
         result = cvfile.restore(conn, private_dir, args.version)
@@ -902,16 +928,19 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
                       "a list; never pay)")
             if app.get("getjo_job_id") and (r["force"] or not db.job_briefs(conn, {app["getjo_job_id"]})):
                 _print_brief_step(settings, app["getjo_job_id"], f"#{app_id} (from the job description)")
-                if not any(c["kind"] in ("cv_fit", "tailor") for c in claimed):  # those steps print it
+                if not any(c["kind"] in ("cv_fit", "plan", "tailor") for c in claimed):  # those steps print it
                     _print_job_description(settings, app)
         elif r["kind"] == "cv_fit":
             _print_fit_step(settings, private_dir, app, slug)
+        elif r["kind"] == "plan":
+            _print_plan_step(conn, settings, private_dir, app, slug,
+                             job=not any(c["kind"] == "cv_fit" for c in claimed))
         elif r["kind"] == "tailor":
             _print_tailor_step(conn, settings, private_dir, app, slug,
-                               job=not any(c["kind"] == "cv_fit" for c in claimed))  # the fit step printed it
+                               job=not any(c["kind"] in ("cv_fit", "plan") for c in claimed))  # printed already
         elif r["kind"] == "cv_eval":
             _print_eval_step(conn, settings, private_dir, app,
-                             job=not any(c["kind"] in ("cv_fit", "tailor") for c in claimed))
+                             job=not any(c["kind"] in ("cv_fit", "plan", "tailor") for c in claimed))
     print(f"\nApplications still waiting after this one: {remaining}")
     return 0
 
@@ -945,12 +974,52 @@ def _print_fit_step(settings: Settings, private_dir: Path, app: dict, slug: str)
     _print_job_description(settings, app)
 
 
+def _print_plan_step(conn: sqlite3.Connection, settings: Settings, private_dir: Path, app: dict,
+                     slug: str, job: bool = True) -> None:
+    """The tailoring plan: what to read, where to write it and how it is saved; no CV is written yet."""
+    cv = private_dir / research.CV_FILE
+    fit = db.cv_fit(conn, app["id"])
+    plan = db.tailor_plan(conn, app["id"])
+    path = Path(plan["file_path"]) if plan else tailorplan.plan_file(private_dir, app["company"], app["id"])
+    print("\nTailoring plan (before any CV is written; about half a page):")
+    if plan:
+        print(f"  Redo requested: write the plan again (the current one is {plan['status']}; read it and keep what the "
+              "user wrote or answered)")
+    print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before planning'})")
+    if fit:
+        print(f"  CV fit: {fit['file_path']} (score {fit['score']}/5; use its gaps and advice)")
+    profile = research.company_file(private_dir, slug)
+    print(f"  company research: {profile} ({'exists' if profile.is_file() else 'missing'})")
+    if app.get("getjo_job_id"):
+        brief = db.job_briefs(conn, {app["getjo_job_id"]}).get(app["getjo_job_id"])
+        print(f"  job brief: {'in prep.db (brief show ' + str(app['id']) + ')' if brief else 'none yet'}")
+    _print_facts(settings, "true facts not in cv.md: read only, never add to it")
+    style = research.style_file(private_dir)
+    print(f"  agreed wording: {style} ({'exists: reuse it' if style.is_file() else 'missing'})")
+    print(f"  file: {path}")
+    print("  sections: ## What the role needs (must-haves and the seniority signals: scope, scale, ownership,")
+    print("    production use), ## Evidence (the cv.md line or fact that proves each need; which to lead with),")
+    print("    ## Order (sections and bullets, the 2-3 summary lines in outline), ## Questions (numbered, only")
+    print("    where the evidence is unclear; each with an empty \"Answer:\" line under it; none is fine)")
+    print(f"  then: python -m prep.cli plan save {app['id']} (a one-line note on stdin, or none)")
+    if job:
+        _print_job_description(settings, app)
+
+
 def _print_tailor_step(conn: sqlite3.Connection, settings: Settings, private_dir: Path, app: dict,
                        slug: str, job: bool = True) -> None:
     cv = private_dir / research.CV_FILE
     fit = db.cv_fit(conn, app["id"])
     current = db.tailored_cv(conn, app["id"])
+    plan = db.tailor_plan(conn, app["id"])
     print("\nTailored CV (a copy for this job only; never edit cv.md):")
+    if plan and plan["status"] == "agreed":
+        print(f"  agreed plan: {plan['file_path']} (agreed {plan['agreed_at'][:10]}): write the CV from it, in its "
+              "order, using its evidence and the answers under its questions")
+    elif plan:
+        print(f"  plan (not agreed, context only): {plan['file_path']}")
+    else:
+        print("  no plan: Just write it was pressed; tailor straight from cv.md, the fit and the job")
     if current:
         print(f"  Redo requested: write a new version from the current cv.md (latest is version {current['version']}, "
               f"{Path(current['file_path']).name}; it is kept)")
@@ -1312,6 +1381,25 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         return _tailor_check(args, settings, conn, app)
     if args.tailor_cmd == "eval":
         return _tailor_eval(args, settings, conn, app)
+    if args.tailor_cmd == "draft":
+        draft, version = cvedit.make_draft(conn, app["id"])
+        comments = db.cv_comments(conn, app["id"])
+        print(draft)
+        print(f"  a working copy of v{version['version']} ({Path(version['file_path']).name}): edit it, then: python -m "
+              f"prep.cli tailor edit {app['id']} [--to MSG] with a short note on stdin (saved in place; Undo brings back "
+              "the text before)")
+        if comments:
+            print(f"  {len(comments)} comment(s) from the user, as \"%%\" lines under the line they are about: revise "
+                  "only those lines and delete each comment line you handled (the rest stay open)")
+        return 0
+    if args.tailor_cmd == "edit":
+        return _tailor_edit(args, settings, conn, app)
+    if args.tailor_cmd == "undo":
+        result = cvedit.undo_tailored(settings, conn, app["id"])
+        log.info("tailored cv v%s edit undone for application %s", result["version"], app["id"])  # never the CV
+        print(f"Undone: v{result['version']} has its text from before the last edit ({result['left']} more to undo).")
+        _print_refresh(result)
+        return 0
     path = Path(args.file).expanduser() if args.file else _next_tailored_file(settings, conn, app)
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
@@ -1333,6 +1421,105 @@ def cmd_tailor(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
                                 "or unrelated roles to one line" if words > research.TAILOR_MAX_WORDS else ""))
     pages = _print_pdf(settings, path, required=False)
     _print_check(settings, conn, args.app_id, version, pages)
+    return 0
+
+
+def _tailor_edit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection, app: dict) -> int:
+    """Save the agent's draft over the latest version in place (cvedit.save_draft); the note on stdin
+    (needed with --to) is posted in the thread, answering --to."""
+    if args.to is not None:
+        db.check_user_message(conn, app["id"], args.to)  # before anything is written
+    note = "" if sys.stdin.isatty() else sys.stdin.read().strip()
+    if args.to is not None and not note:
+        raise SystemExit("error: with --to, say in a short note on stdin what was changed")
+    result = cvedit.save_draft(settings, conn, app["id"], Path(args.file).expanduser() if args.file else None)
+    if not result["changed"]:
+        print(f"No changes to the text of v{result['version']}; {result['comments']} comment(s) still open."
+              + (f" Message {args.to} is still waiting for a reply." if args.to else ""))
+        return 0
+    log.info("tailored cv v%s edited in place by the agent for application %s", result["version"], app["id"])
+    if note:
+        db.reply_message(conn, app["id"], args.to, note) if args.to is not None else db.add_agent_note(conn, app["id"], note)
+    how = (f"saved as the new v{result['version']} (the sent v{result['version'] - 1} is kept as it was)"
+           if result["new_version"] else f"v{result['version']} edited in place (undo: tailor undo {app['id']})")
+    print(f"Saved: {how}; {result['comments']} comment(s) still open"
+          + ("; the note is in the thread" + (f" as the reply to message {args.to}" if args.to else "") if note else "")
+          + ".")
+    _print_refresh(result)
+    return 0
+
+
+def _print_refresh(result: dict) -> None:
+    """The PDF and rule check after an in-place edit or undo (cvedit.refresh)."""
+    if result.get("pdf_error"):
+        print(f"  {result['pdf_error']}; make it later with tailor pdf")
+    elif result.get("pages"):
+        print(f"  PDF made ({cvpdf.page_note(result['pages'])})")
+    if result.get("verdict"):
+        print(f"  Check: {cvcheck.LABELS[result['verdict']]}"
+              + (" (the AI check of the earlier text is now out of date)" if result.get("ai_stale") else ""))
+
+
+def cmd_plan(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """The tailoring plan: path (where to write it), save (record it, post the note), show, answer (one
+    question, from the thread) and write (agreed: queue the CV from it)."""
+    app = db.get_application(conn, args.app_id)
+    if app is None:
+        raise LookupError(f"no application with id {args.app_id}")
+    plan = db.tailor_plan(conn, app["id"])
+    if args.plan_cmd == "path":
+        path = Path(plan["file_path"]) if plan else tailorplan.plan_file(_private_dir(settings), app["company"], app["id"])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        print(path)
+        print(f"  sections: {', '.join('## ' + s for s in tailorplan.SECTIONS)}; then: python -m prep.cli plan save "
+              f"{app['id']} with a one-line note on stdin")
+        return 0
+    if args.plan_cmd == "save":
+        path = Path(args.file).expanduser() if args.file else (
+            Path(plan["file_path"]) if plan else tailorplan.plan_file(_private_dir(settings), app["company"], app["id"]))
+        if not path.is_file():
+            raise SystemExit(f"error: no file at {path}")
+        text = tailorplan.check(path.read_text(encoding="utf-8"))
+        asked = tailorplan.questions(text)
+        note = "" if sys.stdin.isatty() else sys.stdin.read().strip()
+        note = note or (f"Tailoring plan ready ({len(asked)} question{'s' if len(asked) != 1 else ''}). "
+                        "Read it in the panel's Tailoring plan card, edit or answer there, then press Write the CV.")
+        db.save_tailor_plan(conn, app["id"], str(path), note, args.to)
+        log.info("tailoring plan saved for application %s", app["id"])  # never the plan
+        print(f"Saved the tailoring plan for #{app['id']} ({path.name}, {len(asked)} questions); the note is in the thread.")
+        return 0
+    if plan is None:
+        raise LookupError(f"#{app['id']} has no tailoring plan yet (the panel's Tailor CV asks for one)")
+    path = Path(plan["file_path"])
+    if args.plan_cmd == "show":
+        print(f"{path} ({plan['status']}{', agreed ' + plan['agreed_at'][:10] if plan['agreed_at'] else ''})\n")
+        print(tailorplan.read(path))
+        return 0
+    if args.plan_cmd == "answer":
+        if args.to is not None:
+            db.check_user_message(conn, app["id"], args.to)
+        answer = sys.stdin.read()
+        tailorplan.save_text(conn, app["id"], tailorplan.set_answer(tailorplan.read(path), args.number, answer), None)
+        print(f"Question {args.number} answered in the plan ({path.name}).")
+        if args.to is not None:
+            reply_id = db.reply_message(conn, app["id"], args.to, f"Noted in the plan (question {args.number}).")
+            print(f"Reply {reply_id} saved; message {args.to} answered.")
+        return 0
+    if args.plan_cmd == "write":
+        _, created = db.agree_tailor_plan(conn, app["id"])
+        print(f"Plan agreed; the tailored CV is {'queued' if created else 'already queued'}: python -m prep.cli "
+              f"research next {app['id']}")
+        return 0
+    return 2
+
+
+def cmd_style(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """style add: wording the user approved, appended to cv-tailored/_style.md with the date and application."""
+    app = db.get_application(conn, args.app) if args.app is not None else None
+    if args.app is not None and app is None:
+        raise LookupError(f"no application with id {args.app}")
+    tailorplan.add_style(_private_dir(settings), app, sys.stdin.read())
+    print(f"Added to {research.style_file(_private_dir(settings))}.")
     return 0
 
 
@@ -1538,6 +1725,13 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
         print(f"  CV fit: {fit_path} ({'exists' if fit_path.is_file() else 'missing'}{note})")
         cv = private_dir / research.CV_FILE
         print(f"  CV: {cv} ({'exists' if cv.is_file() else 'missing'}; the master CV: never edit it here)")
+        plan = db.tailor_plan(conn, app["id"])
+        if plan:
+            asked = tailorplan.questions(tailorplan.read(Path(plan["file_path"])))
+            print(f"  tailoring plan: {plan['file_path']} ({plan['status']}; {sum(1 for q in asked if q.answer)} of "
+                  f"{len(asked)} questions answered)")
+            print(f"    an answer: python -m prep.cli plan answer {app['id']} N --to MSG (answer on stdin); "
+                  f"\"write it\": python -m prep.cli plan write {app['id']}")
         versions = db.tailored_versions(conn, app["id"])
         if versions:
             print("  tailored CV versions (each its own file, all kept; the latest last):")
@@ -1545,12 +1739,17 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
                 path = Path(v["file_path"])
                 sent = " · SENT" if app.get("cv_sent_version") == v["version"] else ""
                 print(f"    v{v['version']} {path} ({'exists' if path.is_file() else 'missing'}){sent}")
-            print(f"    to revise: python -m prep.cli tailor path {app['id']} --copy (new version file), edit it, then "
-                  f"python -m prep.cli tailor save {app['id']} --to MSG with what changed on stdin (this is the reply)")
+            comments = db.cv_comments(conn, app["id"])
+            if comments:
+                print(f"    {len(comments)} comment(s) from the user on the latest version: tailor draft shows them")
+            print(f"    to revise: python -m prep.cli tailor draft {app['id']}, edit the draft, then python -m prep.cli "
+                  f"tailor edit {app['id']} --to MSG with what changed on stdin (in place; this is the reply)")
             print(f"    the user sent one: python -m prep.cli cv sent {app['id']} FILE_NAME")
+        if plan or versions:
             style = research.style_file(private_dir)
-            print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'})")
-            _print_facts(settings, "header from its ## Contact section; add facts the user confirms")
+            print(f"  agreed wording: {style} ({'exists' if style.is_file() else 'missing'}; add: style add --app "
+                  f"{app['id']})")
+            _print_facts(settings, "header from its ## Contact section; add a fact only when the user says so")
     else:
         print("  private_dir is not set: no research, CV fit or CV files")
     _print_brief(conn, app.get("getjo_job_id"))
@@ -2485,6 +2684,38 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("app_id", type=int)
     t.add_argument("--version", type=int, help="default: the latest version")
     p.set_defaults(func=cmd_tailor)
+    t = tsub.add_parser("draft", help="the agent's working copy of the latest version, with the user's comments")
+    t.add_argument("app_id", type=int)
+    t = tsub.add_parser("edit", help="save the draft over the latest version in place (a sent version becomes the next)")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--to", type=int, help="the user message this answers (the note on stdin is the reply)")
+    t.add_argument("--file", help="default: the draft from tailor draft (removed once saved)")
+    t = tsub.add_parser("undo", help="the latest version's text before its newest in-place edit")
+    t.add_argument("app_id", type=int)
+
+    p = sub.add_parser("plan", help="the tailoring plan written before a tailored CV (used by /research and /ask)")
+    psub = p.add_subparsers(dest="plan_cmd", required=True)
+    t = psub.add_parser("path", help="where the application's plan is written")
+    t.add_argument("app_id", type=int)
+    t = psub.add_parser("save", help="record the plan (a draft for the user) and post the note from stdin")
+    t.add_argument("app_id", type=int)
+    t.add_argument("--to", type=int, help="the user message this answers (a Redo plan asked in the thread)")
+    t.add_argument("--file", help="default: the path plan path prints")
+    t = psub.add_parser("show", help="print the plan and whether it is agreed")
+    t.add_argument("app_id", type=int)
+    t = psub.add_parser("answer", help="write the user's answer (stdin) under question N of the plan")
+    t.add_argument("app_id", type=int)
+    t.add_argument("number", type=int)
+    t.add_argument("--to", type=int, help="the user message that gave the answer")
+    t = psub.add_parser("write", help="the plan is agreed: queue the tailored CV from it (the panel's Write the CV)")
+    t.add_argument("app_id", type=int)
+    p.set_defaults(func=cmd_plan)
+
+    p = sub.add_parser("style", help="agreed wording for tailored CVs (cv-tailored/_style.md)")
+    ssub = p.add_subparsers(dest="style_cmd", required=True)
+    t = ssub.add_parser("add", help="append wording the user approved (stdin), dated, with its application")
+    t.add_argument("--app", type=int, help="the application it was agreed on")
+    p.set_defaults(func=cmd_style)
 
     p = sub.add_parser("thread", help="the Agent thread on an application's panel (used by /ask)")
     hsub = p.add_subparsers(dest="thread_cmd", required=True)

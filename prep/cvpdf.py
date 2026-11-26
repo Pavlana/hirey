@@ -38,11 +38,13 @@ class PdfUnavailable(Exception):
 
 
 def cv_body(text: str) -> str:
-    """The CV's Markdown without the +++ front matter a tailored file starts with (a plain CV has none)."""
+    """The CV's Markdown without the +++ front matter a tailored file starts with (a plain CV has none), and
+    without "%%" comment lines (comments for the agent, prep/cvedit.py), which never reach the PDF."""
     try:
-        return research.split_front_matter(text)[1]
+        body = research.split_front_matter(text)[1]
     except ValueError:
-        return text
+        body = text
+    return "\n".join(line for line in body.split("\n") if not line.lstrip().startswith("%%"))
 
 
 def cv_title(body: str, fallback: str) -> str:

@@ -30,7 +30,7 @@ tokens and dollars) was removed, and the Evals page shows no cost ([evals.md](ev
 
 `web.stats_page` (`web.applications_tab`):
 
-- tiles: sent, response rate (with a warning), interviews, offers;
+- tiles: sent, response rate (with a warning), interviews, offers, versions per sent CV;
 - applications per week: 12 weeks, with a target line (`weekly_target`), full width;
 - the four-step funnel (`stats.stage_funnel`);
 - job boards (`web.boards_table`: `getjo.source_stats` over the read-only getjo database);
@@ -60,3 +60,7 @@ Used everywhere the numbers appear (`prep/stats.py`).
   counted once, the share now applied (a linked application past Interested). The rest are Interested,
   skipped (by reason) or not acted on.
 - **Skipped** is closed: never submitted, never a reply ([applications.md](applications.md)).
+- **Versions per sent CV**: over applications whose tailored CV is marked sent (`cv sent`), the
+  average version number sent (versions count from 1). Its note gives the average number of in-place
+  edits (the panel's editor or `tailor edit`, undone ones included) made to those versions before the
+  CV was marked sent (`stats.cv_effort`, `db.cv_effort`). The aim is one or two versions per sent CV.
