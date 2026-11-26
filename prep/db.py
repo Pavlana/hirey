@@ -465,7 +465,7 @@ CREATE TABLE IF NOT EXISTS card_source_done (
     PRIMARY KEY (card_id, source_key)
 );
 
--- Claude Code token usage (prep/usage.py), read from transcripts for the Metrics page. Numbers, ids and
+-- Claude Code token usage (prep/usage.py), read from transcripts for the Usage & cost page. Numbers, ids and
 -- the working directory only: message content is never read into these tables.
 -- usage_files: how far each transcript was read (byte offset after the last complete line).
 CREATE TABLE IF NOT EXISTS usage_files (

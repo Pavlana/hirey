@@ -30,7 +30,7 @@ FUNNEL = ("applied", "recruiter_call", "technical", "system_design", "final", "o
 REPLY_WARNING_MIN_APPS = 25
 REPLY_WARNING_RATE = 0.10
 WEEKS_SHOWN = 12
-# (label, first FUNNEL stage that counts) for the Metrics page's stage funnel.
+# (label, first FUNNEL stage that counts) for the Pipeline stats page's stage funnel.
 STEPS = (("Applied", "applied"), ("Screen", "recruiter_call"), ("Interview", "technical"), ("Offer", "offer"))
 
 

@@ -88,8 +88,8 @@ built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](me
 - Each env var overrides one key.
 - Set to an empty string, the clearable keys are cleared (`config.CLEARABLE`: `assistant_task`,
   `prep_assistant_task`, `assistant_project`, `dev3_bin`, `coordinator_task`; an empty worker variable
-  clears its route too). A demo on example data runs with `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK=`
-  and never messages the assistants named in the file.
+  clears its route too). A demo on example data runs with `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK=
+  PREP_WORKER_RESEARCH= PREP_WORKER_COMMS=` and never messages the assistants or workers named in the file.
 - An empty path or number override is ignored: an empty `PREP_DB` never means the default.
 
 ## Paths

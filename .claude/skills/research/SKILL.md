@@ -36,9 +36,9 @@ place; the answers there are handled by `/ask`.
      research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
 If another session has already claimed the work, leave it alone. With several Research workers
-(`research = [71, 72]`), each `research next` takes the work the dashboard sent to this worker first
-(each claim records this task's seq from DEV3_TASK_SEQ), then unassigned work, then another worker's
-waiting work; claims are atomic, so two workers never do the same item.
+(`research = [71, 72]`), each `research next` takes the work sent to this worker or to no worker
+first, oldest first (each claim records this task's seq from DEV3_TASK_SEQ), and another worker's
+waiting work only when none is left; claims are atomic, so two workers never do the same item.
 
 ## When a step cannot be done: block it
 
@@ -264,9 +264,10 @@ description) in the posting's exact wording: applicant tracking systems match wo
 so "K8s" does not count for "Kubernetes". The check flags every keyword missing from the body
 unless it is in `gaps`; never move a term into the body that is not true, list it under gaps.
 
-Then save it, with a short note for the Agent thread on stdin: two or three lines on what was
-tailored, then the questions as `-` bullets (plain text; Markdown is not rendered). The note is
-posted in the panel's thread, and the user answers there (`/ask` handles the answers):
+Then save it, with a short note for the Applications Assistant box on stdin: two or three lines on
+what was tailored, then the questions as `-` bullets (plain text; Markdown is not rendered). The
+note is posted in the box, tagged with the application, and the user answers there (`/ask` handles
+the answers):
 
 ```bash
 python -m prep.cli tailor save APP <<'NOTE'

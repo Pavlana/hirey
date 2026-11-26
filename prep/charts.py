@@ -1,4 +1,4 @@
-"""Inline SVG charts for the Metrics page: funnel, columns, stacked columns, share bar and trend.
+"""Inline SVG charts for the Usage & cost and Pipeline stats pages: funnel, columns, stacked columns, share bar and trend.
 
 Charts are rendered on the server, so they need no script and no library. They use SVG
 presentation attributes and CSS classes only, because the Content-Security-Policy forbids

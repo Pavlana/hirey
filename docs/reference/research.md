@@ -25,8 +25,8 @@ Requests live in `agent_requests`, one row per application and kind.
 | --- | --- | --- |
 | `research` | Company research | this page |
 | `cv_fit` | How cv.md fits the job | this page |
-| `tailor` | A tailored copy of cv.md | [cv.md](cv.md#tailored-cv) |
-| `cv_eval` | AI check of a tailored copy | [cv.md](cv.md#ai-check) |
+| `tailor` | A tailored copy of cv.md | [cvs.md](cvs.md#tailored-cv) |
+| `cv_eval` | AI check of a tailored copy | [cvs.md](cvs.md#ai-check) |
 
 - Status: `pending` → `claimed` → `done`; also `cancelled` (Stop) and `blocked` (see
   [Blocked work](#blocked-work)). `force` is set for Redo.

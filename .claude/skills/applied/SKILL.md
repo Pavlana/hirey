@@ -33,7 +33,9 @@ application.
    job updates the existing row and never moves it back to an earlier stage.
    The first tasks are created automatically:
    - Interested: no task yet. Company research and a CV fit check are queued for the agent;
-     the output says so. Offer to run /research now. Once both are saved, a "Review research
+     the output says so. When the Research worker or the Applications Assistant is set in the
+     settings, the work was already sent to it: say so. Otherwise offer to run /research now.
+     Once both are saved, a "Review research
      and apply" task (due in 2 days) appears.
    - Applied: Chase if no reply (due in 7 days); an open Review research and apply (or older
      Apply) task is marked done.

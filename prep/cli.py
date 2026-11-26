@@ -2335,7 +2335,7 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--out", help="output path (default: private_dir/feedback/job_decisions.jsonl)")
     p.set_defaults(func=cmd_feedback)
 
-    p = sub.add_parser("usage", help="Claude Code token usage for the Metrics page")
+    p = sub.add_parser("usage", help="Claude Code token usage for the Usage & cost page")
     usub = p.add_subparsers(dest="usage_cmd", required=True)
     usub.add_parser("scan", help="read new transcript lines (counts only) from claude_projects_dir")
     p.set_defaults(func=cmd_usage)

@@ -1,6 +1,6 @@
 ---
 name: today
-description: Daily job-search brief from Hirey — applications that moved to No response, queued company research and CV fit checks (run them), Agent thread messages waiting for an answer (run /ask), Learn Assistant messages waiting (/learn-ask), Learn cards done and to do, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
+description: Daily job-search brief from Hirey — applications that moved to No response, queued company research, CV fit checks and job briefs (run them unless a Research worker does), Agent thread messages waiting for an answer (run /ask), Learn Assistant messages waiting (/learn-ask), Learn cards done and to do, tasks due today or overdue (with their application), and new getjo matches scored 7 or more that are not yet tracked. Use when the user types /today or asks what to do today, what is due, or what new matches there are.
 ---
 
 # /today
@@ -19,13 +19,17 @@ description: Daily job-search brief from Hirey — applications that moved to No
      got a Debrief task and that the agent can move it back if a reply came.
    - **Agent work** (only if the output has an "Agent work pending" line): run /research now,
      without asking the user to type anything, and give its short summary here. It reads
-     cv.md and does web searches about the companies; that is expected.
+     cv.md and does web searches about the companies; that is expected. When a Research worker is
+     set (`[workers] research` in the settings; `python -m prep.cli queue` names it), the worker
+     does it: only report the count.
+   - **Job briefs** (only if the output has a "Job briefs:" line): run /research briefs now, under the
+     same Research worker rule.
    - **Agent thread** (only if the output has an "Agent thread" line): messages left in the
      dashboard's Applications Assistant box are waiting. Run /ask now and give its one-line
      summary per application.
    - **Draft replies** (only if the output has a "Draft replies:" line): "Draft a reply" requests are
-     waiting. Run /reply for each (`python -m prep.cli thread pending` lists them), unless the
-     line says a Comms worker handles them.
+     waiting. Run /reply for each (`python -m prep.cli thread pending` lists them), unless a Comms
+     worker is set (`[workers] comms`; `python -m prep.cli queue` names it): then only report the count.
    - **Learn Assistant** (only if the output has a "Learn Assistant:" line): messages in the Learn
      page's Learn Assistant box are waiting. Mention the count and that /learn-ask answers them (the
      Learn Assistant task does it when one is set); do not run it here.

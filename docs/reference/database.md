@@ -59,7 +59,7 @@ the file with `mode=ro` and creates nothing. `prep.db-wal` and `prep.db-shm` are
 Other `applications` columns: `link`, `type` (contract / permanent), `source`, `last_contact`,
 `next_action`, `next_action_date` ([applications.md](applications.md#next-action)), `puzzle_round`
 (yes / no / unknown), `contact`, `created_at`, `updated_at`, and from migrations `cv_sent`,
-`cv_sent_version`, `cv_sent_at`, `role_short` ([cv.md](cv.md)), `notes_updated_at`
+`cv_sent_version`, `cv_sent_at`, `role_short` ([cvs.md](cvs.md)), `notes_updated_at`
 ([applications.md](applications.md#notes)).
 
 - `pay` is free text that stays in this database only. The dashboard never renders it.
@@ -83,7 +83,7 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
   application and kind, even when two requests race.
 - `brief_requests` exists because `agent_requests` needs an application, which a new offer does not
   have.
-- Details: [research.md](research.md), [cv.md](cv.md).
+- Details: [research.md](research.md), [cvs.md](cvs.md).
 
 ## Conversations
 

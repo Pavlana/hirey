@@ -65,7 +65,7 @@ Static files are served from `prep/static/`: `style.css`, `app.js`, `vim.js` (Le
 - The Content-Security-Policy allows only same-origin files (`script-src 'self'`, no inline script or
   style), plus `frame-src 'self'` for Learn explainers. Nothing is fetched from another host (no CDN,
   fonts or chart libraries).
-- Pages served with their own headers: the tailored CV PDF ([cv.md](cv.md)) and the Learn explainer
+- Pages served with their own headers: the tailored CV PDF ([cvs.md](cvs.md)) and the Learn explainer
   ([learn.md](learn.md)), and a saved promptfoo report ([evals.md](evals.md#the-promptfoo-report)).
 - Logs hold the request line and status only, never request bodies or skip comments.
 - The dashboard makes no outgoing requests; job links open only when clicked. Its only outgoing
@@ -192,7 +192,7 @@ sits under the list, and the side panel on the right.
 | `closed=1` | lists the closed applications too (Show closed / Hide closed) |
 | `employer=product\|client` | keeps only that employer kind; the stage strip's counts follow it, the Pipeline count does not |
 | `sel=…` | ticked targets ([assistants.md](assistants.md#ticks-and-targets)) |
-| `cv=1` | opens My CV ([cv.md](cv.md)); wins over `app`/`job` |
+| `cv=1` | opens My CV ([cvs.md](cvs.md)); wins over `app`/`job` |
 
 Unknown values and an old `view=board` are ignored. `/applications` and `/tasks` redirect here with
 their query.
@@ -237,7 +237,7 @@ Top to bottom:
 6. **Results**, always shown:
    - the Notes card (Edit, Save, Cancel; [applications.md](applications.md#notes));
    - one card per result with Open and Redo: company research with its tier and reason, CV fit with its
-     top gaps, Tailored CV ([cv.md](cv.md)).
+     top gaps, Tailored CV ([cvs.md](cvs.md)).
 7. **History**: the stage changes newest first in a collapsed `<details>`.
 
 The panel has no other forms but Notes and Employer: tasks, comments, stage, interview dates, tier and
@@ -294,9 +294,9 @@ ignored.
 
 | Page | Path | Reference |
 | --- | --- | --- |
-| My CV panel | `/?cv=1` | [cv.md](cv.md) |
+| My CV panel | `/?cv=1` | [cvs.md](cvs.md) |
 | Research file | `/research/file?app=ID&kind=…` | [research.md](research.md) |
-| Tailored CV PDF | `/research/pdf?app=ID&v=N` | [cv.md](cv.md) |
+| Tailored CV PDF | `/research/pdf?app=ID&v=N` | [cvs.md](cvs.md) |
 | Learn | `/learn` | [learn.md](learn.md) |
 | Evals | `/evals` | [evals.md](evals.md) |
 | Usage & cost | `/usage` | [metrics.md](metrics.md#usage--cost-page) |
