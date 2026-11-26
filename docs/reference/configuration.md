@@ -45,7 +45,7 @@ it without a shell environment. The committed template is `config/settings.examp
 | `dev3_bin` | absolute path to the dev3 CLI | PATH, then `~/.dev3.0/bin/dev3` |
 | `pdf_python` | a Python with WeasyPrint, for tailored CV PDFs | the running Python |
 | `facts_file` | the facts bank tailored CV claims may trace to | `private_dir/cv-facts.md` |
-| `getjo_repo` | getjo's git checkout, read only, for the Learn explainers' check | getjo_db's grandparent when it holds `.git` |
+| `getjo_repo` | getjo's git checkout, read only: the Learn explainers' check and the Evals page | getjo_db's grandparent when it holds `.git` |
 | `claude_projects_dir` | Claude Code transcripts, read only, for the Usage tab | `~/.claude/projects` |
 | `coordinator_task` | dev3 task seq of the coordinator (Usage roles) | tasks of dev3 type coordinator |
 | `context_warn_tokens` | context per turn above which the Usage tab warns | 300000 |
