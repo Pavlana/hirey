@@ -105,6 +105,7 @@ MESSAGES = {
     "research_queued": "Queued for the Applications Assistant. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
     "mock_started": "Mock interview asked for. The assistant's first question shows in the Applications Assistant box.",
+    "draft_requested": "Draft asked for. It shows in the Applications Assistant box with Copy; nothing is sent.",
     "notes_saved": "Notes saved.",
     "employer_saved": "Employer kind saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
@@ -615,11 +616,42 @@ def start_mock(settings: Settings, conn: sqlite3.Connection, form: Form, today: 
     return {"redirect": _here(app_id), "html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
+def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
+    """Draft a reply: store a draft request (db.add_draft_request: what to write, the channel, the pasted
+    message and the user's notes) about the application (`app_id`), the job offer not yet tracked
+    (`job_id`) or the whole search (neither), and ping `/reply …` with its id in the background: the comms
+    worker when one is set, else the Applications Assistant. Nothing is ever sent to the recruiter; the
+    draft comes back in the box with Copy. The JSON reply is the thread."""
+    app_id = _int_field(form, "app_id")
+    if app_id is not None and db.get_application(conn, app_id) is None:
+        raise BadRequest(f"No application with id {app_id}.")
+    job_id = None if app_id is not None else _optional(form, "job_id")
+    if job_id and db.find_by_job(conn, job_id) is None and job_id not in db.job_decisions(conn):
+        _getjo_job(settings, {"job_id": job_id})  # an unknown job is refused
+    kind, channel = form.get("comms") or "reply", form.get("channel") or ""
+    if kind not in db.COMMS_KINDS or channel not in db.CHANNELS:
+        raise BadRequest("Pick what to write and the channel (LinkedIn or Email).")
+    if kind == "reply" and not form.get("pasted", "").strip():
+        raise BadRequest("Paste the recruiter's message to reply to.")
+    msg_id = db.add_draft_request(conn, app_id, kind, channel, form.get("pasted", ""), form.get("notes", ""), job_id)
+    about, job = db.message_subject(conn, msg_id)
+    log.info("draft request %s (%s, %s) added (application %s, job %s)", msg_id, kind, channel, about,
+             bool(job))  # never the text
+    assistant.notify_message_in_background(settings, about, msg_id, job=about is None and job is not None,
+                                           kind="comms")
+    return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
+
+
 def _msg_id(form: dict[str, str]) -> int:
     msg_id = _int_field(form, "msg_id")
     if msg_id is None:
         raise BadRequest("Which message? (msg_id)")
     return msg_id
+
+
+def _handler_name(settings: Settings, kind: str) -> str:
+    """Who answers a message: the Comms worker for a draft request when one is set, else the Applications Assistant."""
+    return assistant.target(settings, "comms")[1] if kind == "comms" else assistant.APPLICATIONS_ASSISTANT
 
 
 def _unreachable(name: str, seq: int | None) -> BadRequest:
@@ -630,14 +662,17 @@ def resend_message(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     """Resend, on a message still waiting in the Applications Assistant box: the same message goes
     back to pending (a stale or stuck claim dropped) and the assistant is pinged again with its id, at
     once (not in the background) so a failed ping is reported. No new message row."""
-    if not settings.assistant_task:
+    msg = db.get_message(conn, _msg_id(form)) or {}
+    kind = "comms" if msg.get("comms") else "ask"
+    seq = assistant.message_target(settings, kind)
+    if not seq:
         raise BadRequest("No Applications Assistant task is set (assistant_task): run /ask in a Claude Code session.")
-    msg = db.reopen_message(conn, _msg_id(form))
+    msg = db.reopen_message(conn, msg.get("id", 0))
     about, job = db.message_subject(conn, msg["id"])
     log.info("message %s sent to the assistant again", msg["id"])
     if not assistant.notify_message(settings, about, msg["id"], job=about is None and job is not None,
-                                    topic=msg["topic"]):
-        raise _unreachable("Applications Assistant", settings.assistant_task)
+                                    topic=msg["topic"], kind=kind):
+        raise _unreachable(_handler_name(settings, kind), seq)
     return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
@@ -1071,6 +1106,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/mock": (start_mock, "/", "mock_started"),
+    "/applications/draft": (request_draft, "/", "draft_requested"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/stop": (stop_waiting, "/", "stopped"),
@@ -2051,7 +2087,8 @@ def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str
         'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         '<div class="panel-body">'
-        f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div></section>'
+        f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div>'
+        + _draft_form(here, job_id=job["id"]) + "</section>"
         + brief
         + "</div></aside>"
     )
@@ -2630,7 +2667,8 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
         buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
     if app["status"] not in db.CLOSED_STATUSES:
         buttons.append(_mock_form(app, here))
-    return f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div></section>'
+    return (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div>'
+            + _draft_form(here, app_id=app["id"]) + "</section>")
 
 
 def _mock_form(app: dict, here: str) -> str:
@@ -2643,6 +2681,29 @@ def _mock_form(app: dict, here: str) -> str:
             f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
             f'<select name="stage" aria-label="Mock interview stage">{options}</select>'
             + _button("Mock interview", "secondary", "sm") + "</form>")
+
+
+def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None) -> str:
+    """Draft a reply (folded): what to write (reply, follow-up, thank-you note), the channel, the recruiter's
+    message pasted in and the user's notes. Posts a draft request about this application, this job offer
+    or (neither) the whole search; the draft comes back in the Applications Assistant box with Copy."""
+    about = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
+             else f'<input type="hidden" name="job_id" value="{h(job_id)}">' if job_id else "")
+    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS)
+    channels = "".join(f'<label class="draft-channel"><input type="radio" name="channel" value="{c}"'
+                       f'{" checked" if c == "linkedin" else ""}> {h(db.CHANNEL_LABELS[c])}</label>'
+                       for c in db.CHANNELS)
+    return ('<details class="draft-reply"><summary>Draft a reply</summary>'
+            '<form method="post" action="/applications/draft" class="ask draft-form" data-ajax="draft">'
+            f'{about}<input type="hidden" name="return" value="{h(here)}">'
+            f'<div class="draft-row"><select name="comms" aria-label="What to write">{kinds}</select>'
+            f'<span class="draft-channels" role="radiogroup" aria-label="Channel">{channels}</span></div>'
+            f'<textarea name="pasted" rows="4" maxlength="{db.MAX_MESSAGE}" aria-label="Their message" '
+            'placeholder="Paste the recruiter\'s message (LinkedIn or email). Needed for a reply."></textarea>'
+            '<textarea name="notes" rows="2" maxlength="2000" aria-label="What I want to say" '
+            'placeholder="What to say, optional: available Tue/Wed after 2, ask about hybrid…"></textarea>'
+            '<div class="ask-foot"><span class="muted">A draft to copy. Nothing is sent.</span>'
+            + _button("Draft", size="sm") + "</div></form></details>")
 
 
 def _panel_tasks(tasks: list[dict], today: str, here: str) -> str:
@@ -2993,7 +3054,7 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         'placeholder="Ask anything: which tasks need me, a question about the ticked jobs, a comparison, a change '
         '(tasks, comments, stage, tier, CV), or paste a recruiter email…" aria-label="Message to the Applications Assistant"></textarea>'
         '<div class="ask-foot"><span class="muted">The assistant does the edits and replies here.</span>'
-        + _button("Send", size="sm") + "</div></form></div></section>"
+        + _button("Send", size="sm") + "</div></form>" + _draft_form(home_url(f)) + "</div></section>"
     )
 
 
@@ -3071,10 +3132,11 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         f'data-job="{h(m["getjo_job_id"] or "")}" data-topic="{h(m["topic"] or "")}" '
         f'data-targets="{h(" ".join(t["key"] for t in targets.get(m["id"], [])))}">'
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
-        + about(m) + flags.get(m["id"], "")
+        + about(m) + _channel_tag(m) + flags.get(m["id"], "")
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div>'
-        + (_wait_actions(m, "/applications", "thread", "", bool(settings.assistant_task))
+        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _draft_box(m)
+        + (_wait_actions(m, "/applications", "thread", "",
+                         bool(assistant.message_target(settings, "comms" if m.get("comms") else "ask")))
            if m["author"] == "user" else "")
         + "</li>"
         for m in messages
@@ -3084,6 +3146,11 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
     pending = waiting > 0
     lapsed = sum(1 for m in waiting_msgs if db.claim_lapsed(m))
     work = _panel_work(settings, conn, app_id, job_id)
+    # who is working: the Comms worker when every waiting message is a draft request it handles
+    comms_seq, comms_name = assistant.target(settings, "comms")
+    drafts_only = pending and all(m.get("comms") for m in waiting_msgs)
+    handler = comms_name if drafts_only and comms_seq else "Applications Assistant"
+    has_handler = bool(comms_seq if drafts_only else settings.assistant_task)
     stop = ""
     if pending or work:
         ctx = (f'<input type="hidden" name="panel_app" value="{h(app_id)}">' if app_id is not None
@@ -3094,14 +3161,14 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
                 + (" and this job's queued work" if work else "") + '">Stop</button></form>')
     count = f" ({waiting} waiting)" if waiting else ""
     doing = f'Working on {h(" · ".join(work))}…' if work else ""
-    if pending and settings.assistant_task and lapsed == waiting:
+    if pending and has_handler and lapsed == waiting:
         noun = "message" if lapsed == 1 else "messages"
         state = ('<div class="thread-state thread-stalled" role="status">'
-                 f'<span>No reply in {db.MESSAGE_CLAIM_MINUTES} min: the Applications Assistant took {lapsed} {noun} '
+                 f'<span>No reply in {db.MESSAGE_CLAIM_MINUTES} min: the {handler} took {lapsed} {noun} '
                  f'but has not answered. Resend, or Stop.{" " + doing if doing else ""}</span>{stop}</div>')
-    elif pending and settings.assistant_task:
+    elif pending and has_handler:
         state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
-                 f'<span>Applications Assistant is working…{count}{" " + doing if doing else ""}</span>{stop}</div>')
+                 f'<span>{handler} is working…{count}{" " + doing if doing else ""}</span>{stop}</div>')
     elif pending:
         state = ('<div class="thread-state" role="status"><span>Waiting for the Applications Assistant: run /ask in a Claude Code '
                  f'session (no Applications Assistant task is set).{count}</span>{stop}</div>')
@@ -3114,6 +3181,34 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         state = ""
     return (f'<div class="thread" data-thread{" data-pending" if pending else ""}>'
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
+
+
+def _channel_tag(m: dict) -> str:
+    """The channel of a draft request or a draft ("LinkedIn" / "Email"), and what it is when not a reply."""
+    if not m.get("comms") or m.get("channel") not in db.CHANNELS:
+        return ""
+    what = "" if m["comms"] == "reply" else f' · {h(db.COMMS_LABELS.get(m["comms"], ""))}'
+    return (f'<span class="msg-channel msg-channel-{h(m["channel"])}">{h(db.CHANNEL_LABELS[m["channel"]])}'
+            f'{what}</span>')
+
+
+def _draft_box(m: dict) -> str:
+    """The agent's draft under its note: the text as typed (escaped, in a pre-wrap block) with Copy, and for
+    an email the subject line with its own Copy subject (Copy body then copies the body alone). Copy takes
+    the element's text (data-copy names it), so what is copied is exactly what is shown."""
+    if m.get("author") != "agent" or not m.get("draft_body"):
+        return ""
+    n = h(m["id"])
+    subject = ""
+    if m.get("draft_subject"):
+        subject = (f'<div class="draft-subject"><span class="draft-label">Subject</span>'
+                   f'<span class="draft-text" id="draft-subject-{n}">{h(m["draft_subject"])}</span>'
+                   f'<button type="button" class="btn btn-ghost btn-sm" data-copy="draft-subject-{n}">Copy subject</button></div>')
+    label = "Copy body" if m.get("draft_subject") else "Copy"
+    return (f'<div class="draft">{subject}<div class="draft-body" id="draft-body-{n}">{h(m["draft_body"])}</div>'
+            f'<div class="draft-actions"><button type="button" class="btn btn-secondary btn-sm" '
+            f'data-copy="draft-body-{n}">{label}</button>'
+            '<span class="muted">Paste it in LinkedIn or your mail app and send it yourself.</span></div></div>')
 
 
 def _panel_work(settings: Settings, conn: sqlite3.Connection, app_id: int | None, job_id: str | None) -> list[str]:
@@ -3150,11 +3245,12 @@ def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]
     status = {m["id"]: m["status"] for m in messages}
     flags = {}
     answered = {(m["application_id"], m["getjo_job_id"], m["topic"]): m["id"] for m in messages
-                if m["author"] == "user" and m["status"] == "answered" and m["topic"] != db.COMPARE}
+                if m["author"] == "user" and m["status"] == "answered" and m["topic"] != db.COMPARE
+                and not m.get("comms")}  # a draft answered says nothing about an /ask question
     for m in messages:
         if m["status"] == "cancelled":
             flags[m["id"]] = '<span class="msg-flag">Cancelled</span>'
-        elif (m["author"] == "user" and m["status"] in db.WAITING
+        elif (m["author"] == "user" and m["status"] in db.WAITING and not m.get("comms")
               and answered.get((m["application_id"], m["getjo_job_id"], m["topic"]), 0) > m["id"]):
             flags[m["id"]] = ('<span class="msg-flag msg-flag-warn" title="A newer message on the same job was answered, '
                               'this one was not. Cancel it, or Resend it.">no reply yet</span>')

@@ -67,9 +67,12 @@ private_dir = "/absolute/path/to/inter_prep"
 # Optional routing of queued work to worker tasks, in a [workers] table at the END of this file (keys
 # after a table header belong to it). research = <seq> sends company research, CV fit, tailored CVs,
 # AI CV checks and job briefs to that standing dev3 task instead of assistant_task; thread messages
-# always stay with assistant_task. Env PREP_WORKER_RESEARCH overrides (empty turns it off).
+# always stay with assistant_task. comms = <seq> sends "Draft a reply" requests (/reply: drafts of
+# replies to recruiters, follow-ups, thank-you notes) to a Comms worker; unset, they go to assistant_task.
+# Env PREP_WORKER_RESEARCH / PREP_WORKER_COMMS override (empty turns it off).
 #   [workers]
 #   research = 44
+#   comms = 45
 
 # Optional. Absolute path to a Python that has WeasyPrint (requirements.txt), for the PDF of each
 # tailored CV. Needed when the skills run a Python without it, e.g. from a dev3 worktree: point it

@@ -482,6 +482,43 @@ Applications Assistant box, where the answers go to the Applications Assistant a
 4. Restart the dashboard. A queued request now shows "(Research worker, queued …)" on the panel and
    arrives in that task's terminal as `/research <id>`.
 
+### Draft a reply (recruiter messages)
+
+Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies. Open the
+application (or the job offer, or use the box's own form for the whole search), unfold **Draft a
+reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email, paste the recruiter's message
+(needed for a reply) and add a line on what to say ("free Tue/Wed after 2, ask about hybrid"). The
+draft arrives in the Applications Assistant box with **Copy** (email: **Copy subject** and **Copy
+body**); paste it and send it yourself. Nothing is sent from Hirey. An interview the message books is
+recorded on the application; a rejection or anything else is only proposed in the note above the
+draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
+/reply in any Claude Code session.
+
+![Draft a reply form](screenshots/draft-reply-form.png)
+![A LinkedIn draft with Copy](screenshots/draft-linkedin.png)
+![An email draft with Copy subject and Copy body](screenshots/draft-email.png)
+
+### Comms worker (optional)
+
+A standing dev3 task that writes the drafts, so a long /ask conversation never delays them.
+
+1. Create a dev3 task, for example "Comms worker", with this description: "Standing comms worker for
+   Hirey. When messaged `/reply <app | job | general> <msg>`, run /reply. Between messages, wait.
+   Never send email or messages, never commit, push, apply to jobs or contact anyone." Start it with
+   Claude Code and leave it running.
+2. Add its seq under `[workers]` in `~/.config/inter_prep/settings.toml` (or `PREP_WORKER_COMMS`):
+
+   ```toml
+   [workers]
+   comms = 26                           # the Comms worker task's seq
+   ```
+
+3. Restart the dashboard. A draft request now shows "Comms worker is working…" and arrives in that
+   task's terminal as `/reply <id> <msg>`.
+
+CLI: `python -m prep.cli reply show MSG [--claim]`, `reply save --to MSG [--subject S] [--note N]`
+(the draft on stdin).
+
 ### Learn Assistant (optional)
 
 A second long-running dev3 task, separate from the Applications Assistant, that answers the Learn Assistant box:

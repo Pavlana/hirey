@@ -39,7 +39,9 @@ Keys:
                     (default 300000)
     [workers]       optional routing of queued work to worker tasks: `research = <dev3 task seq>` sends the
                     pings for company research, CV fit, tailored CVs, AI CV checks and job briefs to that
-                    standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task)
+                    standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task);
+                    `comms = <seq>` sends "Draft a reply" requests (/reply) to a Comms worker (env
+                    PREP_WORKER_COMMS; unset: assistant_task)
     [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
                     cache_read, cache_write, cache_write_1h) for the Usage tab's cost estimate; they
                     override the built-in list prices (prep/prices.py) for matching models
@@ -92,7 +94,7 @@ ENV_KEYS = {
     "context_warn_tokens": "PREP_CONTEXT_WARN_TOKENS",
 }
 # Route keys of the [workers] table (prep/assistant.py ROUTES maps work kinds to them) and their env vars.
-WORKER_ROUTES = ("research",)
+WORKER_ROUTES = ("research", "comms")
 WORKER_ENV = {route: f"PREP_WORKER_{route.upper()}" for route in WORKER_ROUTES}
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
 # on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the Applications and Learn Assistants named in the settings file. Path and number
