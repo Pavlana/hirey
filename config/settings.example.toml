@@ -78,7 +78,7 @@ private_dir = "/absolute/path/to/inter_prep"
 
 # Optional. Absolute path to a Python that has WeasyPrint (requirements.txt), for the PDF of each
 # tailored CV. Needed when the skills run a Python without it, e.g. from a dev3 worktree: point it
-# at the venv in the main checkout (README, "PDF of a tailored CV").
+# at the venv in the main checkout (docs/reference/cvs.md, "PDF").
 # pdf_python = "/absolute/path/to/inter_prep/.venv/bin/python"
 
 # Optional. The facts bank: true facts not in cv.md (template: cv-facts.example.md). Claims in a
@@ -86,7 +86,7 @@ private_dir = "/absolute/path/to/inter_prep"
 # cv-facts.md in private_dir.
 # facts_file = "/absolute/path/to/inter_prep/cv-facts.md"
 
-# Metrics page, Usage tab: Claude Code transcripts are read for token counts only (never message text).
+# Usage & cost page: Claude Code transcripts are read for token counts only (never message text).
 # claude_projects_dir = "/Users/example/.claude/projects"   # absolute; default ~/.claude/projects
 # coordinator_task = 3              # dev3 seq of the coordinator (tasks of dev3 type coordinator count anyway)
 # context_warn_tokens = 300000      # context per turn above this reads "time to /compact"

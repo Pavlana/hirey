@@ -217,7 +217,7 @@ def write_pdf(md_path: Path, pdf_python: Path | None = None, out: Path | None = 
             raise
         if pdf_python is None:
             raise PdfUnavailable("WeasyPrint is not available to this Python; set pdf_python in the settings "
-                                 "to a venv's python that has it (README, \"PDF of a tailored CV\")") from None
+                                 "to a venv's python that has it (docs/reference/cvs.md, \"PDF\")") from None
     return out, _render_with(pdf_python, md_path, out)
 
 

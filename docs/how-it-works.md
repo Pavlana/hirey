@@ -252,7 +252,7 @@ flowchart TD
   verdict merges both: Blocked when any finding blocks.
 - Which version was sent is recorded only when the user says so (`cv sent`).
 
-Reference: [cv.md](reference/cv.md).
+Reference: [cvs.md](reference/cvs.md).
 
 ### G. Workers sidebar and run history
 
@@ -385,7 +385,7 @@ Every key, env var and the launchd job: [configuration.md](reference/configurati
 | [applications.md](reference/applications.md) | matches, triage, stages, stage tasks, comments, notes, review order, `/today` |
 | [assistants.md](reference/assistants.md) | standing agents, routing, pings, claims and leases, the box, Resend / Cancel / Stop, drafts, Workers |
 | [research.md](reference/research.md) | research queue, company profiles, CV fit, tier, job briefs |
-| [cv.md](reference/cv.md) | master CV, tailored CV versions, PDF, rule check, AI check |
+| [cvs.md](reference/cvs.md) | master CV, tailored CV versions, PDF, rule check, AI check |
 | [practice.md](reference/practice.md) | sessions, gaps and drills, debriefs, mock interviews |
 | [learn.md](reference/learn.md) | cards, import, notes, the Learn page, Learn Assistant, explainers |
 | [dashboard.md](reference/dashboard.md) | server, hardening, app.js, each page and panel |

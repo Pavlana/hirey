@@ -239,8 +239,10 @@ for two years at …") or a change request ("shorten the summary", "lead with Az
    these lines" with the flagged lines: fix a blocking line in another version; keep the front
    matter's `keywords` and `gaps` current, a term the user confirms moves from gaps into the text) and answers the
    message, so do not also run `thread reply` for it. The save also queues the AI check
-   (grounding, fit, skim, editorial) of the new version: run it afterwards as a separate pass, as the
-   /research skill's "AI check of a tailored CV" says (`research next APP`, then a fresh subagent).
+   (grounding, fit, skim, editorial) of the new version. With a Research worker set
+   (`[workers] research`), the save sends it there: leave it. Otherwise run it afterwards as a
+   separate pass, as the /research skill's "AI check of a tailored CV" says (`research next APP`,
+   then a fresh subagent).
    No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
 4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.

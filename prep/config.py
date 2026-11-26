@@ -33,7 +33,7 @@ Keys:
     facts_file      optional absolute path to the facts bank: true facts about the user not in cv.md,
                     which tailored CV claims may trace to (default private_dir/cv-facts.md)
     claude_projects_dir  absolute path to Claude Code's transcripts, read only for token counts on the
-                    Metrics page's Usage tab (default ~/.claude/projects)
+                    Usage & cost page (default ~/.claude/projects)
     coordinator_task  optional dev3 task seq of the coordinator (else tasks of dev3 type coordinator)
     context_warn_tokens  context size per turn above which the Usage tab says "time to /compact"
                     (default 300000)
@@ -98,7 +98,7 @@ ENV_KEYS = {
 WORKER_ROUTES = ("research", "comms")
 WORKER_ENV = {route: f"PREP_WORKER_{route.upper()}" for route in WORKER_ROUTES}
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
-# on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the Applications and Learn Assistants named in the settings file. Path and number
+# on example data, with PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= too) never pings the assistants and workers named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
 CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin", "coordinator_task")
 

@@ -5,7 +5,7 @@
 How work reaches the standing agents: the Applications Assistant box, the router that picks an agent
 for each kind of work, the `dev3 message` ping, claims and leases, Resend / Cancel / Stop, recruiter
 drafts and the Workers sidebar. The Learn Assistant's own box is in [learn.md](learn.md); research
-and CV work itself is in [research.md](research.md) and [cv.md](cv.md).
+and CV work itself is in [research.md](research.md) and [cvs.md](cvs.md).
 
 ## Contents
 
@@ -206,7 +206,7 @@ header ("Ask about this") and My CV in the page header have a ☐.
 - Above the input, "About:" shows a chip per ticked target (each with ×, a hidden `about` field the
   form posts) and Clear all. Nothing ticked reads "the whole search".
 - With the My CV panel open, "About my CV" sends `topic=cv` (tagged "My CV", pinged as `/ask cv <id>`;
-  see [cv.md](cv.md)).
+  see [cvs.md](cvs.md)).
 
 The form posts every `about` value with `about_set=1`:
 

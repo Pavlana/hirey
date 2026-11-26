@@ -7,11 +7,11 @@ description: Answer messages in the Learn Assistant box on Hirey's Learn page â€
 
 The Learn page shows one card at a time, at full width, with its **Explainer** under it. A floating
 window ("Ask about this card") holds the card's Notes and the **Learn Assistant** box: one conversation for all of Learn, with every message tagged with the card that was
-open when it was sent. The dashboard only stores the message (status pending) and pings the prep
-assistant with ids; the box refreshes on its own once the reply is in. Run every command from the
+open when it was sent. The dashboard only stores the message (status pending) and pings the Learn
+Assistant (`prep_assistant_task`) with ids; the box refreshes on its own once the reply is in. Run every command from the
 repo root.
 
-This is the main study partner. It is not the Applications Agent (/ask): it never changes
+This is the main study partner. It is not the Applications Assistant (/ask): it never changes
 applications, tasks or stages.
 
 ## 1. Pick the message

@@ -75,7 +75,8 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
-             cli.py (commands used by skills), stats.py (dashboard numbers), charts.py (SVG charts), web.py (dashboard server),
+             cli.py (commands used by skills), stats.py (Pipeline stats numbers), charts.py (SVG charts), web.py (dashboard server),
+             usage.py (Claude Code token counts from transcripts, read only) + prices.py (list prices), for Usage & cost,
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: one column, skills first, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
@@ -87,13 +88,13 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              evals.py (Evals page: getjo's eval catalogue and results files, read only),
              static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check)
 .claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/ — each SKILL.md calls python -m prep.cli <command>
-.claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research and thread messages, ids only)
+.claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, briefs, thread, draft and Learn messages, worker routing; ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
 docs/        ROADMAP.md (phases + acceptance), how-it-works.md (overview: system diagram, key flows, data model),
-             reference/ (one page per area: applications, assistants, research, cv, practice, learn, dashboard,
+             reference/ (one page per area: applications, assistants, research, cvs, practice, learn, dashboard,
              routes, database, evals, metrics, configuration), usage.md (setup and reference),
              learn-format.md (Markdown format of `cards import`; example: learn.example.md), screenshots/
 data/        local databases (gitignored)
@@ -130,9 +131,9 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only); Evals at `/evals` reads `getjo_repo`'s
   `evals/` (example: `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` after `seed_example`)
 - Example data: `python -m prep.seed_example`, then
-  `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
-  `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees; the empty
-  `PREP_ASSISTANT_TASK=` and `PREP_PREP_ASSISTANT_TASK=` keep it from messaging the real Applications and Learn Assistants)
+  `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today` or
+  `... python -m prep.web --port 8766` (use a port other than 8765 in worktrees;
+  the empty `PREP_ASSISTANT_TASK=`, `PREP_PREP_ASSISTANT_TASK=` and `PREP_WORKER_*=` keep it from messaging the real assistants and workers)
 - Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
   `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
   `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
@@ -143,6 +144,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
   `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
+- Token usage for Usage & cost: `python -m prep.cli usage scan` (reads `claude_projects_dir`, counts only)
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`,
   `research block APP [--kind K] --reason R` / `brief block --job ID --reason R` (the worker cannot do it; shown in
   the Workers sidebar and Run history, `/runs`)

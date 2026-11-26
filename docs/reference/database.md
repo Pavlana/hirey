@@ -59,7 +59,7 @@ the file with `mode=ro` and creates nothing. `prep.db-wal` and `prep.db-shm` are
 Other `applications` columns: `link`, `type` (contract / permanent), `source`, `last_contact`,
 `next_action`, `next_action_date` ([applications.md](applications.md#next-action)), `puzzle_round`
 (yes / no / unknown), `contact`, `created_at`, `updated_at`, and from migrations `cv_sent`,
-`cv_sent_version`, `cv_sent_at`, `role_short` ([cv.md](cv.md)), `notes_updated_at`
+`cv_sent_version`, `cv_sent_at`, `role_short` ([cvs.md](cvs.md)), `notes_updated_at`
 ([applications.md](applications.md#notes)).
 
 - `pay` is free text that stays in this database only. The dashboard never renders it.
@@ -83,7 +83,7 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
   application and kind, even when two requests race.
 - `brief_requests` exists because `agent_requests` needs an application, which a new offer does not
   have.
-- Details: [research.md](research.md), [cv.md](cv.md).
+- Details: [research.md](research.md), [cvs.md](cvs.md).
 
 ## Conversations
 
@@ -95,7 +95,9 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 
 - `status` is set on user messages only: pending, claimed, answered, cancelled. Agent replies have NULL.
 - `topic`: `cv`, `compare` or `learn`; NULL otherwise.
-- Draft requests and drafts also use `comms`, `channel`, `draft_subject`, `draft_body`.
+- Draft requests and drafts also use `comms`, `channel`, `draft_subject`, `draft_body`. A draft request's
+  `source_id` is the user's own message holding the recruiter's text (Draft reply on a message, or the
+  form left empty); NULL when the text was pasted or none is needed.
 - A general message has no target rows; a comparison has 2 to 4.
 - Details: [assistants.md](assistants.md), [learn.md](learn.md).
 
@@ -177,7 +179,7 @@ Columns added by `MIGRATIONS`:
 | `tasks` | `stage` |
 | `gaps` | `application_id`, `session_id` |
 | `applications` | `cv_sent`, `cv_sent_version`, `cv_sent_at`, `role_short`, `notes_updated_at`, `employer_kind` |
-| `agent_messages` | `getjo_job_id`, `topic`, `card_id`, `comms`, `channel`, `draft_subject`, `draft_body`, `worker` |
+| `agent_messages` | `getjo_job_id`, `topic`, `card_id`, `comms`, `channel`, `draft_subject`, `draft_body`, `worker`, `source_id` |
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
 | `tailored_cv_checks` | `summary` |
 | `cards` | `prompt` |

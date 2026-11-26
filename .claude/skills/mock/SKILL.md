@@ -120,7 +120,7 @@ Reply with `thread reply --to MSG`, short: the question only, then the footer.
 8. Reply (`thread reply --to MSG`, ending with the end line): the scores per area (`problem solving 3/5`), one or
    two lines on what went well, each gap with its drill task id from the output (`(task #41)`), and
    one line that the transcript is saved privately; say what went into Notes, if anything. No file path, no pay.
-   When step 7 drafted cards, add a "Cards to drill" part, each card as `**<front>** (gap #ID)` then
+   When step 7 drafted cards, add a "Cards to drill" part, each card as `<front> (gap #ID)` then
    its key points, and put this line just before the end line:
    `— Gap cards · session #S · reply "save cards" to keep them, or say what to change.`
    The cards are saved only when the user says so, in a later message (/ask handles it).

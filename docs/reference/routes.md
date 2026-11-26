@@ -49,7 +49,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | --- | --- | --- | --- |
 | GET | `/applications/thread[?app=ID\|?job=ID]` | poll: `{ok, pending, status, messages, html}` | [dashboard.md](dashboard.md#polling) |
 | GET | `/workers.json` | Workers sidebar state and finished long items | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
-| GET | `/research/pdf?app=ID&v=N` | a tailored CV version's PDF, inline, own headers | [cv.md](cv.md) |
+| GET | `/research/pdf?app=ID&v=N` | a tailored CV version's PDF, inline, own headers | [cvs.md](cvs.md) |
 | GET | `/learn/thread?card=ID` | Learn box poll: pending, count, html | [learn.md](learn.md) |
 | GET | `/learn/notes?card=ID[&note=all]` | a Learn note's text and stamp | [learn.md](learn.md) |
 | GET | `/learn/explainer?card=ID` | a card's explainer page, sandboxed, own headers | [learn.md](learn.md) |
@@ -85,6 +85,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | --- | --- | --- | --- |
 | POST | `/applications/message` | store a message (`about` targets) and ping `/ask` | [assistants.md](assistants.md#sending-a-message) |
 | POST | `/applications/draft` | Draft a reply request, pinged to the comms route | [assistants.md](assistants.md#draft-a-reply-communication-worker) |
+| POST | `/applications/draft-from` | Draft reply · LinkedIn \| Email on one of the user's own messages in the box (`msg_id`, `channel`): a reply request answering it by id | [assistants.md](assistants.md#draft-a-reply-communication-worker) |
 | POST | `/applications/resend` | put a waiting message back to pending and ping again | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/cancel` | cancel one waiting message | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/stop` | cancel every waiting message and the open panel's work | [assistants.md](assistants.md#stop-and-no-reply) |
@@ -93,7 +94,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
-| POST | `/cv/restore` | restore a master CV version (`version`; JSON `{version, previous}`) | [cv.md](cv.md) |
+| POST | `/cv/restore` | restore a master CV version (`version`; JSON `{version, previous}`) | [cvs.md](cvs.md) |
 | POST | `/workers/stop` | end one worker's open runs, optionally back to the queue | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 
 ## Learn
