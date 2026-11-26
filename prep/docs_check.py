@@ -131,9 +131,16 @@ def cli_commands(root: Path) -> set[str]:
 
 
 def skills(root: Path) -> set[str]:
-    """Committed skills: .claude/skills/<name>/SKILL.md."""
+    """Committed skills: .claude/skills/<name>/SKILL.md tracked by git (private, gitignored skills such as
+    board/ stay out). Outside a git checkout, every SKILL.md on disk."""
     base = root / ".claude" / "skills"
-    return {p.parent.name for p in base.glob("*/SKILL.md")} if base.exists() else set()
+    if not base.exists():
+        return set()
+    listed = subprocess.run(["git", "ls-files", "--", ".claude/skills/*/SKILL.md"], cwd=root,
+                            capture_output=True, text=True)
+    if listed.returncode == 0:
+        return {Path(f).parent.name for f in listed.stdout.split()}
+    return {p.parent.name for p in base.glob("*/SKILL.md")}
 
 
 # --- coverage ------------------------------------------------------------------------------------

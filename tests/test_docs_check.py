@@ -72,6 +72,13 @@ class FactsTest(unittest.TestCase):
         ''')
         self.assertEqual(d.settings_keys(self.root), {"X_SETTINGS", "X_PORT", "PREP_WORKER_RESEARCH", "port"})
 
+    def test_untracked_skills_are_left_out(self):
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
+        write(self.root, ".claude/skills/today/SKILL.md", "x\n")
+        write(self.root, ".claude/skills/board/SKILL.md", "private\n")
+        subprocess.run(["git", "add", ".claude/skills/today/SKILL.md"], cwd=self.root, check=True)
+        self.assertEqual(d.skills(self.root), {"today"})
+
     def test_route_mentions(self):
         self.assertTrue(d._mentions_route("| `/learn?card=ID` |", "/learn"))
         self.assertTrue(d._mentions_route("`/applications/thread[?app=ID]`", "/applications/thread"))
