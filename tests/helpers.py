@@ -40,9 +40,6 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_DEV3_BIN": "",
             "PREP_PDF_PYTHON": "",
             "PREP_FACTS_FILE": "",
-            "PREP_CLAUDE_PROJECTS_DIR": str(self.tmp / "claude-projects"),  # never the real transcripts
-            "PREP_COORDINATOR_TASK": "",
-            "PREP_CONTEXT_WARN_TOKENS": "",
             "PREP_WORKER_RESEARCH": "",
             "PREP_WORKER_COMMS": "",
             "DEV3_TASK_SEQ": "",  # claims record no worker unless a test sets one

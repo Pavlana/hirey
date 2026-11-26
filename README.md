@@ -30,8 +30,7 @@ project that Hirey reads read-only. Nothing here applies to jobs, sends email or
 - **Learn.** Study cards by track, with notes, a Learn Assistant, and an explainer page per card
   that walks through the real code it is about.
 - **Evals.** getjo's evaluations, their runs and history on one page.
-- **Usage & cost and Pipeline stats.** What the agents cost and how long work takes; applications
-  per week, response rate and the stage funnel.
+- **Pipeline stats.** Applications per week, response rate and the stage funnel.
 
 ## How it fits together
 

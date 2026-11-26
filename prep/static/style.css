@@ -218,7 +218,6 @@ main { width: 100%; max-width: 1200px; padding: var(--space-7) var(--space-7) va
 
 /* --- layout helpers ---------------------------------------------------------- */
 .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--space-4); }
-.tiles.tiles-five { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }  /* Usage & cost: five headline numbers in one row */
 .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: var(--space-5); align-items: stretch; }
 
 /* --- card ---------------------------------------------------------------------- */

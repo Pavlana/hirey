@@ -37,7 +37,6 @@ def shots() -> dict[str, tuple[str, int, int]]:
     return {
         "applications": ("/", 1440, 950),
         "new-offers": ("/?view=offers", 1440, 950),
-        "usage-cost": ("/usage", 1440, 2200),
         "pipeline-stats": ("/stats", 1440, 1300),
         "run-history": ("/runs", 1440, 950),
         "evals": ("/evals", 1440, 1500),
@@ -75,7 +74,6 @@ def example_env(tmp: Path) -> dict[str, str]:
         "PREP_DB": str(ROOT / "data" / "example.db"),
         "PREP_GETJO_DB": str(ROOT / "data" / "example-getjo.db"),
         "PREP_GETJO_REPO": str(ROOT / "data" / "example-getjo-repo"),
-        "PREP_CLAUDE_PROJECTS_DIR": str(ROOT / "data" / "example-claude-projects"),
         "PREP_PRIVATE_DIR": str(tmp / "private"),
         "PREP_DEV3_BIN": "/nonexistent/dev3",
         "PREP_ASSISTANT_TASK": "", "PREP_PREP_ASSISTANT_TASK": "",

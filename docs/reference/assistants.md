@@ -46,7 +46,6 @@ and CV work itself is in [research.md](research.md) and [cvs.md](cvs.md).
 | Research worker | `[workers] research` | company research, CV fit, tailored CV, AI CV check, job briefs | /research |
 | Communication worker | `[workers] comms` | Draft a reply requests | /reply |
 | Learn Assistant | `prep_assistant_task` | Learn Assistant box messages | /learn-ask, /explainer |
-| Coordinator | `coordinator_task` | nothing from Hirey; named only to label its token use ([metrics.md](metrics.md)) | — |
 
 Every setting is optional. With none set, work waits in prep.db until a Claude Code session runs the
 skill (the SessionStart hook or `/today` points at it).
@@ -79,8 +78,6 @@ Routing is plain code, no LLM (`assistant.target`, `assistant.message_target`).
 - With a worker set, the SessionStart line says research and briefs belong to it.
 - The panel's queued work and the box's waiting messages carry a short tag naming their handler
   ("Tailored CV → Research worker", "→ Comms worker"; `web._work_label`, `web._route_tag`).
-- Usage & cost counts the workers' turns as "Research worker" or "Comms worker", and prices each run as a
-  job ([metrics.md](metrics.md#cost-and-time-per-job)).
 
 ## The ping
 
@@ -468,5 +465,5 @@ page was drawn, for a toast with a link.
 it still holds is cancelled, or with "Back to queue" set pending, unassigned and sent to the next free
 worker (`web._ping_requeued`). The worker's terminal is not touched.
 
-**Run history.** `/runs` (`web.runs_page`, off the nav, linked from the sidebar and Usage & cost) lists runs newest first with
+**Run history.** `/runs` (`web.runs_page`, off the nav, linked from the sidebar) lists runs newest first with
 filters by worker and result.

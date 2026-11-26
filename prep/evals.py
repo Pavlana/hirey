@@ -178,7 +178,6 @@ def runpy_summary(data: dict) -> dict:
               "recall": _rate(s.get("recall"))} for s in data.get("sweep") or [] if isinstance(s, dict)]
     metrics = {k: _rate(data.get(k)) for k in ("agreement", "apply_precision", "apply_recall")}
     metrics["personal_mentions"] = {"value": _num(data.get("personal_mentions"))}
-    metrics["cost_usd"] = {"value": _num(data.get("cost_usd"))}
     return {
         "runner": "runpy",
         "set": str(data.get("set") or ""),
@@ -191,7 +190,6 @@ def runpy_summary(data: dict) -> dict:
         "metrics": metrics,
         "passed": data.get("passed") if isinstance(data.get("passed"), bool) else None,
         "min_agreement": data.get("min_agreement"),
-        "cost": _num(data.get("cost_usd")),
         "confusion": confusion,
         "sweep": sweep,
         "cases": cases,
@@ -220,7 +218,7 @@ def _output(response: object) -> dict | None:
 
 
 def promptfoo_summary(data: dict) -> dict:
-    """Per model: pass/fail counts, cost, each named metric's mean. Per case x model: pass, the named
+    """Per model: pass/fail counts, each named metric's mean. Per case x model: pass, the named
     checks, the score and verdict, the judge's score and text."""
     body = data.get("results") if isinstance(data.get("results"), dict) else {}
     rows = [r for r in body.get("results") or [] if isinstance(r, dict)]
@@ -235,7 +233,6 @@ def promptfoo_summary(data: dict) -> dict:
             "pass": int(_num(m.get("testPassCount")) or 0),
             "fail": int(_num(m.get("testFailCount")) or 0),
             "error": int(_num(m.get("testErrorCount")) or 0),
-            "cost": _num(m.get("cost")),
             "latency_ms": _num(m.get("totalLatencyMs")),
             "named": {k: v / counts[k] for k, v in named.items()
                       if _num(v) is not None and _num(counts.get(k))} if isinstance(named, dict) else {},
@@ -243,12 +240,11 @@ def promptfoo_summary(data: dict) -> dict:
     cases: dict[int, dict] = {}
     for r in rows:
         model = _label(r.get("provider"))
-        stats = models.setdefault(model, {"label": model, "pass": 0, "fail": 0, "error": 0, "cost": None,
+        stats = models.setdefault(model, {"label": model, "pass": 0, "fail": 0, "error": 0,
                                           "latency_ms": None, "named": {}, "_derived": True})
         if stats.get("_derived"):
             key = "error" if r.get("error") and not r.get("success") else "pass" if r.get("success") else "fail"
             stats[key] += 1
-            stats["cost"] = (stats["cost"] or 0) + (_num(r.get("cost")) or 0)
         idx = int(_num(r.get("testIdx")) or 0)
         test_vars = r.get("vars") or (r.get("testCase") or {}).get("vars") or {}
         case = cases.setdefault(idx, {"idx": idx, "title": str(test_vars.get("title") or f"Case {idx + 1}"),
@@ -276,7 +272,6 @@ def promptfoo_summary(data: dict) -> dict:
             "judge": judge,
             "score": _num(out.get("score")) if out else None,
             "reasons": _strs(out.get("reasons")) if out else [],
-            "cost": _num(r.get("cost")),
             "latency_ms": _num(r.get("latencyMs")),
         }
     for stats in models.values():
@@ -285,7 +280,6 @@ def promptfoo_summary(data: dict) -> dict:
     labels = list(models)
     total_pass = sum(m["pass"] for m in models.values())
     total = sum(m["pass"] + m["fail"] + m["error"] for m in models.values())
-    costs = [m["cost"] for m in models.values() if m["cost"] is not None]
     metrics: dict[str, dict] = {"pass_rate": {"hits": total_pass, "total": total,
                                               "rate": total_pass / total if total else None}}
     for name in {k for m in models.values() for k in m["named"]}:
@@ -302,7 +296,6 @@ def promptfoo_summary(data: dict) -> dict:
         "prompt_sha": "",
         "metrics": metrics,
         "passed": None,
-        "cost": sum(costs) if costs else None,
         "per_model": [models[k] for k in labels],
         "cases": [cases[k] for k in sorted(cases)],
     }

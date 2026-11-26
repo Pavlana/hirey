@@ -1,4 +1,4 @@
-"""Inline SVG charts for the Usage & cost and Pipeline stats pages: funnel, columns, stacked columns, share bar and trend.
+"""Inline SVG charts for the Pipeline stats and Evals pages: funnel, columns, trend and lines.
 
 Charts are rendered on the server, so they need no script and no library. They use SVG
 presentation attributes and CSS classes only, because the Content-Security-Policy forbids
@@ -14,7 +14,6 @@ from html import escape
 
 SHADES = tuple(f"s{i}" for i in range(1, 11))  # dark to light
 
-Item = tuple[str, int, str]  # (label, value, colour)
 
 
 def _e(value: object) -> str:
@@ -122,55 +121,6 @@ def columns(points: list[tuple[str, int]], target: int | None = None, color: str
         )
     return (f'<svg class="chart columns" viewBox="0 0 {width} {height}" role="img" '
             f'aria-label="Column chart of {len(points)} periods">{"".join(parts)}</svg>')
-
-
-def stacked_columns(points: list[tuple[str, list[int]]], series: list[tuple[str, str]], fmt=str,
-                    width: int = 1000, height: int = 240) -> str:
-    """Vertical columns, each a stack of `series` (name, colour) values, bottom first, with the
-    column total above it and a tooltip per block. `fmt` formats axis and total labels."""
-    top = max((sum(v) for _, v in points), default=0)
-    if top <= 0:
-        return ""
-    left, bottom, top_pad = 44, 22, 16
-    plot_h = height - bottom - top_pad
-    y_of = lambda v: top_pad + plot_h * (1 - v / top)  # noqa: E731
-    slot = (width - left) / len(points)
-    bw = slot * .6
-    parts = [_axis(top, left, width, y_of, fmt)]
-    for i, (label, values) in enumerate(points):
-        x = left + i * slot + (slot - bw) / 2
-        base = 0
-        for (name, color), v in zip(series, values):
-            if v > 0:
-                y0, y1 = y_of(base), y_of(base + v)
-                parts.append(f'<rect class="{_c(color)}" x="{_n(x)}" y="{_n(y1)}" width="{_n(bw)}" '
-                             f'height="{_n(y0 - y1)}" fill="currentColor"><title>{_e(label)} · {_e(name)}: '
-                             f'{_e(fmt(v))}</title></rect>')
-            base += v
-        parts.append(f'<text class="axis" x="{_n(x + bw / 2)}" y="{height - 4}" text-anchor="middle">{_e(label)}</text>')
-        if base:
-            parts.append(f'<text class="chart-value" x="{_n(x + bw / 2)}" y="{_n(y_of(base) - 5)}" '
-                         f'text-anchor="middle">{_e(fmt(base))}</text>')
-    return (f'<svg class="chart columns stacked" viewBox="0 0 {width} {height}" role="img" '
-            f'aria-label="Stacked column chart of {len(points)} periods">{"".join(parts)}</svg>')
-
-
-def share_bar(items: list[Item], width: int = 400, height: int = 14) -> str:
-    """One rounded bar split into each item's share, with a tooltip per part."""
-    total = sum(v for _, v, _ in items if v > 0)
-    if total <= 0:
-        return ""
-    parts, x = [], 0.0
-    for label, v, color in items:
-        if v <= 0:
-            continue
-        w = width * v / total
-        parts.append(f'<rect class="{_c(color)}" x="{_n(x)}" y="0" width="{_n(w)}" height="{height}" '
-                     f'fill="currentColor"><title>{_e(label)}: {v / total:.0%}</title></rect>')
-        x += w
-    return (f'<svg class="chart share-bar" viewBox="0 0 {width} {height}" preserveAspectRatio="none" role="img" '
-            f'aria-label="Shares of {len(parts)} parts"><clipPath id="share-clip"><rect width="{width}" '
-            f'height="{height}" rx="{height / 2}"/></clipPath><g clip-path="url(#share-clip)">{"".join(parts)}</g></svg>')
 
 
 def trend(points: list[tuple[str, int]], low: int = 1, high: int = 5, color: str = "s7",

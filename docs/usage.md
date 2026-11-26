@@ -14,7 +14,6 @@ the system diagram and key flows are in [how-it-works.md](how-it-works.md).
 - [The dashboard](#the-dashboard)
 - [Standing agents](#standing-agents)
 - [Keep it running with launchd (macOS)](#keep-it-running-with-launchd-macos)
-- [Token usage](#token-usage)
 - [Privacy model](#privacy-model)
 
 ## Setup
@@ -66,18 +65,6 @@ The empty `PREP_ASSISTANT_TASK=`, `PREP_PREP_ASSISTANT_TASK=`, `PREP_WORKER_RESE
 `PREP_WORKER_COMMS=` keep the example run away from the standing agents set in the settings file:
 its messages and queued research would otherwise be sent to them.
 
-The seed also writes made-up Claude Code transcripts to `data/example-claude-projects/` (token
-counts only). To see them on the Usage & cost page (with a made-up Research worker, seq 71), name the
-example assistants and point at a dev3 that does not exist, so nothing can be sent anywhere:
-
-```bash
-PREP_ASSISTANT_TASK=7 PREP_PREP_ASSISTANT_TASK=9 PREP_WORKER_RESEARCH=71 PREP_WORKER_COMMS= \
-PREP_ASSISTANT_PROJECT=e0e0e0e0-1111-4222-8333-944445555666 \
-PREP_DEV3_BIN=/nonexistent/dev3 PREP_CLAUDE_PROJECTS_DIR=$PWD/data/example-claude-projects \
-PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766
-# then open http://localhost:8766/usage
-```
-
 The seed also copies a made-up eval catalogue and runs to `data/example-getjo-repo/`. Add
 `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` to the dashboard command and open `/evals`.
 
@@ -122,7 +109,6 @@ gitignored.
 |            | `python -m prep.cli cards import FILE [--dry-run]`                   | Add or update tracks and cards from Markdown ([format](learn-format.md)); the same track and front is updated, its done status kept |
 |            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /debrief fills and save them with `cards add` after a yes |
 | `/reply`   | `python -m prep.cli reply show MSG [--claim]` / `reply save --to MSG [--subject S] [--note N]` | Draft a reply: the request with its context; save the draft (on stdin; email needs a subject) |
-|            | `python -m prep.cli usage scan`                                     | Read new Claude Code transcript lines (counts only) for Usage & cost |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
@@ -139,7 +125,6 @@ opens the database afresh, so changes made through the skills show on the next p
 | Applications | `/` (`?view=pipeline` or `offers`) | Pipeline by stage and New offers from getjo; the selected job's panel; the Applications Assistant box; My CV | [dashboard.md](reference/dashboard.md), [applications.md](reference/applications.md) |
 | Learn | `/learn` | Tracks and cards, Your answer, notes, explainers, the Learn Assistant | [learn.md](reference/learn.md) |
 | Evals | `/evals` | getjo's evaluations, each run and its history (needs `getjo_repo`) | [evals.md](reference/evals.md) |
-| Usage & cost | `/usage` | What Claude Code costs, where the money goes, how long work takes | [metrics.md](reference/metrics.md) |
 | Pipeline stats | `/stats` | Applications per week, response rate, stage funnel, job boards | [metrics.md](reference/metrics.md) |
 | Run history | `/runs` | Every worker run, filtered by worker and result | [assistants.md](reference/assistants.md#workers-sidebar-and-run-history) |
 
@@ -160,7 +145,6 @@ Everyday flow:
   highlight any text and **✦ Ask about this** sends it to the Learn Assistant.
 
 ![New offers with a job brief](screenshots/new-offers.png)
-![Usage & cost](screenshots/usage-cost.png)
 ![Pipeline stats](screenshots/pipeline-stats.png)
 ![Evals page](screenshots/evals.png)
 ![An evals.run run](screenshots/evals-run.png)
@@ -285,7 +269,7 @@ sed -e "s|/ABSOLUTE/PATH/TO/inter_prep|$PWD|g" \
     launchd/uk.inter-prep.dashboard.plist.example > ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 plutil -lint ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
-open http://localhost:8765    # Applications; Pipeline stats at /stats, Usage & cost at /usage
+open http://localhost:8765    # Applications; Pipeline stats at /stats
 ```
 
 (`cp` the template and edit the placeholder by hand if preferred.) The job runs the venv's
@@ -325,16 +309,6 @@ Uninstall:
 launchctl bootout gui/$(id -u)/uk.inter-prep.dashboard
 rm ~/Library/LaunchAgents/uk.inter-prep.dashboard.plist
 ```
-
-## Token usage
-
-The Usage & cost page reads Claude Code's transcripts under `claude_projects_dir` (default
-`~/.claude/projects`), read only: times, models and token counts, never message text. Each page load
-reads only what was appended since the last one; `python -m prep.cli usage scan` does the same from
-the command line. A session's working directory names its dev3 task, whose seq and title come from
-`dev3`. Dollars are estimates at the built-in list prices in `prep/prices.py`, overridable with
-`[prices."<model>"]` in the settings. Definitions, pricing rules and the settings
-(`coordinator_task`, `context_warn_tokens`) are in [reference/metrics.md](reference/metrics.md).
 
 ## Privacy model
 

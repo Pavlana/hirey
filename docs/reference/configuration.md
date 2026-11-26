@@ -10,7 +10,6 @@ keeps the dashboard running. Setup steps are in [usage.md](../usage.md).
 - [Where the settings file is](#where-the-settings-file-is)
 - [Settings](#settings)
 - [Workers table](#workers-table)
-- [Prices table](#prices-table)
 - [Environment overrides](#environment-overrides)
 - [Paths](#paths)
 - [launchd](#launchd)
@@ -46,11 +45,7 @@ it without a shell environment. The committed template is `config/settings.examp
 | `pdf_python` | a Python with WeasyPrint, for tailored CV PDFs | the running Python |
 | `facts_file` | the facts bank tailored CV claims may trace to | `private_dir/cv-facts.md` |
 | `getjo_repo` | getjo's git checkout, read only: the Learn explainers' check and the Evals page | getjo_db's grandparent when it holds `.git` |
-| `claude_projects_dir` | Claude Code transcripts, read only, for Usage & cost | `~/.claude/projects` |
-| `coordinator_task` | dev3 task seq of the coordinator (Usage roles) | tasks of dev3 type coordinator |
-| `context_warn_tokens` | context per turn above which Usage & cost warns | 300000 |
 | `[workers]` | routes queued work to worker tasks | unset: everything to `assistant_task` |
-| `[prices."<model>"]` | API prices for Usage & cost's estimate | built-in list prices |
 
 ## Workers table
 
@@ -67,12 +62,6 @@ comms = 75
 - How routing and picking work: [Routing](assistants.md#routing) and
   [Several workers on one route](assistants.md#several-workers-on-one-route).
 
-## Prices table
-
-`[prices."<model id or prefix>"]` gives dollars per million tokens for `input`, `output`,
-`cache_read`, `cache_write` and `cache_write_1h` (defaults to `cache_write`). They override the
-built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](metrics.md).
-
 ## Environment overrides
 
 | Env var | Key |
@@ -82,12 +71,11 @@ built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](me
 | `PREP_RESEARCH_MAX_AGE_DAYS`, `PREP_STALE_DAYS`, `PREP_BRIEF_AUTO_MIN_SCORE` | numbers |
 | `PREP_ASSISTANT_TASK`, `PREP_PREP_ASSISTANT_TASK`, `PREP_ASSISTANT_PROJECT`, `PREP_DEV3_BIN` | assistants |
 | `PREP_PDF_PYTHON`, `PREP_FACTS_FILE` | CV |
-| `PREP_CLAUDE_PROJECTS_DIR`, `PREP_COORDINATOR_TASK`, `PREP_CONTEXT_WARN_TOKENS` | Usage & cost |
 | `PREP_WORKER_RESEARCH`, `PREP_WORKER_COMMS` | `[workers]` routes; a list as `"71,72"` |
 
 - Each env var overrides one key.
 - Set to an empty string, the clearable keys are cleared (`config.CLEARABLE`: `assistant_task`,
-  `prep_assistant_task`, `assistant_project`, `dev3_bin`, `coordinator_task`; an empty worker variable
+  `prep_assistant_task`, `assistant_project`, `dev3_bin`; an empty worker variable
   clears its route too). A demo on example data runs with `PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK=
   PREP_WORKER_RESEARCH= PREP_WORKER_COMMS=` and never messages the assistants or workers named in the file.
 - An empty path or number override is ignored: an empty `PREP_DB` never means the default.
@@ -110,5 +98,5 @@ built-in list prices (`prep/prices.py`) for matching models. See [metrics.md](me
 - Output goes to the main checkout's `data/dashboard.log` (gitignored).
 - launchd starts processes without a shell profile, so the server finds `prep_db` and `getjo_db`
   through `~/.config/inter_prep/settings.toml`.
-- `http://localhost:8765/` opens Applications; Usage & cost is at `/usage`, Pipeline stats at `/stats`.
+- `http://localhost:8765/` opens Applications; Pipeline stats is at `/stats`.
 - Install and uninstall steps are in [usage.md](../usage.md).
