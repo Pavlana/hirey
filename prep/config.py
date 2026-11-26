@@ -32,20 +32,12 @@ Keys:
                     worktree), used for tailored CV PDFs when the running Python lacks it
     facts_file      optional absolute path to the facts bank: true facts about the user not in cv.md,
                     which tailored CV claims may trace to (default private_dir/cv-facts.md)
-    claude_projects_dir  absolute path to Claude Code's transcripts, read only for token counts on the
-                    Usage & cost page (default ~/.claude/projects)
-    coordinator_task  optional dev3 task seq of the coordinator (else tasks of dev3 type coordinator)
-    context_warn_tokens  context size per turn above which the Usage tab says "time to /compact"
-                    (default 300000)
     [workers]       optional routing of queued work to worker tasks: `research = <dev3 task seq>` sends the
                     pings for company research, CV fit, tailored CVs, AI CV checks and job briefs to that
                     standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task);
                     a list (`research = [71, 72]`, env "71,72") runs several workers in parallel;
                     `comms = <seq>` sends "Draft a reply" requests (/reply) to a Comms worker (env
                     PREP_WORKER_COMMS; unset: assistant_task)
-    [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
-                    cache_read, cache_write, cache_write_1h) for the Usage tab's cost estimate; they
-                    override the built-in list prices (prep/prices.py) for matching models
 
 An env var set to an empty string clears the assistant keys (CLEARABLE); for every other key an
 empty value is ignored. Relative paths are resolved against the repo root, never the current directory,
@@ -67,9 +59,6 @@ DEFAULT_NO_RESPONSE_DAYS = 14
 DEFAULT_RESEARCH_MAX_AGE_DAYS = 90
 DEFAULT_STALE_DAYS = 3
 DEFAULT_BRIEF_AUTO_MIN_SCORE = 8
-DEFAULT_CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
-DEFAULT_CONTEXT_WARN_TOKENS = 300_000
-PRICE_KINDS = ("input", "output", "cache_read", "cache_write", "cache_write_1h")  # 1h defaults to cache_write
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -90,9 +79,6 @@ ENV_KEYS = {
     "dev3_bin": "PREP_DEV3_BIN",
     "pdf_python": "PREP_PDF_PYTHON",
     "facts_file": "PREP_FACTS_FILE",
-    "claude_projects_dir": "PREP_CLAUDE_PROJECTS_DIR",
-    "coordinator_task": "PREP_COORDINATOR_TASK",
-    "context_warn_tokens": "PREP_CONTEXT_WARN_TOKENS",
 }
 # Route keys of the [workers] table (prep/assistant.py ROUTES maps work kinds to them) and their env vars.
 WORKER_ROUTES = ("research", "comms")
@@ -100,7 +86,7 @@ WORKER_ENV = {route: f"PREP_WORKER_{route.upper()}" for route in WORKER_ROUTES}
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
 # on example data, with PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= too) never pings the assistants and workers named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
-CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin", "coordinator_task")
+CLEARABLE = ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin")
 
 
 class ConfigError(Exception):
@@ -124,12 +110,7 @@ class Settings:
     dev3_bin: Path | None = None
     pdf_python: Path | None = None
     facts_file: Path | None = None
-    claude_projects_dir: Path = DEFAULT_CLAUDE_PROJECTS_DIR
-    coordinator_task: int | None = None
-    context_warn_tokens: int = DEFAULT_CONTEXT_WARN_TOKENS
-    # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
     getjo_repo: Path | None = None
-    prices: tuple[tuple[str, tuple[float, float, float, float, float]], ...] = ()
     workers: tuple[tuple[str, int], ...] = ()  # (route, dev3 task seq) from [workers], one pair per seq
 
 
@@ -192,7 +173,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "getjo_repo", "private_dir", "dev3_bin", "pdf_python", "facts_file", "claude_projects_dir"):
+    for key in ("getjo_db", "getjo_repo", "private_dir", "dev3_bin", "pdf_python", "facts_file"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -214,12 +195,7 @@ def load_settings(path: Path | None = None) -> Settings:
         dev3_bin=Path(data["dev3_bin"]).expanduser() if data.get("dev3_bin") else None,
         pdf_python=Path(data["pdf_python"]).expanduser() if data.get("pdf_python") else None,
         facts_file=Path(data["facts_file"]).expanduser() if data.get("facts_file") else None,
-        claude_projects_dir=(Path(data["claude_projects_dir"]).expanduser() if data.get("claude_projects_dir")
-                             else DEFAULT_CLAUDE_PROJECTS_DIR),
-        coordinator_task=_int(data, "coordinator_task", 0, 1, 10**9) if data.get("coordinator_task") else None,
-        context_warn_tokens=_int(data, "context_warn_tokens", DEFAULT_CONTEXT_WARN_TOKENS, 1000, 10**8),
         getjo_repo=_getjo_repo(data),
-        prices=_prices(data.get("prices")),
         workers=_workers(data.get("workers")),
     )
 
@@ -269,27 +245,6 @@ def facts_path(settings: Settings) -> Path | None:
     if settings.facts_file:
         return settings.facts_file
     return settings.private_dir / "cv-facts.md" if settings.private_dir else None
-
-
-def _prices(value: object) -> tuple[tuple[str, tuple[float, float, float, float, float]], ...]:
-    """[prices."model"] tables: input, output, cache_read, cache_write (5-minute) and cache_write_1h in
-    dollars per million tokens. A missing cache_write_1h is cache_write; any other missing kind is 0."""
-    if not value:
-        return ()
-    if not isinstance(value, dict):
-        raise ConfigError("prices must be a table of [prices.\"<model>\"] tables")
-    out = []
-    for model, table in value.items():
-        if not isinstance(table, dict):
-            raise ConfigError(f"prices.{model} must be a table with {', '.join(PRICE_KINDS)}")
-        nums = []
-        for kind in PRICE_KINDS:
-            v = table.get(kind, table.get("cache_write", 0) if kind == "cache_write_1h" else 0)
-            if isinstance(v, bool) or not isinstance(v, (int, float)) or v < 0:
-                raise ConfigError(f"prices.{model}.{kind} must be a number of dollars per million tokens, got {v!r}")
-            nums.append(float(v))
-        out.append((str(model), tuple(nums)))
-    return tuple(sorted(out, key=lambda p: -len(p[0])))  # longest prefix first
 
 
 def _project(value: object) -> str | None:

@@ -22,7 +22,7 @@
      "docs": ["docs/reference/learn.md", "docs/learn-format.md"]},
     {"name": "Evals page", "code": ["prep/evals.py"],
      "docs": ["docs/reference/evals.md"]},
-    {"name": "Usage & cost and Pipeline stats", "code": ["prep/stats.py", "prep/usage.py", "prep/prices.py", "prep/charts.py"],
+    {"name": "Pipeline stats", "code": ["prep/stats.py", "prep/charts.py"],
      "docs": ["docs/reference/metrics.md"]},
     {"name": "Privacy rules", "code": ["prep/privacy.py", "scripts/pre-commit"],
      "docs": ["docs/how-it-works.md", "docs/reference/configuration.md", "CLAUDE.md"]},

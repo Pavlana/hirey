@@ -19,7 +19,7 @@ commands, endpoints and edge cases. Start from the overview's diagrams, then com
 | [routes.md](routes.md) | every endpoint, one line each, and old URL redirects |
 | [database.md](database.md) | every table, allowed values, migrations and backfills |
 | [evals.md](evals.md) | the Evals page: getjo's eval catalogue, run details, history, the promptfoo report, file safety |
-| [metrics.md](metrics.md) | Usage & cost and Pipeline stats: definitions, token usage, response time, cost per job, prices |
+| [metrics.md](metrics.md) | Pipeline stats: the page and the definitions behind its numbers |
 | [configuration.md](configuration.md) | settings file lookup, every key and env var, launchd |
 
 Setup, demo data and day-to-day commands are in [usage.md](../usage.md). The Markdown format of

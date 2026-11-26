@@ -31,7 +31,6 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
 | GET | `/` | Applications page: Pipeline or New offers view, panels, My CV | [dashboard.md](dashboard.md) |
-| GET | `/usage` | Usage & cost (`project=`, `days=`) | [metrics.md](metrics.md#usage--cost-page) |
 | GET | `/stats` | Pipeline stats | [metrics.md](metrics.md#pipeline-stats-page) |
 | GET | `/evals` | Evals: eval map (`group=dimension\|where`), or one eval's history (`eval=ID`) | [evals.md](evals.md) |
 | GET | `/evals/run?file=NAME` | one results file in detail | [evals.md](evals.md#run-details) |
@@ -120,7 +119,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | Old path | Goes to |
 | --- | --- |
 | `/dashboard`, `/progress`, `/metrics?tab=applications` | `/stats` |
-| `/metrics` | `/usage` with `project` and `days` kept |
+| `/metrics`, `/usage` | `/stats` |
 | `/metrics/runs` | `/runs` with the same query |
 | `/applications`, `/tasks` | `/` with the same query |
 | `/offers`, `/matches` | `/?view=offers` with `score` and `loc` kept, `company`/`role` → `q`, `show=skipped` → `skipped=1` |

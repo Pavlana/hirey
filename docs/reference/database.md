@@ -16,7 +16,6 @@ ever read ([applications.md](applications.md#matches-from-getjo)).
 - [Runs](#runs)
 - [Practice](#practice)
 - [Learn](#learn)
-- [Token usage](#token-usage)
 - [Allowed values](#allowed-values)
 - [Migrations and backfills](#migrations-and-backfills)
 
@@ -139,18 +138,6 @@ Details: [practice.md](practice.md).
 
 Details: [learn.md](learn.md).
 
-## Token usage
-
-| Table | One row per | Key columns |
-| --- | --- | --- |
-| `usage_files` | transcript file | `path`, `size`, `offset` (bytes read) |
-| `usage_messages` | API response (`message.id`) | `day`, `session`, `cwd`, `model`, token counts, `cache_write_1h`, `speed`, `geo`, `latency_ms` (response time) |
-| `usage_projects` | dev3 project | `name`, `path` |
-| `usage_tasks` | dev3 task seen in usage | `seq`, `title`, `task_type`, `status`, `pr_merged`, `fetched_at` |
-
-Numbers, ids and working directories only: message content is never read into these tables. Details:
-[metrics.md](metrics.md).
-
 ## Allowed values
 
 | Constant | Values |
@@ -186,13 +173,12 @@ Columns added by `MIGRATIONS`:
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
 | `tailored_cv_checks` | `summary` |
 | `cards` | `prompt` |
-| `usage_messages` | `cache_write_1h`, `speed`, `geo`, `latency_ms` |
 
 One-off steps run when a column is first added or on every connect:
 
 - Adding `tasks.stage` fills it from each auto task's title and turns each open application's typed
   next action into an admin task (`db.next_actions_to_tasks`).
-- Adding `usage_messages.cache_write_1h` or `latency_ms` empties `usage_files`, so transcripts still on disk are read
-  again (rows merge by message id).
+- The token-count tables of the removed Usage & cost page (`usage_files`, `usage_messages`,
+  `usage_projects`, `usage_tasks`) are dropped on connect (`db.USAGE_TABLES`).
 - `db._retire_application_messages`: old thread rows are copied into `agent_messages` with their ids
   (`INSERT OR IGNORE`), so `reply_to` still holds, then the old table is dropped.

@@ -1,8 +1,6 @@
 """Local dashboard over prep.db: Applications (the landing page, whose left column switches
 between the pipeline and New offers from getjo), Learn, Evals (getjo's eval catalogue and results files,
-read only, prep/evals.py), Usage & cost (Claude Code tokens, cost and response time from its
-transcripts, read only, prep/usage.py, with cost and time per worker job), Pipeline stats (the search's
-numbers) and Run history (/runs, from the Workers sidebar), plus a
+read only, prep/evals.py), Pipeline stats (the search's numbers) and Run history (/runs, from the Workers sidebar), plus a
 read-only view of the agent's research and CV fit files.
 
     python -m prep.web [--port 8765]
@@ -43,7 +41,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
 from prep import (assistant, charts, cvcheck, cveval, cvfile, cvpdf, db, evals, explainers, getjo, learn, learnnotes,
-                  research, stats, usage, workers)
+                  research, stats, workers)
 from prep.md import render_markdown
 from prep.config import ConfigError, Settings, load_settings
 
@@ -87,9 +85,6 @@ PAGES = (
                         '<path d="M20 5.5A1.5 1.5 0 0 0 18.5 4H13v15h5.5a1.5 1.5 0 0 1 1.5 1.5z"/>'),
     ("/evals", "Evals", '<path d="M9 3h6"/><path d="M10 3v6l-5.6 9.4A1.7 1.7 0 0 0 5.9 21h12.2a1.7 1.7 0 0 0 1.5-2.6L14 9V3"/>'
                         '<path d="M7.5 15h9"/>'),
-    ("/usage", "Usage & cost", '<circle cx="12" cy="12" r="9"/><path d="M12 6.5v11"/>'
-                               '<path d="M15 9.3c-.5-.9-1.6-1.5-3-1.5-1.7 0-3 .9-3 2.1s1.3 1.8 3 2.1 3 .9 3 2.1-1.3 2.1-3 2.1'
-                               'c-1.4 0-2.5-.6-3-1.5"/>'),
     ("/stats", "Pipeline stats", '<path d="M3 21h18"/><rect x="4" y="11" width="4" height="7" rx="1"/>'
                                  '<rect x="10" y="5" width="4" height="13" rx="1"/><rect x="16" y="14" width="4" height="4" rx="1"/>'),
 )
@@ -160,7 +155,7 @@ COMMENT_ICON = '<path d="M21 12a8 8 0 0 1-11.6 7.1L3 21l1.9-6.4A8 8 0 1 1 21 12z
 TONES = ("neutral", "accent", "info", "success", "warning", "danger", *charts.SHADES)
 # One theme per page (defined in style.css). Spare themes for new pages: dusty-blue,
 # slate-indigo, dusty-violet, mauve-rose, terracotta.
-PAGE_THEMES = {"/": "ochre", "/usage": "sage", "/stats": "dusty-blue", "/learn": "dusty-violet", "/evals": "eucalyptus"}
+PAGE_THEMES = {"/": "ochre", "/stats": "dusty-blue", "/learn": "dusty-violet", "/evals": "eucalyptus"}
 # Closed outcomes take s1-s3, then to_apply and the funnel
 # from dark to light (offer is the lightest).
 STATUS_SHADES = {
@@ -268,7 +263,6 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return eval_report(settings, path)
     pages = {
         "/": lambda s, c, t: home_page(s, c, t, query),
-        "/usage": lambda s, c, t: usage_page(s, c, t, query),
         "/stats": lambda s, c, t: stats_page(s, c, t, query),
         "/offers/skip": lambda s, c, t: skip_page(s, c, t, query),
         "/applications/skip": lambda s, c, t: app_skip_page(s, c, t, query),
@@ -290,7 +284,7 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         cards_todo = learn.counts(conn)["todo"]
         side = workers_section(settings, conn, path)
     notice = f'<div class="notice" role="status" data-flash>{h(message)}</div>' if message else ""
-    active = ("/evals" if path.startswith("/evals") else path if path in ("/learn", "/usage", "/stats")
+    active = ("/evals" if path.startswith("/evals") else path if path in ("/learn", "/stats")
               else "" if path == "/runs" else "/")
     return _page(200, title, subtitle, notice + content, active, offers, head[0] if head else "", cards_todo, side)
 
@@ -299,15 +293,11 @@ OLD_OFFERS = ("/offers", "/matches")  # the Job Offers page, now the New offers 
 
 
 def _moved(path: str, query: dict[str, list[str]]) -> str | None:
-    """Where an old page lives now, or None: Metrics was split into /usage (its Usage tab, with project and
-    days) and /stats (its Applications tab, earlier the Dashboard and /progress), its Run history moved to
-    /runs, Applications and /tasks moved to /, and Job Offers to /?view=offers with its filters."""
-    if path in ("/progress", "/dashboard"):
+    """Where an old page lives now, or None: Metrics and the removed Usage & cost page go to /stats (as do
+    the Dashboard and /progress), Metrics' Run history moved to /runs, Applications and /tasks moved to /,
+    and Job Offers to /?view=offers with its filters."""
+    if path in ("/progress", "/dashboard", "/metrics", "/usage"):
         return "/stats"
-    if path == "/metrics":
-        if (query.get("tab") or [""])[0] == "applications":
-            return "/stats"
-        return usage_url(usage_filters(query))
     if path == "/metrics/runs":
         return "/runs" + (f"?{urlencode(query, doseq=True)}" if query else "")
     if path in ("/applications", "/tasks"):
@@ -1188,27 +1178,6 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
 # --- pages (GET) ------------------------------------------------------------------------
 # Each returns (title, subtitle, HTML content). Only columns that are shown are read; never pay.
 
-TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
-COST_SHADES = {"Cache read": "s4", "Cache write": "s6", "Output": "s8", "Input": "s10"}
-ESTIMATE_NOTE = "Estimated at API prices. Your Claude subscription is billed differently."
-ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Research worker": "s6", "Comms worker": "s4",
-               "Coordinator": "s5", "Build tasks": "s3", "Main checkouts": "s1"}
-
-
-def usage_filters(query: dict[str, list[str]]) -> dict:
-    """days (7, 14 or 30) and project (a name, "all" or "" for the default) of /usage."""
-    days = (query.get("days") or [""])[0]
-    project = (query.get("project") or [""])[0].strip()
-    return {"days": int(days) if days.isdigit() and int(days) in usage.DAYS else 14, "project": project[:100]}
-
-
-def usage_url(f: dict, **changes: object) -> str:
-    pairs = {**f, **changes}
-    q = {"project": pairs["project"], "days": pairs["days"] if pairs["days"] != 14 else ""}
-    q = {k: v for k, v in q.items() if v not in ("", None)}
-    return "/usage" + (f"?{urlencode(q)}" if q else "")
-
-
 def _switch(label: str, options: list[tuple[str, str, bool]]) -> str:
     """Pill links: (href, text, active)."""
     tabs = "".join(f'<a class="view-tab{" is-active" if active else ""}" href="{h(href)}"{CURRENT if active else ""}>'
@@ -1220,252 +1189,6 @@ def stats_page(settings: Settings, conn: sqlite3.Connection, today: str,
                query: dict[str, list[str]]) -> tuple[str, str, str]:
     """/stats: the search's numbers (applications per week, response rate, funnel, job boards)."""
     return "Pipeline stats", f"Job search · {today}", applications_tab(settings, conn, today)
-
-
-def usage_page(settings: Settings, conn: sqlite3.Connection, today: str,
-               query: dict[str, list[str]]) -> tuple[str, str, str]:
-    """/usage: what Claude Code costs, where the money goes and how long work takes (prep/usage.py)."""
-    return ("Usage & cost", f"Claude Code tokens, cost and time · {today}",
-            usage_content(settings, conn, today, usage_filters(query)))
-
-
-def _tok(n: float) -> str:
-    return usage.short(n)
-
-
-def _usd(x: float) -> str:
-    """$0 · <$0.01 · $3.27 · $41.80 · $1,234."""
-    if x <= 0:
-        return "$0"
-    if x < .01:
-        return "<$0.01"
-    return f"${x:,.0f}" if round(x, 2) >= 1000 else f"${x:,.2f}"
-
-
-def _usd_axis(x: float) -> str:
-    return f"${x:,.0f}" if x >= 10 or x == 0 else f"${x:,.2f}"
-
-
-def _secs(x: float | None) -> str:
-    """A duration in seconds as "–", "4.2s", "38s", "4m 10s" or "1h 5m"."""
-    if x is None:
-        return "–"
-    if x < 10:
-        return f"{x:.1f}s"
-    if x < 60:
-        return f"{x:.0f}s"
-    m, sec = divmod(int(round(x)), 60)
-    if m < 60:
-        return f"{m}m {sec}s" if sec else f"{m}m"
-    hr, m = divmod(m, 60)
-    return f"{hr}h {m}m" if m else f"{hr}h"
-
-
-def _ms(x: float | None) -> str:
-    return _secs(None if x is None else x / 1000)
-
-
-def _share(part: float, whole: float) -> str:
-    return f"{part / whole:.0%}" if whole else "–"
-
-
-def _money_tile(label: str, w: dict) -> str:
-    unknown = f" · {h(_tok(w['unpriced']))} price unknown" if w["unpriced"] else ""
-    return _tile(label, _usd(w["cost"]), f"<small>{h(_tok(w['tokens']))} tokens{unknown}</small>", "accent")
-
-
-def _cost_cell(dollars: float, unpriced: int, tokens: int) -> str:
-    if unpriced and unpriced == tokens:
-        return '<span class="muted">price unknown</span>'
-    return h(_usd(dollars)) + ("*" if unpriced else "")
-
-
-def money_summary(r: dict, j: dict, days: int, jobs_count: bool) -> list[str]:
-    """"Where the money goes" in a few plain sentences, biggest first. `jobs_count`: the page shows this
-    repo's project (or all), so the workers' jobs are part of its cost."""
-    lines = [f"{_usd(r['cost'])} in the last {days} days: {_tok(r['total'])} tokens over {r['turns']:,} responses."]
-    if r["roles"] and r["cost"]:
-        name, _, c = r["roles"][0]
-        lines.append(f"{name} spent the most: {_usd(c)} ({_share(c, r['cost'])}).")
-    priced = [m for m in r["models"] if m["cost"]]
-    if priced:
-        m = priced[0]
-        wait = f", typical response {_ms(m['median'])}" if m["median"] is not None else ""
-        lines.append(f"{m['model']} took {_share(m['cost'], r['cost'])} of the cost{wait}.")
-    kinds = sorted(r["money"]["kinds"], key=lambda k: -k[1])
-    month = sum(c for _, c, _ in kinds)
-    if month:
-        name, c, _ = kinds[0]
-        tip = (" Cache writes mean the context was rebuilt: long pauses let the cache expire."
-               if name == "Cache write" else "")
-        lines.append(f"{name} is the largest part of the bill over {usage.MONEY_DAYS} days ({_share(c, month)}).{tip}")
-    done = [k for k in j["kinds"] if k["jobs"] and k["per_job"]]
-    if done:
-        k = max(done, key=lambda k: k["per_job"])
-        lines.append(f"{workers.KIND_LABELS.get(k['kind'], k['kind'])} is the costliest job: {_usd(k['per_job'])} "
-                     f"and {_secs(k['time'])} each (median).")
-    spent = sum(k["cost"] for k in j["kinds"])
-    if jobs_count and spent and r["cost"]:
-        lines.append(f"Worker jobs are {_share(spent, r['cost'])} of the cost; the rest is conversation, "
-                     "coordination and build tasks.")
-    return lines
-
-
-def usage_content(settings: Settings, conn: sqlite3.Connection, today: str, f: dict) -> str:
-    """Headline numbers first (cost, cache hit rate, job time), then where the money goes, per kind of job,
-    per model, over time, the most expensive jobs and tasks, and the context size per turn."""
-    try:
-        usage.sync(conn, settings)
-    except (OSError, sqlite3.Error) as e:
-        log.warning("usage scan failed (%s)", e.__class__.__name__)
-    names = usage.report(conn, settings, today, 1)["projects"]
-    home = usage.home_project(usage.projects(conn), settings)
-    project = f["project"] or (home if home in names else "all")
-    r = usage.report(conn, settings, today, f["days"], None if project == "all" else project)
-    filters = ('<div class="metrics-filters">'
-               + _switch("Project", [(usage_url(f, project=p), p, project == p) for p in [*names, "all"]])
-               + _switch("Days", [(usage_url(f, project=project, days=d), f"{d} days", f["days"] == d)
-                                  for d in usage.DAYS])
-               + "</div>") if names else ""
-    if not r["total"]:
-        where = h(str(settings.claude_projects_dir))
-        return filters + _card("Usage", _empty(f"No Claude Code usage in the last {f['days']} days.",
-                                               f"Transcripts are read from {where} (setting claude_projects_dir)."))
-    db.sync_runs(conn)
-    j = usage.jobs(conn, settings, today, f["days"])
-    m = r["money"]
-    hit = "–" if r["cache_hit"] is None else f"{r['cache_hit']:.0%}"
-    tiles = (_money_tile("Today", m["today"]) + _money_tile("Last 7 days", m["week"])
-             + _money_tile(f"Last {usage.MONEY_DAYS} days", m["month"])
-             + _tile("Cache hit rate", hit, "<small>input read from the cache, the cheap part</small>",
-                     "success" if r["cache_hit"] and r["cache_hit"] >= .8 else "")
-             + _tile("Typical job time", _secs(j["time"]["median"]),
-                     f"<small>{j['time']['n']} jobs done · slowest 10% {h(_secs(j['time']['p90']))}</small>"
-                     if j["time"]["n"] else "<small>no worker jobs in this period</small>"))
-    summary = "".join(f"<li>{h(t)}</li>" for t in money_summary(r, j, f["days"], project in (home, "all")))
-    save = ("<h3>Where to save</h3><ul class=\"save-list\">" + "".join(f"<li>{h(t)}</li>" for t in r["save"])
-            + "</ul>") if r["save"] else ""
-    where = _card("Where the money goes", f'<ul class="save-list">{summary}</ul>{save}', cls="card-wide")
-    return (filters + _note(ESTIMATE_NOTE) + f'<div class="tiles tiles-five">{tiles}</div>' + where
-            + '<div class="columns">' + _cost_parts_card(m) + _roles_card(r, f["days"]) + "</div>"
-            + _jobs_card(j, f["days"]) + _models_card(r, f["days"])
-            + _cost_per_day_card(m) + _tokens_per_day_card(r)
-            + _top_runs_card(settings, conn, j, f["days"]) + _top_tasks_card(r, f["days"])
-            + _context_card(settings, r))
-
-
-def _cost_parts_card(m: dict) -> str:
-    total = sum(c for _, c, _ in m["kinds"])
-    kinds = [(name, c, COST_SHADES[name]) for name, c, _ in m["kinds"]]
-    rows = [(f'<span class="swatch {COST_SHADES[name]}"></span>{h(name)}', h(_usd(c)), _share(c, total), h(_tok(n)))
-            for name, c, n in sorted(m["kinds"], key=lambda k: -k[1])]
-    unknown = ""
-    if m["unknown_models"]:
-        unknown = _note("Price unknown (not counted in $): " + ", ".join(
-            f"{model} {_tok(n)} tokens" for model, n in m["unknown_models"]) + ".")
-    return _card(f"Cost by part, last {usage.MONEY_DAYS} days",
-                 charts.share_bar(kinds) + _table(("Part", ("Cost", "num"), ("Share", "num"), ("Tokens", "num")),
-                                                  rows, "Nothing priced.")
-                 + _note("Cache write includes 5-minute and 1-hour writes at their own prices.") + unknown)
-
-
-def _roles_card(r: dict, days: int) -> str:
-    total = r["cost"]
-    roles = [(name, c if total else n, ROLE_SHADES.get(name, "s3")) for name, n, c in r["roles"]]
-    rows = [(f'<span class="swatch {ROLE_SHADES.get(name, "s3")}"></span>{h(name)}', h(_usd(c)), _share(c, total),
-             h(_tok(n)), h(_ms(r["role_latency"].get(name, {}).get("median"))))
-            for name, n, c in r["roles"]]
-    return _card(f"Who spends what, last {days} days", charts.share_bar(roles) + _table(
-        ("Who", ("Cost", "num"), ("Share", "num"), ("Tokens", "num"), ("Typical response", "num")), rows, "No usage.")
-                 + _note("Typical response: the median time from a request to the end of its response."))
-
-
-def _jobs_card(j: dict, days: int) -> str:
-    rows = [(h(workers.KIND_LABELS.get(k["kind"], k["kind"])), str(k["jobs"]), h(_usd(k["cost"])),
-             h(_usd(k["per_job"]) if k["per_job"] is not None else "–"),
-             h(_tok(k["tokens_per_job"]) if k["tokens_per_job"] is not None else "–"),
-             h(_secs(k["time"])), h(_secs(k["slow"]))) for k in j["kinds"]]
-    table = _table(("Kind of job", ("Done", "num"), ("Cost", "num"), ("Per job", "num"), ("Tokens per job", "num"),
-                    ("Typical time", "num"), ("Slowest 10%", "num")), rows,
-                   "No worker jobs in this period.",
-                   hint="Each item a worker takes from the queue is a job: its cost and time show here.")
-    return _card(f"Cost and time per kind of job, last {days} days", table + _note(
-        "A job's cost: its worker's responses between the job's start and finish. Per job, tokens and times are "
-        "medians of done jobs; Cost counts every run (also blocked, stopped or lapsed).")
-                 + '<p class="card-note"><a href="/runs">Run history →</a></p>', count=j["runs"], cls="card-wide")
-
-
-def _models_card(r: dict, days: int) -> str:
-    rows = [(_mono(h(m["model"])), _cost_cell(m["cost"], m["unpriced"], m["tokens"]), _share(m["cost"], r["cost"]),
-             f"{m['turns']:,}", h(_tok(m["input"])), h(_tok(m["output"])), h(_tok(m["cache_read"])),
-             h(_tok(m["cache_write"])), h(_ms(m["median"])), h(_ms(m["p90"]))) for m in r["models"]]
-    return _card(f"By model, last {days} days", _table(
-        ("Model", ("Cost", "num"), ("Share", "num"), ("Responses", "num"), ("Fresh input", "num"), ("Output", "num"),
-         ("Cache read", "num"), ("Cache write", "num"), ("Typical", "num"), ("Slowest 10%", "num")),
-        rows, "No usage.") + _note("Typical and Slowest 10%: response time, from the request to the response's last "
-                                   "line (streaming included), median and 90th percentile. – : not known (older "
-                                   "transcripts)."),
-                 cls="card-wide")
-
-
-def _cost_per_day_card(m: dict) -> str:
-    series = [(name, ROLE_SHADES.get(name, "s3")) for name in usage.ROLES]
-    days = [(f"{date.fromisoformat(d).day}", v) for d, v in m["days"]]
-    used = [s for k, s in enumerate(series) if any(v[k] for _, v in days)]
-    keep = [k for k, s in enumerate(series) if s in used]
-    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in used)
-    chart = charts.stacked_columns([(label, [v[k] for k in keep]) for label, v in days], used, _usd_axis)
-    return _card(f"Cost per day by role, last {usage.MONEY_DAYS} days",
-                 f'<div class="stack-legend">{legend}</div>' + (chart or _empty("Nothing priced in this period."))
-                 + _note(f"Day of the month under each column. {ESTIMATE_NOTE}"), cls="card-wide")
-
-
-def _tokens_per_day_card(r: dict) -> str:
-    days = [(f"{date.fromisoformat(d).day} {date.fromisoformat(d):%b}", [cr, cw, o, i]) for d, i, o, cr, cw in r["days"]]
-    legend = "".join(f'<span class="stack-key"><span class="swatch {s}"></span>{h(n)}</span>' for n, s in TOKEN_SERIES)
-    return _card("Tokens per day", f'<div class="stack-legend">{legend}</div>'
-                 + charts.stacked_columns(days, list(TOKEN_SERIES), _tok)
-                 + _note("Stacked from the bottom: cache read, cache write, output, fresh input."), cls="card-wide")
-
-
-def _top_runs_card(settings: Settings, conn: sqlite3.Connection, j: dict, days: int) -> str:
-    names = {w["seq"]: w["name"] for w in workers.configured(settings)}
-    job_names = _job_name_lookup(settings, conn)({r["getjo_job_id"] for r in j["top"]
-                                                   if not r.get("application_id") and r.get("getjo_job_id")})
-    rows = [(h(workers.KIND_LABELS.get(r["kind"], r["kind"])),
-             f'<a href="{h(workers.href(r))}">{h(workers.about(r, job_names))}</a>',
-             h(names.get(r["worker"], f"seq {r['worker']}" if r["worker"] else "–")),
-             _cost_cell(r["cost"], r["unpriced"], r["tokens"]), h(_tok(r["tokens"])), f"{r['turns']:.0f}",
-             h(_secs(r["seconds"])), h(r["result"] or ""), _mono(h(_clock(r["finished_at"]))))
-            for r in j["top"] if r["tokens"]]
-    return _card(f"Most expensive jobs, last {days} days", _table(
-        ("Kind", "About", "Worker", ("Cost", "num"), ("Tokens", "num"), ("Responses", "num"), ("Time", "num"),
-         "Result", "Finished"), rows, "No priced worker jobs in this period."), cls="card-wide")
-
-
-def _top_tasks_card(r: dict, days: int) -> str:
-    rows = [(_mono(h(t["ref"])), h(t["title"]), h(t["role"]), _cost_cell(t["cost"], t["unpriced"], t["tokens"]),
-             f"{t['turns']:,}", h(_tok(t["tokens"])), h(_tok(t["per_turn"]))) for t in r["top"]]
-    starred = _note("* part of its tokens has no price") if any(0 < t["unpriced"] < t["tokens"] for t in r["top"]) else ""
-    return _card(f"Most expensive tasks, last {days} days", _table(
-        ("Task", "Title", "Who", ("Cost", "num"), ("Responses", "num"), ("Tokens", "num"), ("Per response", "num")),
-        rows, "No tasks.") + starred, count=len(r["top"]), cls="card-wide")
-
-
-def _context_card(settings: Settings, r: dict) -> str:
-    rows = []
-    for c in r["context"]:
-        top_v = max(max(v for _, v in c["trend"]), settings.context_warn_tokens)
-        warn = '<span class="warn-text">time to /compact</span>' if c["over"] else ""
-        rows.append((h(c["role"]), _mono(h(c["ref"])), charts.trend(list(c["trend"]), 0, top_v),
-                     h(_tok(c["latest"])) + warn))
-    table = _table(("Who", "Task", "By day", ("Latest", "num")), rows,
-                   "No assistant, worker or coordinator turns in this period.",
-                   hint="Settings assistant_task, prep_assistant_task, [workers] and coordinator_task name them.")
-    return _card("Context size per response", table + _note(
-        f"Input plus cache read and written per response: each day's last one, up to {usage.CONTEXT_DAYS} active "
-        f"days, latest on the right. Warning above {_tok(settings.context_warn_tokens)} (setting "
-        "context_warn_tokens)."), cls="card-wide")
 
 
 def applications_tab(settings: Settings, conn: sqlite3.Connection, today: str) -> str:
@@ -3793,8 +3516,7 @@ def runs_page(settings: Settings, conn: sqlite3.Connection, today: str,
     note = ("" if configured else _note("No workers are set: runs by any Claude session still show here "
                                         "(assistant_task, [workers] in the settings)."))
     return ("Run history", f"Workers' runs · {today}",
-            note + _card("Runs", filters + table + '<p class="card-note">Cost and time per kind of job: '
-                         '<a href="/usage">Usage &amp; cost →</a></p>', count=len(found)))
+            note + _card("Runs", filters + table, count=len(found)))
 
 
 # --- Evals (getjo's evals: catalogue, run details, history; prep/evals.py, read only) ------------
@@ -3979,13 +3701,12 @@ def _eval_history(entry: dict) -> str:
     rows = []
     for r in reversed(runs):
         s = r["summary"]
-        cost = "–" if s["cost"] is None else _usd(s["cost"])
         passed = {True: _badge("passed", "success"), False: _badge("failed", "danger")}.get(s["passed"], "")
         rows.append((f'<a href="/evals/run?{h(urlencode({"file": r["name"]}))}">{_mono(h(r["when"]))}</a>',
                      h(r["set"]), h(s["model"]), _mono(h(s["prompt_sha"])), _mono(h(s["commit"][:7])),
-                     h(_pct(r["value"])) + (" " + passed if passed else ""), h(cost)))
-    table = _table(("When", "Set", "Model", "Prompt", "Commit", (_metric_name(metric) or "Result", "num"),
-                    ("Cost", "num")), rows, "No runs yet.")
+                     h(_pct(r["value"])) + (" " + passed if passed else "")))
+    table = _table(("When", "Set", "Model", "Prompt", "Commit", (_metric_name(metric) or "Result", "num")),
+                   rows, "No runs yet.")
     chart = f'<div class="eval-chart">{chart}</div>' if chart else ""
     return (back + card + _card(f"History · {_metric_name(metric)}", chart + table
                                 + _note("Newest first. Prompt is a hash of the scoring prompt (evals.run only): when "
@@ -4023,8 +3744,7 @@ def _runpy_run(s: dict) -> str:
              + _tile("Apply recall", _pct(m["apply_recall"]["rate"]), f"<small>{h(_rate_text(m['apply_recall']))}</small>")
              + _tile("Personal mentions", "–" if m["personal_mentions"]["value"] is None
                      else f"{m['personal_mentions']['value']:.0f}", "<small>target 0</small>",
-                     "warning" if m["personal_mentions"]["value"] else "")
-             + _tile("Cost", "–" if s["cost"] is None else _usd(s["cost"]), f"<small>{h(s['model'])}</small>"))
+                     "warning" if m["personal_mentions"]["value"] else ""))
     facts = (f'<dl class="eval-facts"><dt>Set</dt><dd>{h(s["set"])}</dd><dt>Threshold</dt><dd>{h(s["threshold"])}</dd>'
              f'<dt>Prompt</dt><dd>{_mono(h(s["prompt_sha"]))}</dd><dt>Commit</dt><dd>{_mono(h(s["commit"][:12]))}</dd>'
              f'<dt>Created</dt><dd>{_mono(h(s["created_at"]))}</dd></dl>')
@@ -4086,10 +3806,9 @@ def _promptfoo_run(name: str, s: dict, settings: Settings) -> str:
     for m in s["per_model"]:
         total = m["pass"] + m["fail"] + m["error"]
         model_rows.append((h(m["label"]), h(f"{m['pass']} of {total}"), h(m["fail"]), h(m["error"]),
-                           *[h(fmt(k, m["named"].get(k))) for k in named],
-                           h("–" if m["cost"] is None else _usd(m["cost"]))))
+                           *[h(fmt(k, m["named"].get(k))) for k in named]))
     per_model = _table(("Model", ("Passed", "num"), ("Failed", "num"), ("Errors", "num"),
-                        *[(k.replace("_", " "), "num") for k in named], ("Cost", "num")), model_rows, "No providers.")
+                        *[(k.replace("_", " "), "num") for k in named]), model_rows, "No providers.")
     labels = s["models"]
     grid_rows = []
     for c in s["cases"]:
@@ -4119,8 +3838,7 @@ def _promptfoo_run(name: str, s: dict, settings: Settings) -> str:
         grid_rows.append((job, h(c["expected"]), *cells))
     grid = _table(("Case", "Expected", *labels), grid_rows, "No cases in this file.")
     tiles = (_tile("Pass rate", _pct(s["metrics"]["pass_rate"]["rate"]), f"<small>{h(_rate_text(s['metrics']['pass_rate']))}</small>")
-             + _tile("Models", str(len(labels)), f"<small>{h(', '.join(labels))}</small>")
-             + _tile("Cost", "–" if s["cost"] is None else _usd(s["cost"]), "<small>all models</small>"))
+             + _tile("Models", str(len(labels)), f"<small>{h(', '.join(labels))}</small>"))
     return (f'<div class="tiles">{tiles}</div>' + _card("Per model", per_model, action=report)
             + _card("Case × model", grid + _note("Each check is a named promptfoo assertion; the judge (LLM "
                                                   "rubric, weight 0) never fails a case, its 0-1 score is the "

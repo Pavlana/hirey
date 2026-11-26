@@ -63,27 +63,5 @@
   ],
   "source_ticks": [
     {"card": 3, "key": "https://example.com/cart-caching-talk"}
-  ],
-  "usage": {
-    "_comment": "Made-up Claude Code usage: dev3 projects and tasks; per task its turns per weekday, context size per turn (first day to last) and active days (0 = 13 days before _anchor_date, down to -16 = 29 days before it), optional earlier day ranges (another session each), for a worker its run kinds (jobs) and turns per run (job_turns), the API model id (default claude-opus-5-5; claude-example-1 has no price) and cache_ttl (1h default, or 5m). seed_example writes transcript lines from it. No message content.",
-    "assistant_project": "e0e0e0e0-1111-4222-8333-944445555666",
-    "projects": [
-      {"id": "e0e0e0e0-1111-4222-8333-944445555666", "name": "exampleprep", "path": "/example/Dev/inter_prep"},
-      {"id": "f0f0f0f0-1111-4222-8333-944445555666", "name": "examplejobs", "path": "/example/Dev/getjo"}
-    ],
-    "tasks": [
-    {"id": "a7a7a7a7-0000-4000-8000-000000000007", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 7, "title": "Applications Assistant", "type": "standard", "status": "in-progress", "pr_merged": false, "turns": 30, "context": [80000, 340000], "days": [0, 13], "model": "claude-opus-5-5", "earlier": [[-16, -1]]},
-    {"id": "c7c7c7c7-0000-4000-8000-000000000071", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 71, "title": "Research worker", "type": "standard", "status": "in-progress", "pr_merged": false, "turns": 16, "context": [30000, 90000], "days": [0, 13], "model": "claude-sonnet-5-5", "job_turns": 4, "jobs": ["research", "cv_fit", "tailor", "cv_eval", "brief", "tailor"]},
-    {"id": "b9b9b9b9-0000-4000-8000-000000000009", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 9, "title": "Learn Assistant", "type": "standard", "status": "in-progress", "pr_merged": false, "turns": 12, "context": [50000, 120000], "days": [0, 13], "model": "claude-sonnet-5-5", "earlier": [[-16, -1]]},
-    {"id": "c3c3c3c3-0000-4000-8000-000000000003", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 3, "title": "Plan the next phases", "type": "coordinator", "status": "in-progress", "pr_merged": false, "turns": 24, "context": [110000, 215000], "days": [0, 13], "model": "claude-opus-5-5", "earlier": [[-12, -1]]},
-    {"id": "d4d4d4d4-0000-4000-8000-000000000041", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 41, "title": "Tailored CV as PDF", "type": "standard", "status": "review-by-user", "pr_merged": true, "turns": 40, "context": [40000, 160000], "days": [3, 8], "model": "claude-fable-5-1"},
-    {"id": "e5e5e5e5-0000-4000-8000-000000000052", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 52, "title": "Learn: tick off sources", "type": "standard", "status": "completed", "pr_merged": true, "turns": 35, "context": [30000, 140000], "days": [9, 11], "cache_write_share": 0.4, "model": "claude-opus-5-5"},
-    {"id": "f6f6f6f6-0000-4000-8000-000000000012", "project": "f0f0f0f0-1111-4222-8333-944445555666", "seq": 12, "title": "Score jobs in batches", "type": "standard", "status": "completed", "pr_merged": true, "turns": 28, "context": [35000, 120000], "days": [5, 9], "model": "claude-haiku-4-5", "cache_ttl": "5m"},
-    {"id": "a1a1a1a1-0000-4000-8000-000000000033", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 33, "title": "Usage tab on the Metrics page", "type": "standard", "status": "completed", "pr_merged": true, "turns": 45, "context": [40000, 180000], "days": [-14, -9]},
-    {"id": "a2a2a2a2-0000-4000-8000-000000000027", "project": "e0e0e0e0-1111-4222-8333-944445555666", "seq": 27, "title": "Try a local model for briefs", "type": "standard", "status": "cancelled", "pr_merged": false, "turns": 20, "context": [20000, 60000], "days": [-6, -5], "model": "claude-example-1"}
-    ],
-    "checkouts": [
-      {"project": "e0e0e0e0-1111-4222-8333-944445555666", "turns": 6, "context": [30000, 60000], "days": [0, 13]}
-    ]
-  }
+  ]
 }

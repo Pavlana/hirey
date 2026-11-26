@@ -64,8 +64,7 @@ class LoadSettingsTest(unittest.TestCase):
             s = load_settings(path)
         self.assertEqual((s.prep_db, s.getjo_db, s.dashboard_port), (Path("/data/prep.db"), Path("/data/jobs.db"), 9000),
                          "an empty path or number override is ignored")
-        self.assertEqual(config.CLEARABLE, ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin",
-                                            "coordinator_task"))
+        self.assertEqual(config.CLEARABLE, ("assistant_task", "prep_assistant_task", "assistant_project", "dev3_bin"))
 
     def test_prep_assistant_task(self) -> None:
         # The Learn page's Learn Assistant has its own dev3 task; an empty env var clears it.

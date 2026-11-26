@@ -46,7 +46,7 @@ Static files are served from `prep/static/`: `style.css`, `app.js`, `vim.js` (Le
 `explainer.css` / `explainer.js` (Learn explainer pages).
 
 - `style.css` holds the design tokens: one dark grey theme where each page has its own muted hue:
-  Applications ochre, Usage & cost sage (dark olive to pale lime), Pipeline stats dusty blue, Learn dusty
+  Applications ochre, Pipeline stats dusty blue, Learn dusty
   violet, Evals eucalyptus
   (`web.PAGE_THEMES`).
 - More themes (slate indigo, mauve rose, terracotta) are ready for new pages.
@@ -297,7 +297,6 @@ ignored.
 | Tailored CV PDF | `/research/pdf?app=ID&v=N` | [cvs.md](cvs.md) |
 | Learn | `/learn` | [learn.md](learn.md) |
 | Evals | `/evals` | [evals.md](evals.md) |
-| Usage & cost | `/usage` | [metrics.md](metrics.md#usage--cost-page) |
 | Pipeline stats | `/stats` | [metrics.md](metrics.md#pipeline-stats-page) |
 | Run history (not in the nav) | `/runs` | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 

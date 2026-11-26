@@ -4,7 +4,7 @@ A personal job-search and interview-prep workspace. It tracks applications, task
 interview preparation in one SQLite database (`prep.db`). It is driven through Claude Code
 skills in this repo and a local web dashboard (`python -m prep.web`, `localhost:8765`: Applications,
 with Pipeline and New offers views, at `/`; Learn at `/learn`;
-Evals at `/evals`; Usage & cost at `/usage`; Pipeline stats at `/stats`).
+Evals at `/evals`; Pipeline stats at `/stats`).
 Both read and write the same database.
 
 It sits next to **getjo** (job-radar), a separate project that polls public job boards,
@@ -76,7 +76,6 @@ They live in the folder named by `private_dir`. Committed templates use the `.ex
 ```
 prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (read-only getjo view),
              cli.py (commands used by skills), stats.py (Pipeline stats numbers), charts.py (SVG charts), web.py (dashboard server),
-             usage.py (Claude Code token counts from transcripts, read only) + prices.py (list prices), for Usage & cost,
              research.py (agent result files), cvfile.py (master CV: versions, skills, diff),
              md.py (safe Markdown subset), cvpdf.py + cv_template.html (CV as PDF: one column, skills first, WeasyPrint),
              cvcheck.py (tailored CV rule checks, verdict, changes vs cv.md),
@@ -147,7 +146,6 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
   `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
-- Token usage for Usage & cost: `python -m prep.cli usage scan` (reads `claude_projects_dir`, counts only)
 - Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`,
   `research block APP [--kind K] --reason R` / `brief block --job ID --reason R` (the worker cannot do it; shown in
   the Workers sidebar and Run history, `/runs`)

@@ -434,51 +434,6 @@ CREATE TABLE IF NOT EXISTS card_source_done (
     PRIMARY KEY (card_id, source_key)
 );
 
--- Claude Code token usage (prep/usage.py), read from transcripts for the Usage & cost page. Numbers, ids and
--- the working directory only: message content is never read into these tables.
--- usage_files: how far each transcript was read (byte offset after the last complete line).
-CREATE TABLE IF NOT EXISTS usage_files (
-    path   TEXT PRIMARY KEY,
-    size   INTEGER NOT NULL,
-    offset INTEGER NOT NULL
-);
-
--- One row per API response (message.id): a streamed response is written on several lines, so each
--- token count keeps its largest value. day is the local date of the first line seen.
-CREATE TABLE IF NOT EXISTS usage_messages (
-    message_id  TEXT PRIMARY KEY,
-    ts          TEXT NOT NULL,
-    day         TEXT NOT NULL,
-    session     TEXT,
-    cwd         TEXT NOT NULL DEFAULT '',
-    model       TEXT,
-    input       INTEGER NOT NULL DEFAULT 0,
-    output      INTEGER NOT NULL DEFAULT 0,
-    cache_read  INTEGER NOT NULL DEFAULT 0,
-    cache_write INTEGER NOT NULL DEFAULT 0
-);
-
--- dev3 projects (`dev3 projects list`): name a session's project from its working directory.
-CREATE TABLE IF NOT EXISTS usage_projects (
-    project_id TEXT PRIMARY KEY,
-    name       TEXT,
-    path       TEXT NOT NULL
-);
-
--- dev3 tasks seen in usage (from `dev3 tasks list` / `task show`), cached so the page stays fast.
-CREATE TABLE IF NOT EXISTS usage_tasks (
-    task_id    TEXT PRIMARY KEY,   -- the full dev3 task id
-    project_id TEXT,
-    seq        INTEGER,
-    title      TEXT,
-    task_type  TEXT,
-    status     TEXT,
-    pr_merged  INTEGER NOT NULL DEFAULT 0,
-    fetched_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_usage_day ON usage_messages(day);
-
 CREATE INDEX IF NOT EXISTS idx_applications_job ON applications(getjo_job_id);
 CREATE INDEX IF NOT EXISTS idx_status_history_app ON status_history(application_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_app ON tasks(application_id);
@@ -526,12 +481,6 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # prompt: Markdown shown under a Learn card's question, always visible (the code a "read the code"
     # card asks about); NULL when the card has none. The back stays hidden until Show answer.
     "cards": {"prompt": "TEXT"},
-    # cache_write_1h: the part of cache_write written with the 1-hour lifetime (priced higher than the
-    # 5-minute one); NULL when the transcript line did not say. speed ("standard" | "fast") and geo
-    # (inference_geo, e.g. "global" | "us") change the price of a response. Adding them re-reads every
-    # transcript once (usage_files is emptied) so rows still on disk get the split.
-    # latency_ms: the response time (prep/usage.py), NULL when unknown; adding it re-reads every transcript once too.
-    "usage_messages": {"cache_write_1h": "INTEGER", "speed": "TEXT", "geo": "TEXT", "latency_ms": "INTEGER"},
 }
 
 APPLICATION_FIELDS = (
@@ -580,13 +529,16 @@ def _add_missing_columns(conn: sqlite3.Connection) -> None:
         for column, definition in columns.items():
             if column not in existing:
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-                if (table, column) in (("usage_messages", "cache_write_1h"), ("usage_messages", "latency_ms")):
-                    conn.execute("DELETE FROM usage_files")
                 if (table, column) == ("tasks", "stage"):
                     _backfill_task_stages(conn)
                     next_actions_to_tasks(conn)
     _retire_application_messages(conn)
+    for table in USAGE_TABLES:  # the removed Usage & cost page's token counts, read from transcripts
+        conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.commit()
+
+
+USAGE_TABLES = ("usage_messages", "usage_files", "usage_projects", "usage_tasks")
 
 
 def _retire_application_messages(conn: sqlite3.Connection) -> None:
@@ -2802,7 +2754,7 @@ def claim_brief(conn: sqlite3.Connection, job_id: str, worker: int | None = None
 # --- runs (workers) --------------------------------------------------------------------
 # Every claim opens a run (claim_request, claim_brief, claim_messages, claim_message); sync_runs closes
 # it from the item's own state, so the many places that finish an item (saves, replies, Stop) need no
-# change. The Workers sidebar, its popover, /runs and the Usage & cost page's jobs read them (prep/workers.py).
+# change. The Workers sidebar, its popover and /runs read them (prep/workers.py).
 RUN_SOURCES = ("request", "brief", "message")
 RUN_RESULTS = ("done", "blocked", "stopped", "lapsed")
 MAX_REASON = 200  # characters in a blocked reason

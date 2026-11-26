@@ -16,7 +16,7 @@ import json
 import logging
 import sqlite3
 import sys
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 
 from prep import db, learn
@@ -25,7 +25,6 @@ from prep.config import REPO_ROOT
 FIXTURES = REPO_ROOT / "tests" / "fixtures" / "example.json"
 EXAMPLE_PREP_DB = REPO_ROOT / "data" / "example.db"
 EXAMPLE_GETJO_DB = REPO_ROOT / "data" / "example-getjo.db"
-EXAMPLE_CLAUDE_DIR = REPO_ROOT / "data" / "example-claude-projects"
 EVALS_FIXTURES = REPO_ROOT / "tests" / "fixtures" / "evals"
 EXAMPLE_GETJO_REPO = REPO_ROOT / "data" / "example-getjo-repo"
 
@@ -138,101 +137,6 @@ def build_prep_db(path: Path, data: dict) -> None:
 LATENCY = {"claude-opus-5-5": 9, "claude-sonnet-5-5": 4, "claude-fable-5-1": 16}  # made-up seconds per response
 
 
-def _turn(message_id: str, ts: datetime, session: str, cwd: str, context: int, cw_share: float,
-          model: str = "claude-opus-5-5", ttl: str = "1h", wait: float = 6) -> list[dict]:
-    """Transcript lines for one made-up turn: the user's line, the request (api-request), then the
-    response written twice (as a streamed response is) with the same message id, the last line `wait`
-    seconds after the request. The content is a placeholder."""
-    cache_write = int(context * cw_share)
-    cache_read = int(context * .97) - cache_write
-    one_hour = cache_write if ttl == "1h" else 0
-    usage = {"input_tokens": context - cache_read - cache_write, "cache_read_input_tokens": cache_read,
-             "cache_creation_input_tokens": cache_write, "speed": "standard", "inference_geo": "global",
-             "cache_creation": {"ephemeral_1h_input_tokens": one_hour, "ephemeral_5m_input_tokens": cache_write - one_hour}}
-
-    def at(seconds: float) -> str:
-        return (ts + timedelta(seconds=seconds)).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
-
-    base = {"cwd": cwd, "sessionId": session}
-    return [
-        {**base, "timestamp": at(0), "type": "user", "message": {"role": "user", "content": "example prompt"}},
-        {"timestamp": at(.1), "type": "api-request", "sessionId": session},
-        {**base, "timestamp": at(.1 + wait / 3), "type": "assistant",
-         "message": {"id": message_id, "model": model, "role": "assistant",
-                     "content": [{"type": "text", "text": "example"}], "usage": {**usage, "output_tokens": 40}}},
-        {**base, "timestamp": at(.1 + wait), "type": "assistant",
-         "message": {"id": message_id, "model": model, "role": "assistant",
-                     "content": [{"type": "text", "text": "example reply"}], "usage": {**usage, "output_tokens": 1500}}},
-    ]
-
-
-def build_usage_example(root: Path, prep_path: Path, spec: dict, anchor: date) -> None:
-    """Made-up Claude Code transcripts under `root` (replaced) for the 30 days up to `anchor`, and the
-    dev3 projects and tasks they belong to in prep.db at `prep_path`, so no dev3 is needed. A task with
-    "jobs" (run kinds) is a worker: every "job_turns" of its turns are one run in db.runs, kinds in turn."""
-    from prep import usage  # here, not at the top: usage imports the assistant module
-    import shutil
-    shutil.rmtree(root, ignore_errors=True)
-    paths = {p["id"]: p["path"] for p in spec["projects"]}
-    sources = [(t, f"{usage.WORKTREES}/{paths[t['project']].strip('/').replace('/', '-')}/{t['id'][:8]}/worktree")
-               for t in spec["tasks"]]
-    sources += [(c, paths[c["project"]]) for c in spec.get("checkouts", [])]
-    first = anchor - timedelta(days=13)
-    runs = [(src, cwd, src["days"]) for src, cwd in sources]
-    runs += [(src, cwd, days) for src, cwd in sources for days in src.get("earlier", [])]
-    jobs: list[tuple] = []  # (seq, kind, started, finished)
-    for n, (src, cwd, (d0, d1)) in enumerate(runs):
-        c0, c1 = src["context"]
-        folder = root / ("-" + cwd.strip("/").replace("/", "-").replace("_", "-"))
-        folder.mkdir(parents=True, exist_ok=True)
-        session = f"00000000-0000-4000-8000-{n:012d}"
-        model = src.get("model", "claude-opus-5-5")
-        lines = []
-        for day in range(d0, d1 + 1):
-            when = first + timedelta(days=day)
-            turns = src["turns"] // (3 if when.weekday() >= 5 else 1)
-            group = src.get("job_turns", 4)
-            for k in range(turns):
-                progress = ((day - d0) + k / max(turns, 1)) / max(d1 - d0 + 1, 1)
-                ts = datetime(when.year, when.month, when.day, 9, tzinfo=timezone.utc) + timedelta(
-                    minutes=k * 540 // max(turns, 1))
-                if src.get("jobs"):  # a worker's job: its turns follow each other, longer for later kinds
-                    kind = src["jobs"][(day * 100 + k // group) % len(src["jobs"])]
-                    step = 30 + 25 * src["jobs"].index(kind)
-                    ts = datetime(when.year, when.month, when.day, 9, tzinfo=timezone.utc) + timedelta(
-                        minutes=(k // group) * group * 540 // max(turns, 1), seconds=(k % group) * step)
-                wait = LATENCY.get(model, 6) * (1 + progress) + k % 4
-                lines += _turn(f"msg_example_{n}_{day}_{k}", ts, session, cwd, int(c0 + (c1 - c0) * progress),
-                               src.get("cache_write_share", .04), model, src.get("cache_ttl", "1h"), wait)
-                if src.get("jobs") and k % group == 0:
-                    last = min(k + group, turns) - 1
-                    end = ts + timedelta(seconds=(last - k) * step + wait + 30)
-                    jobs.append((src["seq"], kind, ts - timedelta(seconds=20), end))
-        with (folder / f"{session}.jsonl").open("w", encoding="utf-8") as f:
-            f.writelines(json.dumps(line) + "\n" for line in lines)
-    conn = db.connect(prep_path)
-    try:
-        stamp = "2999-01-01T00:00:00+00:00"  # never stale: example tasks are not looked up in dev3
-        for p in spec["projects"]:
-            conn.execute("INSERT OR REPLACE INTO usage_projects VALUES (?, ?, ?)", (p["id"], p["name"], p["path"]))
-        for t in spec["tasks"]:
-            conn.execute("INSERT OR REPLACE INTO usage_tasks VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                         (t["id"], t["project"], t["seq"], t["title"], t["type"], t["status"], int(t["pr_merged"]), stamp))
-        apps = [r[0] for r in conn.execute("SELECT id FROM applications ORDER BY id LIMIT 5")]
-        fmt = "%Y-%m-%dT%H:%M:%SZ"
-        for i, (seq, kind, started, finished) in enumerate(jobs):
-            source = "brief" if kind == "brief" else "message" if kind in ("ask", "comms", "learn") else "request"
-            app = apps[i % len(apps)] if apps and kind != "brief" else None
-            conn.execute("INSERT INTO runs (source, item, worker, kind, application_id, getjo_job_id, queued_at, "
-                         "started_at, finished_at, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                         (source, f"example-{i}", seq, kind, app, "example-job" if kind == "brief" else None,
-                          (started - timedelta(minutes=3)).strftime(fmt), started.strftime(fmt),
-                          finished.strftime(fmt), "blocked" if i % 17 == 16 else "done"))
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def build_evals_example(repo: Path) -> None:
     """A stand-in for getjo's checkout with only evals/catalog.json and evals/results/ (made-up runs),
     for the Evals page: PREP_GETJO_REPO=$PWD/data/example-getjo-repo."""
@@ -250,14 +154,11 @@ def main() -> int:
     data = shift_dates(data, (date.today() - date.fromisoformat(data["_anchor_date"])).days)
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
-    build_usage_example(EXAMPLE_CLAUDE_DIR, EXAMPLE_PREP_DB, data["usage"], date.today())
     build_evals_example(EXAMPLE_GETJO_REPO)
-    log.info("wrote %s, %s and %s/", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT),
-             EXAMPLE_CLAUDE_DIR.relative_to(REPO_ROOT))
+    log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
     log.info("try: PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")
     log.info("or:  PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.web --port 8766")
     log.info("Evals page on made-up runs: add PREP_GETJO_REPO=$PWD/data/example-getjo-repo")
-    log.info("Usage & cost on the example transcripts: see docs/usage.md, \"Try it with example data\"")
     return 0
 
 
