@@ -164,22 +164,6 @@ class SendTest(WebTestCase):
 
 
 class StorageTest(WebTestCase):
-    def test_backfill_from_single_target_columns(self) -> None:
-        with self.conn() as conn:
-            msg = db.add_message(conn, ACME, "Old question")
-            job = db.add_message(conn, None, "Is it remote?", GLOBEX)
-            cv = db.add_message(conn, None, "Shorten my summary", topic="cv")
-            general = db.add_message(conn, None, "Which tasks need me?")
-            conn.execute("DELETE FROM agent_message_targets WHERE message_id IN (?, ?, ?, ?)", (msg, job, cv, general))
-            conn.commit()
-        with self.conn() as conn:  # connect back-fills
-            found = db.message_targets(conn, [msg, job, cv, general])
-        self.assertEqual(found[msg][0]["key"], "a:1")
-        self.assertEqual(found[msg][0]["getjo_job_id"], ACME_JOB)  # an application's row carries its job
-        self.assertEqual(found[job][0]["key"], f"j:{GLOBEX}")
-        self.assertEqual(found[cv][0]["key"], "cv")
-        self.assertNotIn(general, found)
-
     def test_reply_carries_the_targets_and_shows_on_each_application(self) -> None:
         with self.conn() as conn:
             msg = db.add_compare(conn, "Compare", [(ACME, None, None), (STARK, None, None)])

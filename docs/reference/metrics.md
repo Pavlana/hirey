@@ -92,9 +92,6 @@ Used everywhere the numbers appear (`prep/stats.py`).
   or a later stage (cumulative, so a skipped stage still counts) and their share of all submitted
   applications.
 - **Weeks** start on Monday. "Last 7 days" is today and the six days before, by `date_applied`.
-- **Practice**: every `sessions` row (mock and real). Each area's 1–5 scores are in session order
-  (date, then id); areas are grouped ignoring case, with the first spelling shown
-  ([practice.md](practice.md)).
 - **Open gaps** counts every open gap, including those from CV fit checks.
 - **Skipped** is closed: never submitted, never a reply ([applications.md](applications.md)).
 

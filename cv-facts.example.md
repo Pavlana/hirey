@@ -3,7 +3,7 @@
 Fictional facts used for examples and tests. Not a real person.
 
 True facts that the master CV (cv.md) leaves out. A tailored CV may use a claim, number, date,
-tool or employer only when cv.md or this file states it; the AI check of every tailored version
+tool or employer only when cv.md or this file states it; the AI check of a tailored version
 flags anything else as unsourced, which blocks the verdict. One fact per bullet, written plainly,
 with dates and numbers as they really were. Copy to the private folder as cv-facts.md (or set
 `facts_file`), never commit it, and keep pay out of it.

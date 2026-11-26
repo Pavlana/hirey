@@ -99,7 +99,7 @@ gitignored.
 | `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
 |            | `python -m prep.cli research block APP [--kind K] --reason R` / `brief block (--job ID \| APP) --reason R` | Mark work the worker cannot do as blocked, with a reason (Workers sidebar, Run history) |
 |            | `python -m prep.cli brief next` / `brief save (--job ID \| APP)` / `brief show (--job ID \| APP)` / `brief queue (--job ID \| APP) [--redo]` | Job briefs: claim the oldest waiting one, store it (text on stdin), print it, or ask for one |
-| `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks and queues the AI check |
+| `/research`, `/ask` | `python -m prep.cli tailor path APP [--role-short X] [--copy]` / `tailor save APP [--to MSG]` | Tailored CV: print the next version's file, then save it as a new version (note on stdin); saving also makes the PDF, runs the rule checks (the AI check is asked for with the card's button) |
 |            | `python -m prep.cli tailor pdf APP [--version N]`                    | The PDF of a tailored CV version (latest by default), beside its file |
 |            | `python -m prep.cli tailor check APP [--version N]` / `tailor eval APP [--version N] [--file F]` | Check a version again without WeasyPrint; store the AI check (grounding, fit, skim, editorial) from its `.eval.md` file |
 | `/ask`     | `python -m prep.cli thread show [APP \| --job ID \| --message MSG \| --cv] [--claim]` / `thread reply [APP] --to MSG` / `thread pending` | The Applications Assistant box: a thread with its context (no id: the whole search; `--job`: an offer not yet tracked; `--message`: a comparison), the reply (text on stdin or `--file`), the messages waiting |
@@ -115,14 +115,12 @@ gitignored.
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
-| `/mock`    | `python -m prep.cli mock path APP --stage S [--date D]`              | The transcript file for a new mock, under `private_dir/sessions/` |
-|            | `python -m prep.cli session add --kind mock\|real [--app ID] [--stage S] [--score AREA=N ...] [--file F] [--gap TEXT ...]` / `session list` | Record a practice session with 1–5 scores per area; each gap named gets a drill task |
 |            | `python -m prep.cli gap add TEXT ... [--app ID]` / `gap list [--all \| --closed]` / `gap close ID` | Gaps: each gets a drill task; closing a gap completes its drill tasks |
-| `/debrief` | `python -m prep.cli debrief --kind real\|mock [--app ID] [--stage S] [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript` | After a real interview or a mock done elsewhere: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve (real only), a session with scores, and a gap with a drill task per weakness; completes the Debrief task |
+| `/debrief` | `python -m prep.cli debrief --app ID [--stage S] [--questions T] [--went-well T] [--to-improve T] [--gap TEXT ...] --transcript` | After a real interview: saves the transcript (stdin) under `private_dir/sessions/`, the interview's questions, went well and to improve, and a gap with a drill task per weakness; completes the Debrief task |
 |            | `python -m prep.cli tracks list` / `tracks add TITLE [--subtitle T] [--cover C] [--slug S]` | Learn tracks: chapters, done / total and percent done; add a track |
 |            | `python -m prep.cli cards add [--file F]` / `cards list [--track T] [--todo \| --done]` / `cards show ID` / `cards done ID` / `cards undo ID` / `cards delete ID` | Learn cards: add from JSON (one card or a list, all or none), list, show (with `[x]` / `[ ]` before each Learn source), mark done or back to do, remove |
 |            | `python -m prep.cli cards import FILE [--dry-run]`                   | Add or update tracks and cards from Markdown ([format](learn-format.md)); the same track and front is updated, its done status kept |
-|            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--session ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /mock and /debrief fill and save them with `cards add` after a yes |
+|            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /debrief fills and save them with `cards add` after a yes |
 | `/reply`   | `python -m prep.cli reply show MSG [--claim]` / `reply save --to MSG [--subject S] [--note N]` | Draft a reply: the request with its context; save the draft (on stdin; email needs a subject) |
 |            | `python -m prep.cli usage scan`                                     | Read new Claude Code transcript lines (counts only) for Usage & cost |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
@@ -155,7 +153,7 @@ Everyday flow:
 - **New offers**: open an offer to read its job brief, then **Interested** (queues company research
   and a CV fit) or **Skip** with a reason.
 - **Pipeline**: open an application for its tasks, notes and results. **Tailor CV** asks for a copy of
-  the CV for this job ([cvs.md](reference/cvs.md)); **Mock interview** starts one in the box.
+  the CV for this job ([cvs.md](reference/cvs.md)).
 - **Applications Assistant box**: tick rows to say what a message is about (none: the whole search;
   two to four: a comparison), then ask a question, ask for a change or paste a recruiter email.
 - **Learn**: open a card, say the answer in Your answer, **Check my answer**, read the explainer;
@@ -178,7 +176,7 @@ report it). Routing, leases and the 30-minute "no reply" rule are in
 
 | Agent | Setting | Gets | Runs |
 | --- | --- | --- | --- |
-| Applications Assistant | `assistant_task` | `/ask …` messages; also research, briefs and drafts while no worker is set | /ask, /stage, /mock, /research, /reply |
+| Applications Assistant | `assistant_task` | `/ask …` messages; also research, briefs and drafts while no worker is set | /ask, /stage, /research, /reply |
 | Learn Assistant | `prep_assistant_task` | `/learn-ask …` messages from the Learn page | /learn-ask, /explainer |
 | Research worker | `[workers] research` | `/research <id>`, `/research briefs` | /research |
 | Comms worker | `[workers] comms` | `/reply …` draft requests | /reply |

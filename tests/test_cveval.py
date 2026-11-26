@@ -164,11 +164,15 @@ class StorageTest(IsolatedTestCase):
     def save_eval(self, version: int, path: Path, **kw) -> dict:
         return cveval.save(self.conn, self.app, version, write(cveval.eval_file(path), eval_text(version=version, **kw)))
 
-    def test_every_tailor_save_queues_one_ai_check(self) -> None:
+    def test_the_ai_check_is_queued_only_when_asked_for(self) -> None:
         with self.assertRaisesRegex(LookupError, "no tailored CV"):
             db.queue_request(self.conn, self.app, "cv_eval")
         db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        self.assertEqual(self.evals(), [], "a save queues no AI check")
+        self.assertEqual(db.eval_state(self.conn, self.app, db.cv_check(self.conn, self.app, 1)), "none")
+        db.queue_request(self.conn, self.app, "cv_eval")
         db.save_tailored_cv(self.conn, self.app, str(self.v1), "v2 again")
+        db.queue_request(self.conn, self.app, "cv_eval")
         self.assertEqual(len(self.evals()), 1, "an open check is reused: it checks the latest version")
         self.assertEqual(db.eval_state(self.conn, self.app, db.cv_check(self.conn, self.app, 2)), "pending")
 
@@ -193,6 +197,7 @@ class StorageTest(IsolatedTestCase):
 
     def test_a_version_saved_while_the_check_ran_is_checked_too(self) -> None:
         db.save_tailored_cv(self.conn, self.app, str(self.v1), "v1")
+        db.queue_request(self.conn, self.app, "cv_eval")
         db.claim_request(self.conn, self.evals()[0]["id"])
         v2 = write(self.v1.with_name("CV_GlobexLabs_Eng_200126_2.md"), CLEAN)
         db.save_tailored_cv(self.conn, self.app, str(v2), "v2")
@@ -259,10 +264,13 @@ class CliTest(IsolatedTestCase):
     def save(self) -> str:
         with mock.patch("prep.cvpdf.write_pdf", return_value=(self.file.with_suffix(".pdf"), 1)), \
                 mock.patch("sys.stdin", io.StringIO("Secret tailoring note")):
-            return self.run_cli("tailor", "save", str(self.app))[1]
+            out = self.run_cli("tailor", "save", str(self.app))[1]
+        with closing(db.connect(self.prep_db)) as conn:
+            db.queue_request(conn, self.app, "cv_eval")  # the panel's AI check button
+        return out
 
-    def test_save_queues_the_check_and_research_next_prints_a_separate_packet(self) -> None:
-        self.assertIn("AI check pending: run python -m prep.cli research next", self.save())
+    def test_asked_check_gets_a_separate_packet(self) -> None:
+        self.assertIn("no AI check yet: the panel's AI check button asks for one", self.save())
         out = self.run_cli("research", "next", str(self.app))[1]
         self.assertIn("AI check of the tailored CV (a separate pass", out)
         self.assertIn(f"version: 1 ({self.file})", out)
@@ -336,6 +344,8 @@ class PanelTest(WebTestCase):
         with self.conn() as conn:
             db.save_tailored_cv(conn, self.MDE, str(path), "v1")
             db.save_cv_check(conn, self.MDE, 1, "rules", [])
+        self.assertIn(">AI check</button>", self.panel())
+        self.post("/applications/research", {"app_id": self.MDE, "kind": "cv_eval"})
         panel = self.panel()
         self.assertIn('<span class="badge badge-success">Ready</span><span class="badge badge-neutral">AI check pending</span>',
                       panel)

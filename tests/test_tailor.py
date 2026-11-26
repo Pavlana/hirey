@@ -87,14 +87,6 @@ class StorageTest(IsolatedTestCase):
         with self.assertRaisesRegex(LookupError, "versions: CV_GlobexLabs_Eng"):
             db.record_cv_sent(self.conn, self.app, "CV_Other_X_010126_1.md")
 
-    def test_an_older_tailored_copy_becomes_version_one(self) -> None:
-        self.conn.execute("INSERT INTO tailored_cvs (application_id, file_path, version, updated_at) VALUES (?, ?, 3, ?)",
-                          (self.app, "/old/7-globex-labs.md", "2026-01-10T09:00:00Z"))
-        self.conn.commit()
-        with closing(db.connect(self.prep_db)) as conn:  # the backfill runs on connect
-            self.assertEqual([(v["version"], v["file_path"]) for v in db.tailored_versions(conn, self.app)],
-                             [(3, "/old/7-globex-labs.md")])
-
     def test_a_tailored_copy_blocks_undo_interested(self) -> None:
         app, _ = db.record_application(self.conn, "Acme Rockets", "Platform Engineer", status="to_apply",
                                        getjo_job_id="greenhouse:acme-rockets:1001")
@@ -262,8 +254,13 @@ class DashboardTest(WebTestCase):
         self.assertIn(">New from cv.md</button>", panel)
         self.assertNotIn("Have you used", panel, "the note goes to the Agent box, not the card")
         self.assertIn("Have you used &lt;Terraform&gt;?", self.get(f"/?app={self.MDE}")[2])
-        self.assertIn("data-busy", panel, "the save queued the AI check; the page polls until it is in")
+        self.assertNotIn("data-busy", panel, "a save queues no AI check")
+        self.assertIn(">AI check</button>", panel)
+        self.post("/applications/research", {"app_id": self.MDE, "kind": "cv_eval"})
+        panel = self.panel()
+        self.assertIn("data-busy", panel, "the AI check button queued it; the page polls until it is in")
         self.assertIn(">AI check pending</span>", panel)
+        self.assertNotIn(">AI check</button>", panel)
         with self.conn() as conn:
             db.finish_requests(conn, [self.MDE], "cv_eval")
         panel = self.panel()

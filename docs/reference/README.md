@@ -13,7 +13,7 @@ commands, endpoints and edge cases. Start from the overview's diagrams, then com
 | [assistants.md](assistants.md) | standing agents, routing, the `dev3 message` ping, claims and leases, the Applications Assistant box, Resend / Cancel / Stop, drafts, Workers sidebar, run history |
 | [research.md](research.md) | the research queue, company profiles, CV fit, tier, blocked work, job briefs, the research file page |
 | [cvs.md](cvs.md) | master CV versions, My CV panel, tailored CV versions, PDF layout, rule check, AI check, verdicts |
-| [practice.md](practice.md) | practice sessions, gaps and drill tasks, debriefs, mock interviews |
+| [practice.md](practice.md) | debriefs, gaps and drill tasks |
 | [learn.md](learn.md) | tracks and cards, import, gap cards, notes files, the Learn page, Learn Assistant, explainers |
 | [dashboard.md](dashboard.md) | server, look, hardening, what `app.js` adds, polling, each page and panel |
 | [routes.md](routes.md) | every endpoint, one line each, and old URL redirects |

@@ -25,7 +25,7 @@ project that Hirey reads read-only. Nothing here applies to jobs, sends email or
   shows who is doing what, and Run history keeps every run.
 - **Research and tailored CVs.** Company research, a CV fit score and a CV copy tailored to one job,
   each checked by rules and by a separate AI pass that traces every claim to the master CV.
-- **Interview practice.** Mock interviews in the chat, debriefs of real ones, gaps with drill tasks,
+- **Interview practice.** Debriefs of real interviews, gaps with drill tasks,
   and draft replies to recruiters (copied and sent by hand).
 - **Learn.** Study cards by track, with notes, a Learn Assistant, and an explainer page per card
   that walks through the real code it is about.

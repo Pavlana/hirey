@@ -81,7 +81,7 @@ All run as `python -m prep.cli …`.
 | `cards done ID` / `cards undo ID` | Marks it done, or back to do (`learn.set_status`). |
 | `cards delete ID` | Removes a card (`learn.delete_card`). |
 | `cards import FILE [--dry-run]` | Markdown import ([below](#import-and-gap-cards)). |
-| `cards gaps [--gap ID] [--app ID] [--session ID] [--limit N]` | Read-only JSON drafts for open gaps. |
+| `cards gaps [--gap ID] [--app ID] [--limit N]` | Read-only JSON drafts for open gaps. |
 
 `cards add` names the track by id or slug and the chapter by title (added when new). A new card is to
 do.
@@ -121,8 +121,7 @@ Gaps ([practice.md](practice.md#gaps-and-drill-tasks)) become cards in two steps
 
 - `learn.add_card` refuses a second card for the same gap, and creates the "Gaps to drill" track with
   its first card.
-- `/debrief` asks in the chat; `/mock` ends with a `— Gap cards · session #S` line and `/ask` saves on
-  the user's "save cards" reply.
+- `/debrief` asks in the chat, with the gap ids it printed.
 
 ## Learn notes files
 

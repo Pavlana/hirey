@@ -99,7 +99,7 @@ flowchart TD
 | Markdown | safe, escaped Markdown subset | `prep/md.py` |
 | Settings | TOML settings and env overrides | `prep/config.py` |
 | Privacy check | no private file is tracked | `prep/privacy.py`, `scripts/pre-commit` |
-| Skills | /today, /applied, /stage, /task, /research, /ask, /reply, /mock, /debrief, /learn-ask, /explainer | `.claude/skills/` |
+| Skills | /today, /applied, /stage, /task, /research, /ask, /reply, /debrief, /learn-ask, /explainer | `.claude/skills/` |
 | SessionStart hook | read-only queue line at the start of a session | `.claude/settings.json` |
 | launchd job | keeps the dashboard running | `launchd/` |
 
@@ -176,7 +176,7 @@ flowchart TD
 ```
 
 - Work is queued by Interested, by the panel's buttons (Research company, CV fit, Tailor CV, Write
-  brief) and by every tailored CV save (its AI check). One open request per application and kind.
+  brief, AI check). One open request per application and kind.
 - The router is plain code: research-route work goes to the Research worker when one is set, else to
   the Applications Assistant.
 - The worker writes the result as a Markdown file with front matter; the save command reads it into
@@ -240,7 +240,7 @@ flowchart TD
     tailor -->|"tailor save"| version["tailored_cv_versions<br/>never overwritten"]
     version --> pdf["PDF<br/>WeasyPrint, one column"]
     pdf --> rules["Rule check<br/>pages, contacts, dates, pay, keywords"]
-    version -->|"cv_eval queued"| ai["AI check<br/>separate pass: claims, fit, skim"]
+    version -->|"AI check button"| ai["AI check<br/>separate pass: claims, fit, skim"]
     rules --> verdict{"Verdict"}
     ai --> verdict
     verdict --> card["Ready, Look at these lines, or Blocked<br/>on the Tailored CV card"]
@@ -248,8 +248,8 @@ flowchart TD
 
 - The master CV changes only through `cv save` from a draft, with a backup version first. Tailoring
   rephrases, reorders and cuts; it never invents experience.
-- Every save of a tailored version makes its PDF, runs the rule check and queues the AI check. One
-  verdict merges both: Blocked when any finding blocks.
+- Every save of a tailored version makes its PDF and runs the rule check; the AI check runs when the
+  card's AI check button asks for it. One verdict merges both: Blocked when any finding blocks.
 - Which version was sent is recorded only when the user says so (`cv sent`).
 
 Reference: [cvs.md](reference/cvs.md).
@@ -386,7 +386,7 @@ Every key, env var and the launchd job: [configuration.md](reference/configurati
 | [assistants.md](reference/assistants.md) | standing agents, routing, pings, claims and leases, the box, Resend / Cancel / Stop, drafts, Workers |
 | [research.md](reference/research.md) | research queue, company profiles, CV fit, tier, job briefs |
 | [cvs.md](reference/cvs.md) | master CV, tailored CV versions, PDF, rule check, AI check |
-| [practice.md](reference/practice.md) | sessions, gaps and drills, debriefs, mock interviews |
+| [practice.md](reference/practice.md) | debriefs, gaps and drill tasks |
 | [learn.md](reference/learn.md) | cards, import, notes, the Learn page, Learn Assistant, explainers |
 | [dashboard.md](reference/dashboard.md) | server, hardening, app.js, each page and panel |
 | [routes.md](reference/routes.md) | every endpoint, one line each |

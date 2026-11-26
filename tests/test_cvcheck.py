@@ -299,7 +299,7 @@ class CliTest(IsolatedTestCase):
         self.assertIn("no check: OSError", out)
 
 
-PENDING = " (AI check pending: run python -m prep.cli research next {app} in a separate pass)"
+PENDING = " (no AI check yet: the panel's AI check button asks for one)"
 
 
 class CheckCommandTest(CliTest):
@@ -310,7 +310,7 @@ class CheckCommandTest(CliTest):
             self.assertEqual(db.cv_check(conn, self.app, 1)["verdict"], "look", "no PDF yet")
         with mock.patch("prep.cvpdf.write_pdf", side_effect=AssertionError("never renders")):
             out = self.run_cli("tailor", "check", str(self.app))[1]
-            self.assertIn("v1 (" + self.file.name + f") for #{self.app}: no PDF\n  Check: Look at these lines (AI check pending", out)
+            self.assertIn("v1 (" + self.file.name + f") for #{self.app}: no PDF\n  Check: Look at these lines (no AI check yet", out)
             with mock.patch("prep.cvpdf.page_count", return_value=2):
                 out = self.run_cli("tailor", "check", str(self.app), "--version", "1")[1]
         self.assertIn(f"PDF 2 pages\n  Check: Ready{PENDING.format(app=self.app)}\n", out)

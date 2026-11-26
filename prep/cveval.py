@@ -1,7 +1,7 @@
 """The AI check of a tailored CV version: grounding, fit, a six-second skim and an editorial pass, written by the agent in a
 separate pass from the one that wrote the CV, then turned into findings here with fixed rules.
 
-Every tailor save queues it (agent_requests kind cv_eval; db.save_tailored_cv). `research next` prints
+The panel's AI check button queues it (agent_requests kind cv_eval; web.queue_research). `research next` prints
 the packet; the agent writes `cv-tailored/<version file stem>.eval.md` with TOML front matter:
 
     version = 2                          # the tailored version checked

@@ -231,7 +231,6 @@ Top to bottom:
      link to its card ("Research ✓ 2 Nov", "CV fit 4/5", "CV v2 · sent");
    - Mark applied and Skip while Interested, afterwards a disabled "Applied · 3 Nov" or "Skipped"
      ([applications.md](applications.md#mark-applied-and-skip));
-   - Mock interview: a stage and a button ([practice.md](practice.md#mock-interviews));
    - Draft a reply, folded ([assistants.md](assistants.md#draft-a-reply-communication-worker)).
 5. **Tasks**, each with a ☐ tick that posts `/tasks/done`.
 6. **Results**, always shown:
@@ -241,8 +240,7 @@ Top to bottom:
 7. **History**: the stage changes newest first in a collapsed `<details>`.
 
 The panel has no other forms but Notes and Employer: tasks, comments, stage, interview dates, tier and
-the sent CV are changed by the agent through the Applications Assistant box. The Mock interview
-control only starts a mock there.
+the sent CV are changed by the agent through the Applications Assistant box.
 
 ## Applications page: New offers view
 

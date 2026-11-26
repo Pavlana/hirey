@@ -91,7 +91,6 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 | --- | --- | --- |
 | `agent_messages` | message in either box | `author`, `body`, `status`, `reply_to`, `application_id`, `getjo_job_id`, `topic`, `card_id`, `worker` |
 | `agent_message_targets` | target of a message | `message_id`, `application_id`, `getjo_job_id`, `topic` |
-| `application_messages` | old per-application thread | no longer written; copied into `agent_messages` |
 
 - `status` is set on user messages only: pending, claimed, answered, cancelled. Agent replies have NULL.
 - `topic`: `cv`, `compare` or `learn`; NULL otherwise.
@@ -121,8 +120,11 @@ Never holds message text or pay. See [assistants.md](assistants.md#workers-sideb
 
 | Table | One row per | Key columns |
 | --- | --- | --- |
-| `sessions` | mock or real interview debriefed | `date`, `kind`, `application_id`, `stage`, `scores` (JSON, 1-5 per area), `file_path` |
-| `gaps` | weakness | `date`, `session`, `gap`, `status`, `application_id`, `session_id` |
+| `gaps` | weakness | `date`, `session` (where it came from: `interview`, `cv fit`), `gap`, `status`, `application_id` |
+
+A debrief's notes and transcript path are on its `interviews` row (`questions`, `went_well`,
+`to_improve`, `file_path`). A database from before mock sessions were dropped keeps an empty
+`sessions` table and `gaps.session_id`; nothing reads or writes them ([practice.md](practice.md)).
 
 Details: [practice.md](practice.md).
 
@@ -159,7 +161,7 @@ Numbers, ids and working directories only: message content is never read into th
 | `TIERS` | A, B, C |
 | `EMPLOYER_KINDS` | product, client (NULL: unknown) |
 | `TASK_KINDS` / `TASK_STATUSES` | apply, prep, drill, admin / todo, done, closed |
-| `GAP_STATUSES` / `SESSION_KINDS` | open, closed / mock, real |
+| `GAP_STATUSES` | open, closed |
 | `DECISIONS` | interested, applied, skipped |
 | `SKIP_REASONS` | location, seniority, role_type, stack, company, pay, contract_type, other |
 | `REQUEST_KINDS` | research, cv_fit, tailor, cv_eval |
@@ -177,7 +179,8 @@ Columns added by `MIGRATIONS`:
 | --- | --- |
 | `status_history` | `comment` |
 | `tasks` | `stage` |
-| `gaps` | `application_id`, `session_id` |
+| `gaps` | `application_id` |
+| `interviews` | `file_path` |
 | `applications` | `cv_sent`, `cv_sent_version`, `cv_sent_at`, `role_short`, `notes_updated_at`, `employer_kind` |
 | `agent_messages` | `getjo_job_id`, `topic`, `card_id`, `comms`, `channel`, `draft_subject`, `draft_body`, `worker`, `source_id` |
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
@@ -191,9 +194,5 @@ One-off steps run when a column is first added or on every connect:
   next action into an admin task (`db.next_actions_to_tasks`).
 - Adding `usage_messages.cache_write_1h` or `latency_ms` empties `usage_files`, so transcripts still on disk are read
   again (rows merge by message id).
-- `db._backfill_tailored_versions`: a tailored copy saved before versions were kept becomes one version
-  row (the file keeps its old name).
-- `db._copy_application_messages`: old thread rows are copied into `agent_messages` with their ids
-  (`INSERT OR IGNORE`), so `reply_to` still holds.
-- `db._backfill_message_targets`: messages from before `agent_message_targets` get one row from their
-  columns.
+- `db._retire_application_messages`: old thread rows are copied into `agent_messages` with their ids
+  (`INSERT OR IGNORE`), so `reply_to` still holds, then the old table is dropped.

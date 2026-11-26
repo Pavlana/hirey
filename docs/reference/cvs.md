@@ -3,8 +3,8 @@
 [Overview](../how-it-works.md) · [Reference index](README.md)
 
 The master CV is `private_dir/cv.md`. Every tailored CV starts from it and is a separate file;
-the master is changed only through `cv save`. Each tailored version gets a PDF, a rule check and an
-AI check, and the panel shows one verdict. (This page is named `cvs.md` because any file named
+the master is changed only through `cv save`. Each tailored version gets a PDF and a rule check; the AI check runs when asked for,
+and the panel shows one verdict. (This page is named `cvs.md` because any file named
 `cv.md` is gitignored and blocked by the privacy check.)
 
 ## Contents
@@ -46,7 +46,7 @@ AI check, and the panel shows one verdict. (This page is named `cvs.md` because 
   latest version (for a revision). `role_short` is set once per application.
 - `tailor save APP [--to MSG]` records the version (refused when the text equals the latest
   version), posts the note and any questions in the Applications Assistant box, makes the PDF, runs
-  the rule check and queues the AI check.
+  the rule check. It does not queue the AI check.
 - Tailoring may rephrase, reorder and cut, never add experience. Missing facts become questions.
 - Changes are asked for in the Applications Assistant box and saved as the next version.
 - `cv sent APP FILE_NAME` records which version was sent; the card shows "CV v2 · sent".
@@ -86,7 +86,9 @@ line that mentions pay, and none of this is logged.
 
 ## AI check
 
-Every `tailor save` also queues a `cv_eval` request. The agent does it in a separate pass from the
+The Tailored CV card's **AI check** button queues a `cv_eval` request for the latest version (shown
+while that version has no AI check and none is queued; `research queue APP --kind cv_eval` does the
+same). It costs a model pass, so a save never queues it. The agent does it in a separate pass from the
 one that wrote the CV and writes `cv-tailored/<version stem>.eval.md` (TOML front matter);
 `tailor eval APP [--version N]` stores it (`prep/cveval.py`).
 
@@ -111,7 +113,8 @@ The rule and AI findings share one row in `tailored_cv_checks` and one verdict (
 | Look at these lines | only look findings |
 | Ready | no findings |
 
-The card shows "AI check pending" until the AI check is in, then its scores.
+Until the AI check is asked for, the verdict is the rule check's alone. Once asked, the card shows
+"AI check pending" until it is in, then its scores.
 
 ## Commands
 
@@ -122,7 +125,7 @@ The card shows "AI check pending" until the AI check is in, then its scores.
 | `cv save --note "…" [--to MSG]` | save a new master version (backup first, atomic) |
 | `cv restore V`, `cv diff V` | restore or compare a master version |
 | `tailor path APP [--role-short X] [--copy]` | the next tailored file |
-| `tailor save APP [--to MSG]` | record a version (note on stdin), PDF, rule check, queue the AI check |
+| `tailor save APP [--to MSG]` | record a version (note on stdin), PDF, rule check |
 | `tailor pdf APP [--version N]`, `tailor check APP [--version N]` | remake the PDF; check again |
 | `tailor eval APP [--version N]` | store the AI check |
 | `cv sent APP FILE_NAME` | record which version was sent |

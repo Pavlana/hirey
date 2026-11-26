@@ -88,7 +88,7 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              evals.py (Evals page: getjo's eval catalogue and results files, read only),
              static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check),
              docs_check.py (docs in step with the code: coverage, links, changed code needs its page)
-.claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/, docs-sync/ — each SKILL.md calls python -m prep.cli <command>
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, explainer/, docs-sync/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, briefs, thread, draft and Learn messages, worker routing; ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
@@ -127,14 +127,10 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `python -m prep.cli update ID --employer-kind product|client|unknown` (in-house product vs client delivery; unknown clears it),
   `python -m prep.cli comment ID "..."`
 - Tasks: `python -m prep.cli task add|list|done`
-- Practice sessions and gaps: `python -m prep.cli session add --kind mock|real [--app ID] [--stage S]
-  [--score AREA=N ...] [--file F] [--gap TEXT ...]`, `session list`, `gap add|list|close`
-  (each named gap gets one drill task; closing a gap completes it)
-- Debrief (used by /debrief): `python -m prep.cli debrief --kind real|mock [--app ID] [--stage S]
-  [--questions T] [--went-well T] [--to-improve T] [--score AREA=N ...] [--gap TEXT ...] --transcript`
+- Gaps: `python -m prep.cli gap add|list|close` (each named gap gets one drill task; closing a gap completes it)
+- Debrief of a real interview (used by /debrief): `python -m prep.cli debrief --app ID [--stage S]
+  [--questions T] [--went-well T] [--to-improve T] [--gap TEXT ...] --transcript`
   (transcript on stdin, saved under `private_dir/sessions/`)
-- Mock interviews (used by /mock via /ask, started from the panel): `python -m prep.cli mock path APP --stage S`
-  (transcript file under `private_dir/sessions/`), then `session add --kind mock ... --file PATH`
 - Dashboard: `python -m prep.web [--port 8765]` (binds 127.0.0.1 only); Evals at `/evals` reads `getjo_repo`'s
   `evals/` (example: `PREP_GETJO_REPO=$PWD/data/example-getjo-repo` after `seed_example`)
 - Example data: `python -m prep.seed_example`, then
@@ -143,7 +139,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   the empty `PREP_ASSISTANT_TASK=`, `PREP_PREP_ASSISTANT_TASK=` and `PREP_WORKER_*=` keep it from messaging the real assistants and workers)
 - Learn cards: `python -m prep.cli tracks list|add`, `cards add` (JSON on stdin or `--file`),
   `cards import FILE [--dry-run]` (Markdown, `docs/learn-format.md`; real files in `private_dir/learn/`),
-  `cards gaps [--gap ID ...] [--app ID] [--session ID]` (read-only drafts for open gaps; saved with `cards add`
+  `cards gaps [--gap ID ...] [--app ID]` (read-only drafts for open gaps; saved with `cards add`
   after the user confirms), `cards list [--track T] [--todo|--done]`, `cards show ID`, `cards done ID`, `cards undo ID`, `cards delete ID`;
   `learn-notes CARD_ID|all [--show | --append [TEXT]]` (the Learn page's Notes, private_dir/notes/learn/),
   `learn-notes answer CARD_ID --show` (the card's Your answer, read only)
@@ -161,7 +157,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
   `tailor save APP [--to MSG]` (note on stdin; also makes the PDF and checks it); `tailor pdf APP [--version N]`;
   `tailor check APP [--version N]` (checks a version again without WeasyPrint);
-  `tailor eval APP [--version N]` (stores the AI check queued by every tailor save, written in a separate pass);
+  `tailor eval APP [--version N]` (stores the AI check queued by the panel's AI check button, written in a separate pass);
   `cv sent APP FILE_NAME`
 - PDF of any CV Markdown: `.venv/bin/python -m prep.cvpdf cv.example.md data/example-cv.pdf` (`--html` prints the HTML)
 - Agent edits (used by /ask): `task edit|delete`, `comments list|amend|remove`, `skip APP --reason R`
