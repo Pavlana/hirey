@@ -708,9 +708,8 @@ form.ask textarea::placeholder { color: var(--text-faint); }
 
 /* --- learn ----------------------------------------------------------------------
    /learn: a grid of tracks (a cover gradient with a progress ring, then title, counts and done / all).
-   A card opens the card view: Notes and the Learn Assistant on the left, the card on the right, with the
-   same divider as Applications (app.js, its own key). ⤢ Expand (.is-agent-wide) folds Notes away.
-   Phones stack them, the card first. Cover colours are fixed (learn.TRACK_COVERS), not the theme. */
+   A card opens the card view: the card at full width, its Explainer under it, and a floating window
+   (Learn Assistant | Notes) opened from the "Ask about this card" pill. Cover colours are fixed (learn.TRACK_COVERS), not the theme. */
 .tracks { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: var(--space-4); }
 .track { display: flex; flex-direction: column; overflow: hidden; color: var(--text); background: var(--surface);
   border: 1px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-md);
@@ -748,10 +747,75 @@ form.ask textarea::placeholder { color: var(--text-faint); }
 
 main:has(.learn-view) { max-width: 1880px; }
 .learn-view { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-items: start; }
-.learn-view > .learn-card { order: -1; }  /* phones: the card first */
-.learn-side { min-width: 0; display: grid; gap: var(--space-4); align-content: start; }
-.learn-view.is-agent-wide .learn-notes { display: none; }
-.learn-expand[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); }
+.has-js .learn-view { padding-bottom: 64px; }  /* room for the pill */
+
+/* The Explainer: its stamp and Refresh in the head, the amber notice when getjo changed, the page in a
+   sandboxed iframe that app.js sizes to its content (the page posts its height). */
+.learn-explainer > .card-head { flex-wrap: wrap; }
+.explainer-head { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.explainer-stamp { color: var(--text-muted); font: 12px/1.5 var(--mono); overflow-wrap: anywhere; }
+.explainer-stale { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-bottom: var(--space-3); }
+.explainer-stale form { margin: 0 0 0 auto; }
+.learn-explainer > .card-body { padding: var(--space-2); }
+.explainer-frame { display: block; width: 100%; height: 640px; border: 0; border-radius: var(--radius-md); background: var(--surface); }
+.explainer-make { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin: 0; }
+.explainer-make p { margin: 0; }
+
+/* The floating window: without the script, a plain section at the end of the page (both tabs shown);
+   with it, fixed bottom-right over the page, one tab at a time, minimised to its head or closed to the pill. */
+.learn-float { display: grid; gap: 0; min-width: 0; background: var(--surface); border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg); box-shadow: var(--shadow-md); }
+.float-head { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border); }
+.float-title { display: grid; flex: 1; min-width: 0; }
+.float-title strong { font-size: 14px; }
+.float-title .muted { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.float-tabs { display: none; gap: 4px; }
+.float-tab { padding: 2px 10px; border: 1px solid var(--border); border-radius: var(--radius-full); background: none;
+  color: var(--text-muted); font: 12.5px var(--font); cursor: pointer; }
+.float-tab[aria-selected="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
+.float-ctl { display: flex; gap: 2px; }
+.float-btn { padding: 0 6px; border: 0; background: none; color: var(--text-muted); font: 15px/1.4 var(--font); cursor: pointer; }
+.float-btn:hover { color: var(--text); }
+.float-pane { min-width: 0; padding: var(--space-3) var(--space-4); }
+.float-pane.learn-notes { padding: 0; }
+.float-pane.learn-notes > .ed-tabs { padding: var(--space-3) var(--space-4) 0; }
+.learn-pill { position: fixed; right: 24px; bottom: 24px; z-index: 40; padding: 10px 18px; border: 0; border-radius: var(--radius-full);
+  background: var(--accent); color: var(--on-accent); font: 600 14px var(--font); box-shadow: var(--shadow-lg); cursor: pointer; }
+.learn-pill:hover { background: var(--accent-hover); }
+.has-js .learn-float { position: fixed; right: 24px; bottom: 24px; z-index: 41; width: min(420px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px); grid-template-rows: auto minmax(0, 1fr); box-shadow: var(--shadow-lg); }
+.has-js .learn-float[data-state="closed"] { display: none; }
+.has-js .learn-float[data-state="min"] .float-pane, .has-js .learn-float[data-state="min"] .float-tabs { display: none; }
+.has-js .learn-float[data-state="min"] .float-head { border-bottom: 0; cursor: pointer; }
+.has-js .float-tabs { display: inline-flex; }
+.has-js .learn-float .float-pane { overflow-y: auto; }
+.has-js .learn-float[data-tab="assistant"] .float-pane[data-pane="notes"],
+.has-js .learn-float[data-tab="notes"] .float-pane[data-pane="assistant"] { display: none; }
+.has-js .learn-float .learn-chat .msgs { max-height: min(46vh, 520px); }
+.has-js .learn-float .ed-frame { height: clamp(200px, 46vh, 520px); }
+@media (max-width: 600px) {
+  .has-js .learn-float { right: 8px; left: 8px; bottom: 8px; width: auto; max-height: 70vh; }
+  .learn-pill { right: 12px; bottom: 12px; }
+}
+/* An attached passage above the message box. */
+.ask-quote { display: flex; align-items: center; gap: 6px; padding: 2px 0 2px 8px; border-left: 3px solid var(--accent);
+  color: var(--accent-text); font-size: 12.5px; }
+.ask-quote > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Highlight to ask: "✦ Ask about this" above a selection, then the box under it (the quote, a plain
+   textarea for typing or macOS dictation, Add to notes and Ask). */
+.hl-pop { position: absolute; z-index: 45; padding: 4px 10px; border: 0; border-radius: var(--radius-sm);
+  background: #f4f4f0; color: #12140f; font: 600 12.5px var(--font); box-shadow: var(--shadow-lg); cursor: pointer; }
+.hl-box { position: absolute; z-index: 45; display: grid; gap: var(--space-2); width: min(400px, calc(100vw - 24px));
+  padding: var(--space-3); background: var(--surface-2); border: 1px solid var(--border-strong); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg); }
+.hl-quote { margin: 0; padding-left: 8px; border-left: 3px solid var(--accent); color: var(--accent-text); font-size: 13px;
+  max-height: 5.5em; overflow: auto; overflow-wrap: anywhere; }
+.hl-box textarea { width: 100%; min-height: 64px; resize: vertical; padding: 8px 10px; font: 13.5px/1.45 var(--font);
+  color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
+.hl-box textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+.hl-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
 /* Notes editor: tabs in the head; a line-number gutter beside a monospace textarea that soft-wraps to
    the panel (one number per logical line, as tall as its wrapped rows: app.js measures them in .ed-mirror); a status line (vim mode, file, autosave time, line,col, the vim keys toggle). */
 .ed-tabs { display: inline-flex; gap: 4px; }
@@ -787,7 +851,6 @@ main:has(.learn-view) { max-width: 1880px; }
    each agent reply, and Check my answer under Your answer. */
 .learn-chat { display: grid; gap: var(--space-3); }
 .learn-chat .msgs { max-height: min(56vh, 600px); overflow-y: auto; padding-right: 4px; }
-.learn-view.is-agent-wide .learn-chat .msgs { max-height: min(72vh, 900px); }
 .msg-about.is-here { color: var(--accent-text); border-color: var(--accent); }
 .learn-chat .msg-about { max-width: min(28em, 60%); }  /* a card's question (cut to ~50 characters in web.py) */
 .msg-actions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
@@ -813,15 +876,6 @@ main:has(.learn-view) { max-width: 1880px; }
 .answer-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--space-2); margin: 0; min-height: 18px;
   color: var(--text-muted); font: 12px/1.5 var(--mono); }
 .ed-vim[aria-pressed="true"] { color: var(--accent-text); background: var(--accent-soft); border-color: transparent; }
-@media (min-width: 801px) {
-  .learn-view { column-gap: 0; align-items: stretch;
-    grid-template-columns: minmax(0, var(--split-l, 1fr)) var(--space-4) minmax(0, var(--split-r, 1fr)); }
-  .learn-view > .learn-side { grid-column: 1; grid-template-rows: auto minmax(0, 1fr); }
-  .learn-view.is-agent-wide > .learn-side { grid-template-rows: minmax(0, 1fr); }
-  .learn-view > .learn-card { grid-column: 3; order: 0; align-self: start; }
-  .has-js .learn-view > .apps-split { display: block; grid-column: 2; position: relative; cursor: col-resize;
-    touch-action: none; border-radius: var(--radius-sm); }
-}
 .learn-card { min-width: 0; background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md); }
 .learn-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--space-3);
@@ -956,3 +1010,10 @@ h2 .emp-kind { font-size: 11px; vertical-align: 3px; }
 .seg-btn.is-active { background: var(--surface); color: var(--text); box-shadow: 0 0 0 1px var(--border); }
 form.employer-form { display: flex; justify-content: flex-start; align-items: center; gap: 6px; margin-top: 6px; font-size: 12.5px; }
 form.employer-form select { height: 26px; font-size: 12.5px; padding: 0 6px; }
+/* While the Learn page's floating window is up, toasts sit above it, never over its Send button. */
+@media (min-width: 601px) {
+  .has-js body:has(.learn-float:not([data-state="closed"])) .toasts { right: calc(min(420px, 100vw - 32px) + 40px); }
+}
+@media (max-width: 600px) {
+  .has-js body:has(.learn-float:not([data-state="closed"])) .toasts { top: var(--space-3); bottom: auto; }
+}

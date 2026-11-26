@@ -104,6 +104,7 @@ The seed shifts the example dates so the most recent ones fall around today. The
 | Learn Assistant | `python -m prep.cli learn-notes CARD_ID\|all [--show \| --append [TEXT]]` | The Learn page's Notes: a card's note or the "all prep" notebook; print it, or add a dated "Agent" block at the end; never rewrites, refuses pay |
 | Learn Assistant | `python -m prep.cli learn-notes answer CARD_ID [--show]` | The user's own answer on a card (Your answer); read only |
 | `/learn-ask` | `python -m prep.cli learn-thread show MSG [--claim]` / `learn-thread reply --to MSG` / `learn-thread pending` | The Learn page's Learn Assistant: a message with its card (front, back, follow-ups, Learn sources), the track's chapters, the private context files and the conversation; the reply (text on stdin or `--file`); the messages waiting |
+| `/explainer` | `python -m prep.cli explainers path CARD` / `explainers save CARD --snippet FILE:FUNCTION ...` / `explainers check [--card ID]` | A card's explainer page (asked from the Learn page, answered by the Learn Assistant): where it goes, then the sidecar with getjo's commit and each quoted function's hash (computed by Hirey); the check against getjo's code now |
 |            | `python -m prep.cli skip APP --reason R [--comment T]`               | Skip an Interested application (listed under New offers → Show skipped) |
 |            | `python -m prep.cli cv sent APP FILE_NAME`                           | Record which tailored version was sent |
 |            | `python -m prep.cli cv show \| skills \| history \| draft` / `cv save --note T [--to MSG]` / `cv restore V` / `cv diff V` | The master CV: print it, its skills by theme, its saved versions; save the edited draft (the current text is saved as a version first), restore or compare a version |
@@ -160,10 +161,10 @@ charts are server-rendered SVG):
   Assistant** box for general messages, not about one card (for example "start a mock recruiter
   call"). A track opens its first card to
   do (`?track=SLUG`; any card is `?card=ID`). The card view keeps the tracks above it as a compact
-  row (cover, ring, "X done / Y"), the open card's track highlighted; below them **Notes** and **Learn Assistant** on the
-  left, the card on the right, with the same divider as Applications (its
-  width kept per browser on its own). **⤢ Expand** on the Learn Assistant folds Notes away, remembered
-  per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
+  row (cover, ring, "X done / Y"), the open card's track highlighted; below them the card at full
+  width and its **Explainer** under it. **✦ Ask about this card** (bottom right) opens a floating
+  window with two tabs, **Assistant** (the Learn Assistant box) and **Notes**; – folds it to its head,
+  ✕ closes it back to the pill; open or closed and the tab are remembered per browser. The card: its track and chapter, "Card N of M" with ← → to the neighbours, tags, the
   question, **Show answer** (the key
   points and likely follow-ups), the **Learn** box under it, always in view (the sources to watch or
   read, the preparation material; links open in a new tab). A tick in front of each source marks it
@@ -172,7 +173,23 @@ charts are server-rendered SVG):
   known by its URL, else its kind and title) and never mark the card itself done. Then **Done** /
   **Not done yet**. Done marks the card done and opens the next card to do in the track (after the
   last one, the tracks again); Not done yet puts it back to do and stays. There is no schedule, due
-  date or rating. Phones stack the card above Notes and the Learn Assistant.
+  date or rating.
+  **Highlight to ask**: selecting text on the card or in its explainer shows **✦ Ask about this**
+  above it; that opens a small box under the text with the quote, a plain text box (typing or macOS
+  dictation, Fn twice) and two buttons. **Ask ↵** sends the quote and the question to the Learn
+  Assistant (the message says the passage and whether it came from the card or the explainer) and
+  opens the chat; with nothing typed it attaches the quote to the chat instead ("Attached: “…” ✕"
+  above the message box). **Add to notes** adds the quote and the text to the card's notes, with no
+  assistant. Escape or a click outside closes it.
+  **Explainer**: a private page per card (`private_dir/learn/explainers/<card id>.html`, written by the
+  Learn Assistant with the `/explainer` skill): a diagram of the idea, the getjo code it is about
+  copied verbatim with numbered notes, what is built, partial or a gap, a small "Try it" and the
+  sentence to say. Its header reads "getjo @ <commit> (<date>) · <files> · up to date | changed" with
+  **Refresh**. When getjo's code has changed since (`getjo_repo`, read only), an amber notice names
+  the file and function with **Refresh explainer**, which asks the Learn Assistant to redo it. No
+  explainer yet: **Make an explainer**. The page runs in a sandboxed frame: it cannot reach the
+  dashboard, its data or the network. `python -m prep.cli explainers check` runs the same check for
+  every explainer (exit 1 when any changed), for a daily job.
   **Notes** has two tabs: **this card** (a note per card) and **all prep** (one general notebook),
   saved as private Markdown files under `private_dir/notes/learn/`. The editor has line numbers and
   a monospace font, about 13–15 lines tall (it scrolls inside, so the Learn Assistant stays in view below); it autosaves 1.5 s after the last change, when it loses focus, and on Cmd/Ctrl-S,

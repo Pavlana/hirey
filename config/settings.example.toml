@@ -15,6 +15,10 @@
 # getjo's database. Opened read-only; never written.
 getjo_db = "/absolute/path/to/getjo/data/jobs.db"
 
+# Optional. getjo's git working copy, read only: the Learn explainers' check compares the getjo code
+# they quote with what is there now. Default: two folders above getjo_db, when that is a git checkout.
+# getjo_repo = "/absolute/path/to/getjo"
+
 # This project's database. Use an absolute path outside any worktree, e.g. the main
 # checkout's data/ folder (gitignored). A relative path resolves against the repo root of
 # the running checkout, and a worktree's data/ folder is deleted with the worktree.

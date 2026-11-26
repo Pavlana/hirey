@@ -10,6 +10,8 @@ none of them needs a copy of the file or a shell environment.
 
 Keys:
     getjo_db     absolute path to getjo's data/jobs.db (read-only)
+    getjo_repo   optional absolute path to getjo's git working copy, read only, for the Learn explainers'
+                 staleness check (default: the folder two levels above getjo_db when it holds .git)
     prep_db      path to this project's database (default data/prep.db)
     private_dir  absolute path to the folder holding cv.md, notes/, sessions/
     dashboard_port  port for the local dashboard (default 8765)
@@ -67,6 +69,7 @@ PRICE_KINDS = ("input", "output", "cache_read", "cache_write", "cache_write_1h")
 ENV_SETTINGS = "INTERPREP_SETTINGS"
 ENV_KEYS = {
     "getjo_db": "PREP_GETJO_DB",
+    "getjo_repo": "PREP_GETJO_REPO",
     "prep_db": "PREP_DB",
     "private_dir": "PREP_PRIVATE_DIR",
     "dashboard_port": "PREP_DASHBOARD_PORT",
@@ -116,6 +119,7 @@ class Settings:
     coordinator_task: int | None = None
     context_warn_tokens: int = DEFAULT_CONTEXT_WARN_TOKENS
     # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
+    getjo_repo: Path | None = None
     prices: tuple[tuple[str, tuple[float, float, float, float, float]], ...] = ()
 
 
@@ -167,7 +171,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "private_dir", "dev3_bin", "pdf_python", "facts_file", "claude_projects_dir"):
+    for key in ("getjo_db", "getjo_repo", "private_dir", "dev3_bin", "pdf_python", "facts_file", "claude_projects_dir"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -193,8 +197,21 @@ def load_settings(path: Path | None = None) -> Settings:
                              else DEFAULT_CLAUDE_PROJECTS_DIR),
         coordinator_task=_int(data, "coordinator_task", 0, 1, 10**9) if data.get("coordinator_task") else None,
         context_warn_tokens=_int(data, "context_warn_tokens", DEFAULT_CONTEXT_WARN_TOKENS, 1000, 10**8),
+        getjo_repo=_getjo_repo(data),
         prices=_prices(data.get("prices")),
     )
+
+
+def _getjo_repo(data: dict) -> Path | None:
+    """getjo's working copy: getjo_repo, else getjo_db's grandparent (getjo/data/jobs.db) when it is a git
+    checkout, else None."""
+    if data.get("getjo_repo"):
+        return Path(data["getjo_repo"]).expanduser()
+    if data.get("getjo_db"):
+        guess = Path(data["getjo_db"]).expanduser().parent.parent
+        if (guess / ".git").exists():
+            return guess
+    return None
 
 
 def facts_path(settings: Settings) -> Path | None:

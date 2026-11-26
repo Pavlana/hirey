@@ -5,8 +5,8 @@ description: Answer messages in the Learn Assistant box on Hirey's Learn page �
 
 # /learn-ask
 
-The Learn page shows one card at a time. Its left column holds the card's Notes and the **Prep
-agent** box: one conversation for all of Learn, with every message tagged with the card that was
+The Learn page shows one card at a time, at full width, with its **Explainer** under it. A floating
+window ("Ask about this card") holds the card's Notes and the **Learn Assistant** box: one conversation for all of Learn, with every message tagged with the card that was
 open when it was sent. The dashboard only stores the message (status pending) and pings the prep
 assistant with ids; the box refreshes on its own once the reply is in. Run every command from the
 repo root.
@@ -172,6 +172,14 @@ default list does").
 
   When the user asked for changes without saying save, reply with the changed draft and the same
   `— Card draft` line. "No" saves nothing.
+- **A highlighted passage** (the message starts "About this passage (Card):" or "(Explainer):" and a
+  `> quote` line): the user selected that text on the card or in its explainer. Answer the question
+  about that passage first, as above; for an Explainer passage, the explainer page is
+  `python -m prep.cli explainers path CARD` (read it when the passage needs its context).
+- **Make an explainer** (the message is "Make an explainer for this card (/explainer).") or **Refresh
+  the explainer** (it starts "Refresh the explainer for this card (/explainer): getjo has changed …"):
+  follow `.claude/skills/explainer/SKILL.md` to write the page and record it, then reply in two or
+  three lines: what the page shows and, for a refresh, what changed. No closing block for these.
 - **"Add this to my notes"** in a message: append the text the user means to the card's note,
   `python -m prep.cli learn-notes CARD --append` (text on stdin; a dated "Agent" block, never a
   rewrite, never pay), or to `all` for a general one. The **Add to notes** button under a reply

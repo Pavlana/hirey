@@ -452,30 +452,6 @@
     paint();
   });
 
-  // --- Learn: the card view ------------------------------------------------------------------
-  // ⤢ Expand on the Learn Assistant folds Notes away; the choice is kept per browser. Hidden without the
-  // script.
-  const expand = document.querySelector("[data-learn-expand]");
-  if (expand) {
-    const EXPAND_KEY = "learn-agent-expanded";
-    const view = document.querySelector(".learn-view");
-    const setExpanded = (on) => {
-      view.classList.toggle("is-agent-wide", on);
-      expand.setAttribute("aria-pressed", String(on));
-      expand.title = on ? "Show Notes again" : "Fold Notes away";
-    };
-    try { setExpanded(localStorage.getItem(EXPAND_KEY) === "1"); } catch { /* not remembered */ }
-    expand.addEventListener("click", () => {
-      const on = !view.classList.contains("is-agent-wide");
-      setExpanded(on);
-      try {
-        if (on) localStorage.setItem(EXPAND_KEY, "1");
-        else localStorage.removeItem(EXPAND_KEY);
-      } catch { /* not remembered */ }
-    });
-    expand.hidden = false;
-  }
-
   // --- Learn: the Notes editor and Your answer --------------------------------------------------
   // Both are forms posting to /learn/notes (prep/learnnotes.py files), saved by autosaving(): 1.5 s
   // after the last change, on blur and on Cmd/Ctrl-S (or :w with vim keys). Each save names the stamp
@@ -783,6 +759,204 @@
   }
   scrollLearn();
   watchLearn();
+
+  // --- Learn: the floating "Ask about this card" window ------------------------------------------
+  // The pill opens it; – minimises it to its head, ✕ closes it back to the pill. Its state (open, min,
+  // closed) and tab (assistant, notes) are kept per browser. ?notes=all opens it on Notes.
+  const float = document.getElementById("learn-float");
+  const pill = document.querySelector("[data-float-open]");
+  const FLOAT_KEY = "learn-float";
+  function setFloat(state, tab) {
+    if (!float) return;
+    if (state) float.dataset.state = state;
+    if (tab) float.dataset.tab = tab;
+    float.querySelectorAll("[data-float-tab]").forEach((b) =>
+      b.setAttribute("aria-selected", String(b.dataset.floatTab === float.dataset.tab)));
+    if (pill) pill.hidden = float.dataset.state !== "closed";
+    try { localStorage.setItem(FLOAT_KEY, JSON.stringify({ state: float.dataset.state, tab: float.dataset.tab })); }
+    catch { /* not remembered */ }
+    if (float.dataset.state === "open" && float.dataset.tab === "assistant") scrollLearn();
+  }
+  if (float) {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(FLOAT_KEY) || "{}") || {}; } catch { /* defaults */ }
+    const allNotes = new URLSearchParams(location.search).get("notes") === "all";
+    const state = allNotes ? "open" : (["open", "min", "closed"].includes(saved.state) ? saved.state : "closed");
+    const tab = allNotes ? "notes" : (["assistant", "notes"].includes(saved.tab) ? saved.tab : "assistant");
+    float.querySelectorAll("[data-float-min], [data-float-close]").forEach((b) => { b.hidden = false; });
+    setFloat(state, tab);
+    pill?.addEventListener("click", () => {
+      setFloat("open");
+      float.querySelector(float.dataset.tab === "notes" ? ".ed-text" : "form.ask textarea")?.focus();
+    });
+    float.addEventListener("click", (e) => {
+      const tabBtn = e.target.closest("[data-float-tab]");
+      if (tabBtn) { setFloat("open", tabBtn.dataset.floatTab); return; }
+      if (e.target.closest("[data-float-min]")) { setFloat(float.dataset.state === "min" ? "open" : "min"); return; }
+      if (e.target.closest("[data-float-close]")) { setFloat("closed"); return; }
+      if (float.dataset.state === "min" && e.target.closest(".float-head")) setFloat("open");
+    });
+  }
+
+  // An attached passage in the chat form: "Attached: “…” ✕" above the box (text only), sent as quote +
+  // quote_src (the server marks it in the message).
+  const chatForm = () => document.querySelector("#learn-chat form.ask");
+  function attachQuote(text, src) {
+    const box = chatForm()?.querySelector("[data-ask-quote]");
+    if (!box) return;
+    box.querySelector("[data-quote-text]").textContent = text;
+    box.querySelector("input[name=quote]").value = text;
+    box.querySelector("input[name=quote_src]").value = src;
+    box.hidden = !text;
+  }
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("[data-quote-clear]")) attachQuote("", "");
+  });
+
+  // --- Learn: highlight to ask ---------------------------------------------------------------------
+  // Selecting text on the card or in its explainer shows "✦ Ask about this" above it; that opens a box
+  // under the text: the quote, a plain textarea (typing or macOS dictation) and Add to notes / Ask ↵.
+  // Ask sends quote + words to the Learn Assistant and opens the chat; Ask with no words attaches the
+  // quote to the chat instead. Escape or a click outside closes it. The text is only ever text.
+  const MAX_QUOTE = 1000;
+  const learnView = document.getElementById("learn-view");
+  const cardBody = document.querySelector("#learn-card .learn-card-body");
+  const frame = document.querySelector("iframe[data-explainer]");
+  let hlPop = null;
+  let hlBox = null;
+  function closeHl() {
+    hlPop?.remove(); hlPop = null;
+    hlBox?.remove(); hlBox = null;
+  }
+  const clean = (text) => (text || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUOTE);
+  function showPop(text, src, rect) { // rect: the selection, in page coordinates
+    closeHl();
+    if (!text || !learnView) return;
+    hlPop = document.createElement("button");
+    hlPop.type = "button";
+    hlPop.className = "hl-pop";
+    hlPop.textContent = "✦ Ask about this";
+    document.body.append(hlPop);
+    const left = Math.max(8, Math.min(rect.left + rect.width / 2 - hlPop.offsetWidth / 2,
+      document.documentElement.clientWidth - hlPop.offsetWidth - 8));
+    hlPop.style.left = `${left}px`;
+    hlPop.style.top = `${Math.max(8, rect.top - hlPop.offsetHeight - 8)}px`;
+    hlPop.addEventListener("mousedown", (e) => e.preventDefault()); // keep the selection
+    hlPop.addEventListener("click", () => showBox(text, src, rect));
+  }
+  function showBox(text, src, rect) {
+    closeHl();
+    // A phone-width window: the open chat covers most of the page, so it folds to its head meanwhile.
+    if (float?.dataset.state === "open" && innerWidth <= 600) setFloat("min");
+    const card = learnView.dataset.card;
+    hlBox = document.createElement("div");
+    hlBox.className = "hl-box";
+    hlBox.setAttribute("role", "dialog");
+    hlBox.setAttribute("aria-label", "Ask about the selected text");
+    const quote = document.createElement("p");
+    quote.className = "hl-quote";
+    quote.textContent = `“${text}”`;
+    const area = document.createElement("textarea");
+    area.rows = 3;
+    area.maxLength = 4000;
+    area.placeholder = "Ask, or say what to note (dictation works: Fn twice)…";
+    area.setAttribute("aria-label", "Your question or note");
+    const actions = document.createElement("div");
+    actions.className = "hl-actions";
+    const noteBtn = document.createElement("button");
+    noteBtn.type = "button";
+    noteBtn.className = "btn btn-secondary btn-sm";
+    noteBtn.textContent = "Add to notes";
+    const askBtn = document.createElement("button");
+    askBtn.type = "button";
+    askBtn.className = "btn btn-primary btn-sm";
+    askBtn.textContent = "Ask ↵";
+    actions.append(noteBtn, askBtn);
+    hlBox.append(quote, area, actions);
+    document.body.append(hlBox);
+    const width = hlBox.offsetWidth;
+    const pageW = document.documentElement.clientWidth;
+    hlBox.style.left = `${Math.max(8, Math.min(rect.left, pageW - width - 8))}px`;
+    hlBox.style.top = `${rect.bottom + 8}px`;
+    hlBox.scrollIntoView({ block: "nearest" });
+    area.focus();
+    const data = () => new URLSearchParams({ card_id: card, quote: text, quote_src: src, body: area.value.trim() });
+    const busy = (on) => { noteBtn.disabled = on; askBtn.disabled = on; };
+    async function ask() {
+      if (!area.value.trim()) { // nothing typed: attach the quote to the chat and type there
+        attachQuote(text, src);
+        closeHl();
+        setFloat("open", "assistant");
+        chatForm()?.querySelector("textarea")?.focus();
+        return;
+      }
+      busy(true);
+      try {
+        const reply = await post("/learn/message", data());
+        swapLearn(reply.html);
+        watchLearn();
+        closeHl();
+        setFloat("open", "assistant");
+        toast(reply.message);
+      } catch (err) { busy(false); toast(err.message || "Not sent.", { error: true }); }
+    }
+    async function note() {
+      busy(true);
+      try {
+        const reply = await post("/learn/quote-note", data());
+        closeHl();
+        refreshNotes();
+        toast(reply.message);
+      } catch (err) { busy(false); toast(err.message || "Not saved.", { error: true }); }
+    }
+    askBtn.addEventListener("click", ask);
+    noteBtn.addEventListener("click", note);
+    area.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); }
+    });
+  }
+  const pageRect = (r) => ({ left: r.left + scrollX, top: r.top + scrollY, bottom: r.bottom + scrollY, width: r.width });
+  if (cardBody && learnView) {
+    document.addEventListener("mouseup", (e) => {
+      if (e.target.closest?.(".hl-pop, .hl-box")) return;
+      setTimeout(() => { // after the click has updated the selection
+        const sel = getSelection();
+        if (!sel || sel.isCollapsed || !sel.rangeCount) { if (!hlBox) closeHl(); return; }
+        const range = sel.getRangeAt(0);
+        const node = range.commonAncestorContainer;
+        const el = node.nodeType === 1 ? node : node.parentElement;
+        if (!el || !cardBody.contains(el) || el.closest("textarea, input, form, .learn-nav")) return;
+        showPop(clean(sel.toString()), "card", pageRect(range.getBoundingClientRect()));
+      }, 0);
+    });
+  }
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && (hlPop || hlBox)) closeHl(); });
+  document.addEventListener("mousedown", (e) => {
+    if ((hlPop || hlBox) && !e.target.closest(".hl-pop, .hl-box")) closeHl();
+  });
+
+  // The explainer runs in a sandboxed iframe (no same origin); its standard script (/static/explainer.js)
+  // posts {type: "selection", text, rect} and {type: "height", px}. Only messages from that iframe's
+  // window are read, and only as plain text and numbers.
+  if (frame) {
+    window.addEventListener("message", (e) => {
+      if (e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
+      if (e.data.type === "height") {
+        const px = Number(e.data.px);
+        if (Number.isFinite(px)) frame.style.height = `${Math.max(120, Math.min(20000, Math.round(px)))}px`;
+      } else if (e.data.type === "selection") {
+        const text = clean(typeof e.data.text === "string" ? e.data.text : "");
+        if (!text) { closeHl(); return; } // a click in the explainer is a click outside the box
+        const box = frame.getBoundingClientRect();
+        const r = e.data.rect && typeof e.data.rect === "object" ? e.data.rect : {};
+        const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
+        const top = box.top + num(r.top, 0);
+        const left = box.left + num(r.left, 0);
+        const height = num(r.height, 0);
+        showPop(text, "explainer", pageRect({ left, top, bottom: top + height, width: num(r.width, 0) }));
+      }
+    });
+  }
 
   // Resend under a message still waiting shows once it is due (data-resend-due, epoch ms from the
   // server; at once when the ping failed): both boxes, after every swap too.
@@ -1202,8 +1376,10 @@
         // The Learn Assistant: a message, Check my answer, Want a card for this?, or Add to notes.
         swapLearn(reply.html);
         if (form.elements.body) form.elements.body.value = "";
+        if (form.elements.quote) attachQuote("", "");
         if (reply.note) refreshNotes();
         watchLearn();
+        if (form.hasAttribute("data-open-chat")) setFloat("open", "assistant");
         toast(reply.message);
       } else if (mode === "thread") {
         // The Applications Assistant box: swap in the server-built, escaped conversation and wait for the reply.

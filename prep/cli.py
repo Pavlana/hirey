@@ -15,6 +15,10 @@
     python -m prep.cli learn-thread show MSG [--claim]   (a Learn Assistant message: its card, context files, the
                                                        Learn conversation; used by /learn-ask)
     python -m prep.cli learn-thread pending | reply --to MSG   (Learn Assistant messages waiting; the reply on stdin)
+    python -m prep.cli explainers check [--card ID]   (Learn explainers against getjo's code now: up to date,
+                                                       changed or missing; exit 1 when any is not up to date)
+    python -m prep.cli explainers path CARD_ID | save CARD_ID --snippet FILE[:QUALNAME] ...   (where the
+                                                       /explainer skill writes the page; the sidecar with getjo's hashes)
     python -m prep.cli task add TITLE [--kind K] [--due DATE] [--app ID]
     python -m prep.cli task list [--all | --done]
     python -m prep.cli task done TASK_ID
@@ -80,7 +84,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, getjo, learn, learnnotes, research, usage
+from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes, research, usage
 from prep.config import ConfigError, Settings, load_settings
 
 log = logging.getLogger("prep")
@@ -1816,6 +1820,14 @@ def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print(f"\nCheck my answer: read it with python -m prep.cli learn-notes answer {card['id']} --show, then reply "
               "with what was covered, what was missed and one better phrasing.")
 
+    if card is not None and (msg["body"] == db.LEARN_EXPLAIN or msg["body"].startswith(db.LEARN_EXPLAIN_REFRESH[:40])):
+        state = explainers.check(settings, card["id"])
+        print(f"\nExplainer: follow .claude/skills/explainer/SKILL.md. Now: {state['state']}"
+              + (f" (changed: {'; '.join(state['changed'])})" if state["changed"] else "")
+              + (f" (missing: {'; '.join(state['missing'])})" if state["missing"] else ""))
+        print(f"  page: {explainers.html_path(settings.private_dir, card['id'])}")
+        print(f"  then: python -m prep.cli explainers save {card['id']} --snippet FILE:FUNCTION ...")
+
     _print_messages(db.thread(conn, topic=db.LEARN, limit=LEARN_CONTEXT),
                     f"The Learn Assistant conversation (latest {LEARN_CONTEXT})", conn)
     print()
@@ -1832,6 +1844,50 @@ def _learn_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
             print(f"Add to this card's notes (only when the user asks): python -m prep.cli learn-notes {card['id']} --append")
             print("Save a card (only after the user confirms the draft): python -m prep.cli cards add, JSON on stdin")
     return 0
+
+
+def cmd_explainers(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """The Learn explainers (prep/explainers.py): check them against getjo, print where one goes, or
+    record its sidecar after the page is written. getjo is only read."""
+    if args.action == "path":
+        card = learn.get_card(conn, args.card)
+        print(f"Explainer for card {card['id']} ({card['track_title']}): {card['front']}")
+        print(f"  page:    {explainers.html_path(settings.private_dir, card['id'])}")
+        print(f"  sidecar: {explainers.sidecar_path(settings.private_dir, card['id'])} "
+              f"(written by: python -m prep.cli explainers save {card['id']} --snippet FILE:FUNCTION ...)")
+        print(f"  getjo:   {settings.getjo_repo or '(not set: getjo_repo)'}")
+        at = explainers.head(settings.getjo_repo)
+        if at:
+            print(f"  getjo HEAD: {at['short']} ({at['date']})")
+        return 0
+    if args.action == "save":
+        card = learn.get_card(conn, args.card)
+        snippets = [explainers.parse_snippet(s) for s in args.snippet or []]
+        data = explainers.record(settings, card["id"], snippets, db.now_iso())
+        print(f"Recorded the explainer of card {card['id']} at getjo {data['commit'][:7]} ({data['commit_date']}):")
+        for s in data["snippets"]:
+            print(f"  {explainers.label(s)}  {s['sha256'][:12]}")
+        return 0
+    ids = [args.card] if args.card else explainers.cards_with_explainers(settings.private_dir)
+    if not ids:
+        print("No explainers yet.")
+        return 0
+    stale = 0
+    for card_id in ids:
+        r = explainers.check(settings, card_id)
+        if r["state"] == "up_to_date":
+            line = f"up to date (getjo @ {r['short']}, {r['date']})"
+        elif r["state"] == "changed":
+            line = "changed: " + "; ".join(r["changed"])
+        elif r["state"] == "missing":
+            line = "missing: " + "; ".join(r["missing"]) + (" · changed: " + "; ".join(r["changed"]) if r["changed"] else "")
+        elif r["state"] == "none":
+            line = "no explainer"
+        else:
+            line = "cannot check (no sidecar, or getjo_repo not set)"
+        stale += r["state"] not in ("up_to_date", "none")
+        print(f"card {card_id}: {line}")
+    return 1 if stale else 0
 
 
 REVIEW_TOP = 3  # "which tasks need me?" answers with the top three; --all for the rest
@@ -2041,6 +2097,18 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--append", nargs="?", const="-", metavar="TEXT",
                    help="add a dated 'Agent' block at the end; without TEXT, read it from stdin")
     p.set_defaults(func=cmd_learn_notes)
+
+    p = sub.add_parser("explainers", help="Learn explainers: check them against getjo, where one goes, record its sidecar")
+    esub = p.add_subparsers(dest="action", required=True)
+    e = esub.add_parser("check", help="each explainer against getjo's code now (read only)")
+    e.add_argument("--card", type=int, help="only this card")
+    e = esub.add_parser("path", help="where the explainer page of a card is written")
+    e.add_argument("card", type=int, metavar="CARD_ID")
+    e = esub.add_parser("save", help="after writing the page: record getjo's commit and each snippet's hash")
+    e.add_argument("card", type=int, metavar="CARD_ID")
+    e.add_argument("--snippet", action="append", metavar="FILE[:QUALNAME]",
+                   help="a getjo file (relative to its checkout) and the function quoted, e.g. evals/run.py:to_label")
+    p.set_defaults(func=cmd_explainers)
 
     p = sub.add_parser("skip", help="skip an Interested application (closes it; New offers lists it under Show skipped)")
     p.add_argument("app_id", type=int)
