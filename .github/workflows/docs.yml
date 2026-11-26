@@ -1,0 +1,31 @@
+# Docs in step with the code (prep/docs_check.py). On a pull request: every route, setting, table,
+# command and skill is documented, links and screenshots resolve, and changed code comes with a change
+# to the doc page that owns it (docs/docs-map.json), unless the PR body has a line
+# "Docs: not needed, <reason>". Standard library only: nothing to install.
+name: docs
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]  # edited: adding the "Docs: not needed" line re-runs it
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Docs cover the code
+        if: github.event_name == 'push'
+        run: python -m prep.docs_check
+      - name: Docs cover the code, and changed code has its docs
+        if: github.event_name == 'pull_request'
+        run: python -m prep.docs_check --changed "origin/${{ github.base_ref }}" --event "$GITHUB_EVENT_PATH"

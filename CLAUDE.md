@@ -86,12 +86,14 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              learn.py (Learn tracks, chapters, cards: done or to do), learnnotes.py (Learn notes files),
              explainers.py (Learn explainer pages: private files, getjo staleness check, read only),
              evals.py (Evals page: getjo's eval catalogue and results files, read only),
-             static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check)
-.claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/ — each SKILL.md calls python -m prep.cli <command>
+             static/style.css + app.js + vim.js (Learn editor's vim keys) + explainer.css/.js (shared by explainer pages), seed_example.py (example dbs), privacy.py (tracked-file check),
+             docs_check.py (docs in step with the code: coverage, links, changed code needs its page)
+.claude/skills/  today/, applied/, stage/, task/, research/, ask/, reply/, learn-ask/, debrief/, mock/ (questions/ per stage), explainer/, docs-sync/ — each SKILL.md calls python -m prep.cli <command>
 .claude/settings.json  SessionStart hook: read-only `prep.cli queue` (pending research, briefs, thread, draft and Learn messages, worker routing; ids only)
 tests/       unit tests; fixtures/example.json holds made-up data (fictional companies only)
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
-scripts/     pre-commit (privacy check on staged files)
+scripts/     pre-commit (privacy check on staged files), screenshots.py (retake docs screenshots on example data)
+.github/workflows/  docs.yml (docs check on every pull request)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
 docs/        ROADMAP.md (phases + acceptance), how-it-works.md (overview: system diagram, key flows, data model),
              reference/ (one page per area: applications, assistants, research, cvs, practice, learn, dashboard,
@@ -110,10 +112,15 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - No table cell longer than about 200 characters; long detail becomes a subsection or a list.
 - A heading every screenful; plain, impersonal sentences; define a term once and link to it.
 - Every page starts with the nav line, a short intro and a Contents list.
+- Before `dev3 pr create`, run `/docs-sync` (`python -m prep.docs_check --changed origin/main` must
+  pass). CI runs the same check; a change that needs no doc update says `Docs: not needed, <reason>`
+  in the PR. `docs/docs-map.json` says which page owns which code; `scripts/screenshots.py` retakes
+  screenshots on example data. Details: docs/reference/README.md, "Keeping the docs in step".
 
 ## Commands
 
-- Tests: `python -m unittest`
+- Tests: `python -m unittest` (includes the docs check)
+- Docs check: `python -m prep.docs_check [--changed origin/main]`; screenshots: `python scripts/screenshots.py`
 - Daily brief: `python -m prep.cli today`
 - Record an application: `python -m prep.cli applied --job-id ID --next-action "..." --next-date +7`
 - Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ... [--comment ...]`,
