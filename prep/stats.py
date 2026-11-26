@@ -1,6 +1,6 @@
 """Numbers for the dashboard, computed from prep.db. Read-only, plain SQL and Python.
 
-Definitions (used everywhere, documented in docs/how-it-works.md):
+Definitions (used everywhere, documented in docs/reference/metrics.md):
 
 - Submitted: an application that was actually sent: it has a date_applied, or its status
   (now or in its history) is a funnel stage, rejected or no_response. to_apply rows and

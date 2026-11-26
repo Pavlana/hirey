@@ -25,7 +25,8 @@ Internal names keep the original name: the Python package `prep`, the settings f
 1. Propose a short plan first: files to touch, functions, data flow, one or two trade-offs.
 2. Implement the smallest change that meets the acceptance criteria in `docs/ROADMAP.md`.
 3. Add or update tests, then run `python -m unittest`.
-4. Keep `docs/how-it-works.md` current when components or data flow change.
+4. Keep the docs current when components or data flow change: update the flow's diagram in
+   `docs/how-it-works.md` and the one page in `docs/reference/` that owns the area (see "Writing the docs").
 5. Finish each task with a 3–5 line summary and a suggested commit message; finish each phase
    with a 5–10 line summary (what was built, where it lives, how to try it).
 6. Never commit or push unless asked. Ask before anything outward-facing.
@@ -89,11 +90,23 @@ tests/       unit tests; fixtures/example.json holds made-up data (fictional com
 config/      settings.example.toml (committed template), settings.toml (optional, gitignored)
 scripts/     pre-commit (privacy check on staged files)
 launchd/     uk.inter-prep.dashboard.plist.example (keeps the dashboard running; install steps in docs/usage.md)
-docs/        ROADMAP.md (phases + acceptance), how-it-works.md (components and data flow), usage.md (setup and reference),
+docs/        ROADMAP.md (phases + acceptance), how-it-works.md (overview: system diagram, key flows, data model),
+             reference/ (one page per area: applications, assistants, research, cv, practice, learn, dashboard,
+             routes, database, metrics, configuration), usage.md (setup and reference),
              learn-format.md (Markdown format of `cards import`; example: learn.example.md), screenshots/
 data/        local databases (gitignored)
 requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 ```
+
+## Writing the docs
+
+- `docs/how-it-works.md` is the entry point: system diagram, components, one diagram per key flow,
+  data model, boundaries. Aim for a 10-minute read; detail goes to `docs/reference/`.
+- Each fact lives on the one reference page that owns its area; other pages link to it.
+- Diagrams in Mermaid (GitHub renders it): one per flow, labelled arrows, quoted labels.
+- No table cell longer than about 200 characters; long detail becomes a subsection or a list.
+- A heading every screenful; plain, impersonal sentences; define a term once and link to it.
+- Every page starts with the nav line, a short intro and a Contents list.
 
 ## Commands
 

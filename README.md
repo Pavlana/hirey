@@ -124,7 +124,8 @@ How a request moves through the system, using "Tailor CV" as the example:
 4. The person replies in the Applications Assistant box ("lead with the platform work"). That message is a new
    queued item, and the loop repeats.
 
-The components and the full data flow are in [docs/how-it-works.md](docs/how-it-works.md).
+The system diagram and every key flow are in [docs/how-it-works.md](docs/how-it-works.md); detail per
+area is in [docs/reference/](docs/reference/README.md).
 
 ## Safety boundaries
 
@@ -177,7 +178,8 @@ prep/            db.py (schema, migrations, queue, stage rules) · cli.py (every
                  backed by python -m prep.cli
 .claude/settings.json   SessionStart hook: read-only queue summary (ids only)
 tests/           unittest suite with fixture databases
-docs/            how-it-works.md · usage.md · ROADMAP.md · learn-format.md (Learn import; example: learn.example.md)
+docs/            how-it-works.md (overview) · reference/ (one page per area) · usage.md · ROADMAP.md ·
+                 learn-format.md (Learn import; example: learn.example.md)
 ```
 
 ## How it was built
@@ -194,7 +196,7 @@ pull request and the running dashboard.
   (standard library by default, privacy rules, schema-migration rules, test and documentation duties).
   The same agents then *use* the project at run time through the skills in `.claude/skills/`.
 - **Quality bar:** tests for every change (no network, fixture data only), a privacy
-  check on every commit, and `docs/how-it-works.md` kept current with each change.
+  check on every commit, and the docs (overview diagrams and reference pages) kept current with each change.
 - **History note:** PR numbers #11–#14 in older commit messages refer to an earlier copy of
   this repository, not to PRs here.
 
@@ -202,7 +204,8 @@ pull request and the running dashboard.
 
 - [docs/usage.md](docs/usage.md): setup, commands, dashboard reference, Applications Assistant,
   launchd, privacy model
-- [docs/how-it-works.md](docs/how-it-works.md): components and data flow
+- [docs/how-it-works.md](docs/how-it-works.md): system diagram, key flows, data model (start here)
+- [docs/reference/](docs/reference/README.md): one page per area (routes, database, assistants, …)
 - [docs/ROADMAP.md](docs/ROADMAP.md): phases and acceptance criteria
 - [docs/learn-format.md](docs/learn-format.md): the Markdown format `cards import` reads
 - [CLAUDE.md](CLAUDE.md): conventions for the coding agents working in this repo

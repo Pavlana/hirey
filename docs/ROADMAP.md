@@ -112,7 +112,7 @@ Acceptance:
 ## Built outside the phases
 
 Agent-first work added after the first plan, with no acceptance criteria here. The
-[README](../README.md) describes each one; [how-it-works.md](how-it-works.md) has the details.
+[README](../README.md) describes each one; [how-it-works.md](how-it-works.md) and [reference/](reference/README.md) have the details.
 
 - Company research and CV fit: queued when a job is marked Interested, done by `/research`.
 - Agent box: one conversation with the standing assistant, about one job, several (a

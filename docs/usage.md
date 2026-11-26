@@ -1,8 +1,8 @@
 # Usage and reference
 
 Setup, commands, the dashboard in detail, the Applications Assistant, launchd and the privacy
-model. The overview is in the [README](../README.md); components and data flow are in
-[how-it-works.md](how-it-works.md).
+model. The overview is in the [README](../README.md); the system diagram and key flows are in
+[how-it-works.md](how-it-works.md), with detail per area in [reference/](reference/README.md).
 
 ## Setup
 
@@ -695,5 +695,6 @@ Run the check by hand with `python -m prep.privacy` (tracked files) or
 
 - `README.md` — overview
 - `docs/ROADMAP.md` — phases and acceptance criteria
-- `docs/how-it-works.md` — components and data flow
+- `docs/how-it-works.md` — system diagram, key flows, data model
+- `docs/reference/` — one page per area
 - `CLAUDE.md` — conventions for the Claude Code agent working in this repo
