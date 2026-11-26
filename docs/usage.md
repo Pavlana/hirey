@@ -329,7 +329,9 @@ Queued work is picked up three ways:
 - `/today` runs it.
 - With `assistant_task = <seq>` (and optionally `assistant_project`, `dev3_bin`) in the
   settings, new requests are sent at once to that long-running dev3 task as
-  `/research <id>`.
+  `/research <id>`. With a Research worker set (`[workers] research`, below), research, CV fit,
+  tailored CVs, AI checks and job briefs go to the worker instead, so a long tailoring job never
+  holds up a reply in the Applications Assistant box.
 
 ### Applications Assistant box
 
@@ -455,6 +457,30 @@ never show in the Applications Assistant box.
 
 Resend and Cancel work here as in the Applications Assistant box. While a message waits, **Stop** on the
 waiting line cancels every waiting Learn message (never an Applications one), on the overview and in a card.
+
+### Research worker (optional)
+
+A second standing dev3 task that takes the queued research work off the Applications Assistant:
+company research, CV fit, tailored CVs, AI CV checks and job briefs. Thread messages stay with the
+Applications Assistant, and questions the worker asks (a tailored CV's note) appear in the
+Applications Assistant box, where the answers go to the Applications Assistant as usual.
+
+1. On the project's dev3 board, create a task, for example titled "Research worker", with this
+   description: "Standing research worker for Hirey. When messaged `/research <id>` or
+   `/research briefs`, run /research. Between messages, wait. Never commit, push, apply to jobs or
+   contact anyone." Start it with Claude Code and leave it running.
+2. Note its seq number (shown on the card).
+3. Add to `~/.config/inter_prep/settings.toml` (`assistant_project` and `dev3_bin` apply to it too):
+
+   ```toml
+   [workers]
+   research = 25                        # the Research worker task's seq
+   ```
+
+   (or `PREP_WORKER_RESEARCH=25`; an empty value turns it off). Keep `[workers]` at the end of the
+   file: TOML puts every key after a table header inside that table.
+4. Restart the dashboard. A queued request now shows "(Research worker, queued …)" on the panel and
+   arrives in that task's terminal as `/research <id>`.
 
 ### Learn Assistant (optional)
 

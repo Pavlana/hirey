@@ -1104,7 +1104,7 @@ METRICS_TABS = (("usage", "Usage"), ("applications", "Applications"))
 TOKEN_SERIES = (("Cache read", "s4"), ("Cache write", "s6"), ("Output", "s8"), ("Fresh input", "s10"))
 COST_SHADES = {"Cache read": "s4", "Cache write": "s6", "Output": "s8", "Input": "s10"}
 ESTIMATE_NOTE = "Estimated at API prices. Your Claude subscription is billed differently."
-ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Coordinator": "s5", "Build tasks": "s3",
+ROLE_SHADES = {"Applications Assistant": "s9", "Learn Assistant": "s7", "Research worker": "s6", "Coordinator": "s5", "Build tasks": "s3",
                "Main checkouts": "s1"}
 
 
@@ -3079,9 +3079,11 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         + "</li>"
         for m in messages
     )
-    waiting = len(db.pending_messages(conn))
+    waiting_msgs = db.pending_messages(conn)
+    waiting = len(waiting_msgs)
     pending = waiting > 0
-    work = _panel_work(conn, app_id, job_id)
+    lapsed = sum(1 for m in waiting_msgs if db.claim_lapsed(m))
+    work = _panel_work(settings, conn, app_id, job_id)
     stop = ""
     if pending or work:
         ctx = (f'<input type="hidden" name="panel_app" value="{h(app_id)}">' if app_id is not None
@@ -3092,7 +3094,12 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
                 + (" and this job's queued work" if work else "") + '">Stop</button></form>')
     count = f" ({waiting} waiting)" if waiting else ""
     doing = f'Working on {h(" · ".join(work))}…' if work else ""
-    if pending and settings.assistant_task:
+    if pending and settings.assistant_task and lapsed == waiting:
+        noun = "message" if lapsed == 1 else "messages"
+        state = ('<div class="thread-state thread-stalled" role="status">'
+                 f'<span>No reply in {db.MESSAGE_CLAIM_MINUTES} min: the Applications Assistant took {lapsed} {noun} '
+                 f'but has not answered. Resend, or Stop.{" " + doing if doing else ""}</span>{stop}</div>')
+    elif pending and settings.assistant_task:
         state = ('<div class="thread-state" role="status"><span class="spinner" aria-hidden="true"></span>'
                  f'<span>Applications Assistant is working…{count}{" " + doing if doing else ""}</span>{stop}</div>')
     elif pending:
@@ -3109,16 +3116,28 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
             + (f'<ol class="msgs">{items}</ol>' if items else "") + state + "</div>")
 
 
-def _panel_work(conn: sqlite3.Connection, app_id: int | None, job_id: str | None) -> list[str]:
-    """What the open panel waits for: its application's queued agent requests (labels) and its job's
-    open brief request. Empty without a panel."""
+def _panel_work(settings: Settings, conn: sqlite3.Connection, app_id: int | None, job_id: str | None) -> list[str]:
+    """What the open panel waits for: its application's queued agent requests and its job's open brief
+    request, each with who handles it and since when ("Tailored CV (Research worker, queued Nov 26, 14:02)").
+    Empty without a panel."""
     labels = []
     if app_id is not None:
-        labels = [db.REQUEST_LABELS.get(r["kind"], r["kind"]) for r in db.open_requests(conn, app_id)]
+        labels = [_work_label(settings, r["kind"], db.REQUEST_LABELS.get(r["kind"], r["kind"]), r)
+                  for r in db.open_requests(conn, app_id)]
         job_id = (db.get_application(conn, app_id) or {}).get("getjo_job_id")
-    if job_id and db.open_briefs(conn, job_id):
-        labels.append("Job brief")
+    if job_id:
+        labels += [_work_label(settings, "brief", "Job brief", b) for b in db.open_briefs(conn, job_id)]
     return labels
+
+
+def _work_label(settings: Settings, kind: str, label: str, row: dict) -> str:
+    """A queued item with its handler (assistant.target: a worker or the Applications Assistant) and since
+    when: "started" from a live claim, else "queued" from the request time. Plain text (escaped by the caller)."""
+    seq, name = assistant.target(settings, kind)
+    who = name if seq else "no assistant task set: run /research"
+    when = (f"started {_local_time(row['claimed_at'])}" if row.get("claimed") and row.get("claimed_at")
+            else f"queued {_local_time(row['requested_at'])}")
+    return f"{label} ({who}, {when})"
 
 
 def _cancelled_cls(m: dict) -> str:
@@ -3139,6 +3158,10 @@ def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]
               and answered.get((m["application_id"], m["getjo_job_id"], m["topic"]), 0) > m["id"]):
             flags[m["id"]] = ('<span class="msg-flag msg-flag-warn" title="A newer message on the same job was answered, '
                               'this one was not. Cancel it, or Resend it.">no reply yet</span>')
+        elif m["author"] == "user" and db.claim_lapsed(m):
+            flags[m["id"]] = (f'<span class="msg-flag msg-flag-warn" title="Taken by the assistant {db.MESSAGE_CLAIM_MINUTES} '
+                              'or more minutes ago with no reply. Resend it, or Cancel it.">'
+                              f'no reply in {db.MESSAGE_CLAIM_MINUTES} min</span>')
         elif m["author"] == "agent" and m["reply_to"] is not None:
             to = status.get(m["reply_to"]) or (db.get_message(conn, m["reply_to"]) or {}).get("status")
             if to == "cancelled":
@@ -3149,7 +3172,8 @@ def _msg_flags(conn: sqlite3.Connection, messages: list[dict]) -> dict[int, str]
 def _wait_actions(m: dict, base: str, mode: str, extra: str, can_resend: bool) -> str:
     """Resend and Cancel under a user message still waiting for its reply. Resend shows once the
     message has waited assistant.RESEND_AFTER seconds since its last ping (data-resend-due, epoch ms,
-    revealed by the page script), or at once when that ping failed; only with an assistant task set."""
+    revealed by the page script), or at once when that ping failed or its claim lapsed (db.claim_lapsed);
+    only with an assistant task set."""
     if m["status"] not in db.WAITING:
         return ""
     hidden = f'<input type="hidden" name="msg_id" value="{h(m["id"])}">{extra}'
@@ -3158,7 +3182,7 @@ def _wait_actions(m: dict, base: str, mode: str, extra: str, can_resend: bool) -
         ping = assistant.last_ping(m["id"])
         since = ping[0] if ping else _epoch(m["created_at"])
         due = int((since + assistant.RESEND_AFTER) * 1000)
-        show = (ping is not None and not ping[1]) or time.time() * 1000 >= due
+        show = (ping is not None and not ping[1]) or time.time() * 1000 >= due or db.claim_lapsed(m)
         resend = (f'<form method="post" action="{base}/resend" data-ajax="{mode}">{hidden}'
                   f'<button class="btn btn-ghost btn-sm" data-resend-due="{due}"{"" if show else " hidden"}'
                   ' title="Ping the assistant again about this message">Resend</button></form>')

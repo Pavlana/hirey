@@ -121,3 +121,8 @@ Agent-first work added after the first plan, with no acceptance criteria here. T
   check (grounding, fit, skim, editorial).
 - Job briefs: a short summary of a job description at the top of its panel.
 - Master CV history: changes through the agent only, saved versions, diff and restore.
+- Assistant scaling, step 1: a `[workers]` router (plain code) sends queued research, CV fit,
+  tailored CVs, AI checks and job briefs to a Research worker task when one is set; thread messages
+  stay with the Applications Assistant. Message claims lapse after 30 minutes (flagged, Resend at
+  once); prep.db runs in WAL with a busy timeout so several agents write in turn. Next: a recruiter
+  communication worker (`comms`), then several research workers in parallel.

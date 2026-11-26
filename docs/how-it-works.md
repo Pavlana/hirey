@@ -204,6 +204,37 @@
    and a 15-second timeout. The dashboard runs it in a background thread. dev3 is found through
    `dev3_bin`, then PATH, then `~/.dev3.0/bin/dev3`. A failure is logged and the requests stay
    queued for the hook or /today.
+
+   Routing (`assistant.target`, plain code): `assistant.ROUTES` maps each kind of queued work to a
+   `[workers]` route; a route with a task set (`Settings.workers`, `config.worker_task`) gets the ping
+   instead of `assistant_task`. Unmapped work and every thread message stay with the Applications
+   Assistant. No `[workers]` table: everything goes to `assistant_task`, as before.
+
+   | Work | Route | Pinged with | Goes to |
+   | --- | --- | --- | --- |
+   | `agent_requests` research, cv_fit, tailor, cv_eval | `research` | `/research <app id>` | `[workers] research`, else `assistant_task` |
+   | `brief_requests` (job briefs) | `research` | `/research briefs` | `[workers] research`, else `assistant_task` |
+   | Applications Assistant box messages (`/ask ...`) | none | `/ask <about> <msg id>` | `assistant_task` |
+   | Learn Assistant box messages | none | `/learn-ask <card> <msg id>` | `prep_assistant_task` |
+
+   `[workers] research = <seq>` (env `PREP_WORKER_RESEARCH`, empty clears it) must be a whole number;
+   an unknown route key is a settings error (`config.WORKER_ROUTES`). The worker runs the same
+   /research skill: it reads the queue from prep.db and claims each item, so it never assumes it is
+   the Applications Assistant. Its questions (a tailored CV's note) are posted in the Applications
+   Assistant box, and the user's answers there go to the Applications Assistant (`/ask`), so the
+   conversation stays in one place. With a worker set, the SessionStart line says research and briefs
+   belong to it. The panel's queued work names its handler and since when
+   ("Tailored CV (Research worker, queued Nov 26, 14:02)", "started …" once claimed; `web._work_label`),
+   and the Usage tab counts the worker's turns as "Research worker".
+
+   Claims and leases. Every claim is an `UPDATE … WHERE status = 'pending' OR (status = 'claimed' AND
+   claimed_at < cutoff)`, so of two workers on two connections only one wins an item, and a lapsed
+   claim returns it to the queue. Leases: `db.CLAIM_HOURS` (6) for agent and brief requests (a tailored
+   CV is long), `db.MESSAGE_CLAIM_MINUTES` (30) for user messages in both boxes (`db._message_cutoff`).
+   prep.db runs in WAL mode (`db.connect`: `PRAGMA journal_mode = WAL` once, stored in the file) with
+   `PRAGMA busy_timeout = 5000` (`db.BUSY_TIMEOUT_MS`), so the dashboard and several agents write in
+   turn and readers never block. getjo's database is untouched (still `mode=ro`, no pragmas).
+   `prep.db-wal` and `prep.db-shm` are gitignored and in the privacy list.
 15. Applications Assistant box. One conversation with the Applications Assistant for the whole search, in a box under
    the list (not in a panel). What a message is about is ticked, not opened: every Pipeline and New
    offers row, the open panel's header ("Ask about this") and My CV in the page header have a ☐.
@@ -395,7 +426,7 @@
    AI check (`prep/cveval.py`): `db.save_tailored_cv` also queues an `agent_requests` row of kind
    `cv_eval` in the same transaction (`INSERT OR IGNORE`: an open one is reused, since it always
    checks the latest version), so every save, a revision through /ask included, gets one;
-   `tailor save` pings the Applications Assistant like other queued work. `research next` leaves it out
+   `tailor save` pings whoever handles research (Research worker or Applications Assistant) like other queued work. `research next` leaves it out
    (neither picked nor claimed, so other applications' work goes first) while a tailor request is open
    for that application, and prints the version file
    and number, cv.md, the facts bank, `_style.md`, the job description, the master CV's fit score and
@@ -495,7 +526,7 @@
    Write brief / Redo brief button posts `/offers/brief` (`db.queue_brief`); `/research` writes the
    brief of a tracked job during company research (a "Job brief" step in the packet when there is
    none, or on Redo); `/ask` writes one when asked ("key facts"). When the page queued any, it
-   sends `/research briefs` to the Applications Assistant once (a count, no ids;
+   sends `/research briefs` once to whoever handles research (the Research worker when set, else the Applications Assistant) (a count, no ids;
    `assistant.notify_briefs_in_background`). `/research` loops on `prep.cli brief next` (claims the
    oldest, prints the job, the format and the description) and `brief save --job ID` (text on
    stdin); `brief show` prints one. `queue` and `today` add "Job briefs: N waiting". While a brief is
@@ -697,7 +728,10 @@
    `cancelled` (`db.REQUEST_STATUSES`; a brief row is re-opened by Write brief / Redo, and an agent
    request queued again is a new row). The script then swaps in the conversation, stops the poll and
    refreshes the list and panel. Nothing is sent to the assistant or its terminal. A claimed message
-   never expires on its own (a stale claim only counts as pending again), so one the assistant answered
+   with no reply after `db.MESSAGE_CLAIM_MINUTES` (30) has lapsed (`db.claim_lapsed`): it is flagged
+   "no reply in 30 min", its Resend shows at once, any session may claim it again, and when every waiting
+   message has lapsed the waiting line says "No reply in 30 min: … Resend, or Stop." with no spinner.
+   A pending message is never closed on its own, so one the assistant answered
    past keeps the box waiting until Stop or Cancel: the box flags a waiting message "no reply yet" when
    a newer user message on the same subject (application, job offer, topic; not comparisons) was
    answered, and `thread reply --to MSG` prints "Also waiting, no reply: message N" for each

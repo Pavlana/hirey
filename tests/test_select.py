@@ -157,7 +157,7 @@ class SendTest(WebTestCase):
         self.assertEqual(self.send({"about": "topic:compare"})[0], 400)  # the topic is never taken from the form
 
     def test_ping_holds_ids_only(self) -> None:
-        settings = mock.Mock(assistant_task=42, assistant_project=None)
+        settings = mock.Mock(assistant_task=42, assistant_project=None, workers=())
         argv = assistant.ask_command(settings, None, 17, "/bin/dev3", topic=db.COMPARE)
         self.assertEqual(argv[-1], "/ask compare 17")
         self.assertEqual(assistant.brief_command(settings, 3, "/bin/dev3")[-1], "/research briefs")

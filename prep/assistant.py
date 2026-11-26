@@ -12,6 +12,11 @@ text). Any failure is logged and ignored: the work stays queued for the next ses
 With `prep_assistant_task` set, each new message to the Learn page's Learn Assistant is sent to that second
 assistant as `/learn-ask <card id> <message id>` (or `/learn-ask general <message id>` with no card).
 
+Routing (plain code, no LLM): ROUTES maps each kind of queued work to a [workers] route; when that
+route has a worker task set (Settings.workers), the ping goes to the worker instead of `assistant_task`.
+Today `research` takes company research, CV fit, tailored CVs, AI CV checks and job briefs. Every thread
+message (/ask) and anything unmapped stays with the Applications Assistant.
+
 Each message ping's time and outcome is kept in memory (last_ping), so the dashboard can offer
 Resend at once after a failed ping, or after RESEND_AFTER seconds without a reply.
 """
@@ -23,7 +28,7 @@ import threading
 import time
 from pathlib import Path
 
-from prep.config import REPO_ROOT, Settings
+from prep.config import REPO_ROOT, Settings, worker_task
 
 log = logging.getLogger("prep.assistant")
 TIMEOUT = 15
@@ -44,6 +49,23 @@ def last_ping(message_id: int) -> tuple[float, bool] | None:
         return _PINGS.get(int(message_id))
 
 
+APPLICATIONS_ASSISTANT = "Applications Assistant"
+# Work kind -> [workers] route. Kinds not listed (thread messages) always go to assistant_task.
+ROUTES = {"research": "research", "cv_fit": "research", "tailor": "research", "cv_eval": "research",
+          "brief": "research"}
+WORKER_NAMES = {"research": "Research worker"}
+
+
+def target(settings: Settings, kind: str) -> tuple[int | None, str]:
+    """(dev3 task seq, name shown in the dashboard) that handles this kind of work: its worker when
+    one is set, else the Applications Assistant (seq None when assistant_task is unset too)."""
+    route = ROUTES.get(kind)
+    seq = worker_task(settings, route) if route else None
+    if seq:
+        return seq, WORKER_NAMES.get(route, f"{route.capitalize()} worker")
+    return settings.assistant_task, APPLICATIONS_ASSISTANT
+
+
 DEFAULT_DEV3 = Path.home() / ".dev3.0" / "bin" / "dev3"  # where dev3 installs its CLI
 
 
@@ -61,15 +83,19 @@ def _subject(kinds: set[str]) -> str:
 
 
 def commands(settings: Settings, requests: list[dict], dev3: str) -> list[list[str]]:
-    """One `dev3 message` argument list per application in `requests` (dicts with application_id)."""
+    """One `dev3 message` argument list per application and target task in `requests` (dicts with
+    application_id and kind); requests whose target has no task set are left out."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
-    kinds: dict[int, set[str]] = {}
+    kinds: dict[tuple[int, int], set[str]] = {}
     for r in requests:
-        kinds.setdefault(int(r["application_id"]), set()).add(r.get("kind", "research"))
-    return [[dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
-             "--subject", f"{_subject(kinds[app_id])} queued for application {app_id}",
+        kind = r.get("kind", "research")
+        seq = target(settings, kind)[0]
+        if seq:
+            kinds.setdefault((int(r["application_id"]), int(seq)), set()).add(kind)
+    return [[dev3, "message", "--task", f"seq:{seq}", *project,
+             "--subject", f"{_subject(kinds[(app_id, seq)])} queued for application {app_id}",
              f"/research {app_id}"]
-            for app_id in sorted(kinds)]
+            for app_id, seq in sorted(kinds)]
 
 
 def ask_command(settings: Settings, app_id: int | None, message_id: int, dev3: str, job: bool = False,
@@ -97,24 +123,24 @@ def brief_command(settings: Settings, count: int, dev3: str) -> list[str]:
     """The `dev3 message` argument list for newly queued job briefs: a count and no job ids (`brief next`
     lists them)."""
     project = ["--project", settings.assistant_project] if settings.assistant_project else []
-    return [dev3, "message", "--task", f"seq:{int(settings.assistant_task)}", *project,
+    return [dev3, "message", "--task", f"seq:{int(target(settings, 'brief')[0])}", *project,
             "--subject", f"{int(count)} job brief{'s' if count != 1 else ''} queued", "/research briefs"]
 
 
 def notify_briefs(settings: Settings, count: int) -> int:
-    """Send `/research briefs`; returns 1 if delivered. Never raises."""
-    if not settings.assistant_task or count < 1:
+    """Send `/research briefs` to whoever handles briefs; returns 1 if delivered. Never raises."""
+    if not target(settings, "brief")[0] or count < 1:
         return 0
     dev3 = dev3_path(settings)
     if dev3 is None:
-        log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); briefs stay queued")
+        log.warning("a task for briefs is set but the dev3 CLI was not found (set dev3_bin); briefs stay queued")
         return 0
     return _send([brief_command(settings, count, dev3)])
 
 
 def notify_briefs_in_background(settings: Settings, count: int) -> threading.Thread | None:
     """notify_briefs() in a daemon thread, so a page load never waits for dev3."""
-    if not settings.assistant_task or count < 1:
+    if not target(settings, "brief")[0] or count < 1:
         return None
     thread = threading.Thread(target=notify_briefs, args=(settings, count), daemon=True)
     thread.start()
@@ -122,14 +148,20 @@ def notify_briefs_in_background(settings: Settings, count: int) -> threading.Thr
 
 
 def notify(settings: Settings, requests: list[dict]) -> int:
-    """Send /research messages for these requests; returns how many were delivered. Never raises."""
-    if not settings.assistant_task or not requests:
+    """Send /research messages for these requests, each to its target task; returns how many were
+    delivered. Never raises."""
+    if not _routed(settings, requests):
         return 0
     dev3 = dev3_path(settings)
     if dev3 is None:
-        log.warning("assistant_task is set but the dev3 CLI was not found (set dev3_bin); requests stay queued")
+        log.warning("a task for research is set but the dev3 CLI was not found (set dev3_bin); requests stay queued")
         return 0
     return _send(commands(settings, requests, dev3))
+
+
+def _routed(settings: Settings, requests: list[dict]) -> bool:
+    """True when at least one request has a task to ping."""
+    return any(target(settings, r.get("kind", "research"))[0] for r in requests)
 
 
 def notify_message(settings: Settings, app_id: int | None, message_id: int, job: bool = False,
@@ -192,7 +224,7 @@ def _send(argvs: list[list[str]]) -> int:
 
 def notify_in_background(settings: Settings, requests: list[dict]) -> threading.Thread | None:
     """notify() in a daemon thread, so a dashboard request never waits for dev3."""
-    if not settings.assistant_task or not requests:
+    if not _routed(settings, requests):
         return None
     thread = threading.Thread(target=notify, args=(settings, list(requests)), daemon=True)
     thread.start()

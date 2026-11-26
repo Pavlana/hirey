@@ -43,6 +43,7 @@ class IsolatedTestCase(unittest.TestCase):
             "PREP_CLAUDE_PROJECTS_DIR": str(self.tmp / "claude-projects"),  # never the real transcripts
             "PREP_COORDINATOR_TASK": "",
             "PREP_CONTEXT_WARN_TOKENS": "",
+            "PREP_WORKER_RESEARCH": "",
         }
         patcher = mock.patch.dict(os.environ, env)
         patcher.start()
