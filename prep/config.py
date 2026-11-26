@@ -37,6 +37,9 @@ Keys:
     coordinator_task  optional dev3 task seq of the coordinator (else tasks of dev3 type coordinator)
     context_warn_tokens  context size per turn above which the Usage tab says "time to /compact"
                     (default 300000)
+    [workers]       optional routing of queued work to worker tasks: `research = <dev3 task seq>` sends the
+                    pings for company research, CV fit, tailored CVs, AI CV checks and job briefs to that
+                    standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task)
     [prices."<model id or prefix>"]  optional API prices in dollars per million tokens (input, output,
                     cache_read, cache_write, cache_write_1h) for the Usage tab's cost estimate; they
                     override the built-in list prices (prep/prices.py) for matching models
@@ -88,6 +91,9 @@ ENV_KEYS = {
     "coordinator_task": "PREP_COORDINATOR_TASK",
     "context_warn_tokens": "PREP_CONTEXT_WARN_TOKENS",
 }
+# Route keys of the [workers] table (prep/assistant.py ROUTES maps work kinds to them) and their env vars.
+WORKER_ROUTES = ("research",)
+WORKER_ENV = {route: f"PREP_WORKER_{route.upper()}" for route in WORKER_ROUTES}
 # Keys an env var set to an empty string clears, so `PREP_ASSISTANT_TASK= python -m prep.web` (a demo
 # on example data, with PREP_PREP_ASSISTANT_TASK= too) never pings the Applications and Learn Assistants named in the settings file. Path and number
 # keys ignore an empty value: an empty PREP_DB must never mean "the default database".
@@ -121,6 +127,12 @@ class Settings:
     # (model id or prefix, (input, output, cache_read, cache_write) dollars per million tokens)
     getjo_repo: Path | None = None
     prices: tuple[tuple[str, tuple[float, float, float, float, float]], ...] = ()
+    workers: tuple[tuple[str, int], ...] = ()  # (route, dev3 task seq) from [workers]
+
+
+def worker_task(settings: Settings, route: str) -> int | None:
+    """The dev3 task seq set for a [workers] route, or None."""
+    return dict(settings.workers).get(route)
 
 
 def _resolve(value: str) -> Path:
@@ -199,7 +211,29 @@ def load_settings(path: Path | None = None) -> Settings:
         context_warn_tokens=_int(data, "context_warn_tokens", DEFAULT_CONTEXT_WARN_TOKENS, 1000, 10**8),
         getjo_repo=_getjo_repo(data),
         prices=_prices(data.get("prices")),
+        workers=_workers(data.get("workers")),
     )
+
+
+def _workers(value: object) -> tuple[tuple[str, int], ...]:
+    """[workers] route = seq, with PREP_WORKER_<ROUTE> overriding (empty clears it)."""
+    if value is None:
+        value = {}
+    if not isinstance(value, dict):
+        raise ConfigError("workers must be a table: [workers] research = <dev3 task seq>")
+    table = dict(value)
+    for route, env in WORKER_ENV.items():
+        if env in os.environ:
+            table[route] = os.environ[env]
+    out = []
+    for route, seq in table.items():
+        if route not in WORKER_ROUTES:
+            raise ConfigError(f"workers.{route} is not a known route (known: {', '.join(WORKER_ROUTES)})")
+        if seq in ("", None):
+            continue
+        key = f"workers.{route}"
+        out.append((route, _int({key: seq}, key, 0, 1, 10**9)))
+    return tuple(sorted(out))
 
 
 def _getjo_repo(data: dict) -> Path | None:

@@ -37,7 +37,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from prep import assistant, prices as price_list
-from prep.config import REPO_ROOT, Settings
+from prep.config import REPO_ROOT, Settings, worker_task
 
 log = logging.getLogger("prep.usage")
 
@@ -54,8 +54,8 @@ DONE = ("completed", "cancelled")
 COUNTS = ("input", "output", "cache_read", "cache_write")
 COST_KINDS = ("Cache read", "Cache write", "Output", "Input")  # how the money splits, as shown
 MONEY_DAYS = 30        # the cost chart and the "last 30 days" tile
-ROLES = ("Applications Assistant", "Learn Assistant", "Coordinator", "Build tasks", "Main checkouts")
-STANDING = ROLES[:3]
+ROLES = ("Applications Assistant", "Learn Assistant", "Research worker", "Coordinator", "Build tasks", "Main checkouts")
+STANDING = ROLES[:4]
 
 _LOCK = threading.Lock()
 _LAST_TRY = [0.0]
@@ -360,6 +360,8 @@ def report(conn: sqlite3.Connection, settings: Settings, today: str, days: int =
             return "Applications Assistant"
         if seq is not None and mine and seq == settings.prep_assistant_task:
             return "Learn Assistant"
+        if seq is not None and mine and seq == worker_task(settings, "research"):
+            return "Research worker"
         if info.get("task_type") == "coordinator" or (seq is not None and mine and seq == settings.coordinator_task):
             return "Coordinator"
         return "Build tasks"

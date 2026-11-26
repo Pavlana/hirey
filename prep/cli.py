@@ -85,7 +85,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 from prep import assistant, config, cvcheck, cveval, cvfile, cvpdf, db, explainers, getjo, learn, learnnotes, research, usage
-from prep.config import ConfigError, Settings, load_settings
+from prep.config import ConfigError, Settings, load_settings, worker_task
 
 log = logging.getLogger("prep")
 
@@ -848,7 +848,7 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
     path = settings.prep_db
     if not path.is_file():
         return 0
-    cutoff = db._claim_cutoff()
+    cutoff, msg_cutoff = db._claim_cutoff(), db._message_cutoff()
     lines = []
     try:
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as conn:
@@ -864,7 +864,8 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
                     rows = conn.execute(query).fetchall()
                 except sqlite3.Error:
                     continue
-                found = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= cutoff,
+                since = msg_cutoff if line in (_thread_line, _learn_line) else cutoff
+                found = [{"application_id": r[0], "kind": r[1], "claimed": r[2] == "claimed" and (r[3] or "") >= since,
                           "getjo_job_id": r[4] if len(r) > 4 else None, "topic": r[5] if len(r) > 5 else None}
                          for r in rows if r[1] in (*db.REQUEST_KINDS, "message", "brief")]
                 lines.append(line(found))
@@ -872,8 +873,11 @@ def cmd_queue(args: argparse.Namespace, settings: Settings) -> int:
         return 0
     text = " ".join(line for line in lines if line)
     if text:
+        worker = worker_task(settings, "research")
+        routed = (f" Research and job briefs go to the Research worker (dev3 task seq {worker}): other sessions "
+                  "leave them." if worker else "")
         print("Hirey: " + text + " Offer it to the user, or run it at once if this is the "
-              "Applications Assistant or Learn Assistant session.")
+              "Applications Assistant, Research worker or Learn Assistant session." + routed)
     return 0
 
 

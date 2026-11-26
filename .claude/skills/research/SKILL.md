@@ -10,6 +10,12 @@ Applications panel, queue requests. This skill does the work and saves it. Nothi
 or contacts anyone, and nothing leaves the machine except web searches about the company.
 Run every command from the repo root.
 
+It runs the same in the Applications Assistant session, a Research worker session (`[workers]
+research` in the settings: the dashboard pings it instead) or any other session: the queue is read
+from prep.db and every item is claimed first. Questions for the user always go to the Applications
+Assistant box (the tailored CV's note), never only to this terminal, so the user sees them in one
+place; the answers there are handled by `/ask`.
+
 ## Loop
 
 1. `python -m prep.cli research next` claims the oldest waiting application. With an id
@@ -35,7 +41,8 @@ If another session has already claimed the work, leave it alone.
 
 The dashboard queues a brief for every new offer scored at least `brief_auto_min_score` (8), for
 any other offer when its panel is first opened, and when the Write brief / Redo brief button is
-pressed. The Applications Assistant gets `/research briefs` (a count, no ids).
+pressed. Whoever handles research (the Research worker when `[workers] research` is set, else the
+Applications Assistant) gets `/research briefs` (a count, no ids).
 
 1. `python -m prep.cli brief next` claims the oldest waiting brief and prints the job, the format
    and the description from getjo.

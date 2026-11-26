@@ -65,7 +65,9 @@ class StopTest(ResendCancelBase):
     def test_stop_clears_a_job_panels_brief_and_it_can_be_queued_again(self) -> None:
         with self.conn() as conn:
             db.queue_brief(conn, GLOBEX_JOB)
-            self.assertEqual(web._panel_work(conn, None, GLOBEX_JOB), ["Job brief"])
+            work = web._panel_work(self.settings, conn, None, GLOBEX_JOB)
+            self.assertEqual(len(work), 1)
+            self.assertTrue(work[0].startswith("Job brief ("), work)
         status, reply = self.post_json("/applications/stop", {"panel_job": GLOBEX_JOB})
         self.assertEqual(status, 200)
         with self.conn() as conn:

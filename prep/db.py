@@ -81,13 +81,18 @@ RESEARCH_KINDS = ("research", "cv_fit")
 # cancelled: the user pressed Stop in the Applications Assistant box (kept; queueing it again adds a new row).
 REQUEST_STATUSES = ("pending", "claimed", "done", "cancelled")
 CLAIM_HOURS = 6
+# Lease of a claimed Applications or Learn message: a chat reply takes minutes, so a claim with no reply
+# after this long counts as stalled (the dashboard flags it and shows Resend at once; another session may
+# take it). Requests and briefs keep CLAIM_HOURS: a tailored CV takes much longer.
+MESSAGE_CLAIM_MINUTES = 30
+BUSY_TIMEOUT_MS = 5000  # how long a writer waits for another connection's lock (several agents write)
 RECOGNITION = ("well_known", "niche", "little_known")
 RECOGNITION_LABELS = {"well_known": "well known", "niche": "known in its niche", "little_known": "little known"}
 SIZE_BANDS = ("1-50", "51-250", "251-1000", "1001-5000", "5000+")
 FIT_GAP_SESSION = "cv fit"
 # The Agent conversation: the user writes, the Applications Assistant (/ask) replies. A user message is
 # about one application or the whole search (application_id NULL). It is pending until an /ask
-# session claims it (claims older than CLAIM_HOURS count as pending again) and answered once a
+# session claims it (claims older than MESSAGE_CLAIM_MINUTES count as pending again) and answered once a
 # reply names it. Agent replies have no status and inherit the message's application. The user may
 # cancel a message still waiting (pending or claimed): it is kept, greyed, out of every pending count,
 # and no claim takes it; a reply that arrives later is still stored (shown "after cancel").
@@ -533,12 +538,21 @@ def status_label(status: str) -> str:
 def connect(path: Path) -> sqlite3.Connection:
     """Open (and create if needed) prep.db, with the schema applied."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
+    conn = sqlite3.connect(path, timeout=BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
+    _use_wal(conn)
     conn.execute("PRAGMA foreign_keys = ON")
     conn.executescript(SCHEMA)
     _add_missing_columns(conn)
     return conn
+
+
+def _use_wal(conn: sqlite3.Connection) -> None:
+    """Write-ahead log, so readers never block the writer and several agents can write in turn. The mode
+    is stored in the file, so it is switched once; an in-memory database stays as it is."""
+    if conn.execute("PRAGMA journal_mode").fetchone()[0].lower() not in ("wal", "memory"):
+        conn.execute("PRAGMA journal_mode = WAL")
 
 
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
@@ -1819,6 +1833,11 @@ def _claim_cutoff() -> str:
     return (datetime.now(timezone.utc) - timedelta(hours=CLAIM_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _message_cutoff() -> str:
+    """Claims of user messages older than this have lapsed (MESSAGE_CLAIM_MINUTES)."""
+    return (datetime.now(timezone.utc) - timedelta(minutes=MESSAGE_CLAIM_MINUTES)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def queue_request(conn: sqlite3.Connection, app_id: int, kind: str, force: bool = False) -> tuple[int, bool]:
     """Queue research or a CV fit for an application; returns (request id, newly queued).
 
@@ -2298,7 +2317,7 @@ def thread(conn: sqlite3.Connection, app_id: int | None = None, limit: int | Non
         f"""
         SELECT * FROM (
             SELECT m.id, m.application_id, m.getjo_job_id, m.topic, m.card_id, a.company, m.author, m.body,
-                   m.status, m.reply_to, m.created_at
+                   m.status, m.reply_to, m.created_at, m.claimed_at
             FROM agent_messages m LEFT JOIN applications a ON a.id = m.application_id
             {where} ORDER BY m.id DESC {'LIMIT :limit' if limit else ''}
         ) ORDER BY id
@@ -2316,7 +2335,7 @@ def message_count(conn: sqlite3.Connection, learn: bool = False) -> int:
 
 def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None,
                      topic: str | None = None) -> list[dict]:
-    """User messages waiting for the agent (pending, or claimed longer than CLAIM_HOURS ago, or
+    """User messages waiting for the agent (pending, or claimed longer than MESSAGE_CLAIM_MINUTES ago, or
     claimed now: `claimed` is True for a live claim), oldest first, with getjo_job_id, topic, company
     and role (None for a message about an untracked job, a topic or the whole search). With `app_id`
     only that application's, with `job_id` only that untracked job's, with `topic` only that topic's.
@@ -2340,7 +2359,7 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id
         """,
         params,
     )
-    cutoff = _claim_cutoff()
+    cutoff = _message_cutoff()
     found = []
     for r in rows:
         d = dict(r)
@@ -2349,12 +2368,18 @@ def pending_messages(conn: sqlite3.Connection, app_id: int | None = None, job_id
     return found
 
 
+def claim_lapsed(msg: dict) -> bool:
+    """True for a user message claimed longer than MESSAGE_CLAIM_MINUTES ago with no reply yet: the
+    session that took it stalled, so it shows as retryable (Resend) and any session may take it."""
+    return msg.get("status") == "claimed" and (msg.get("claimed_at") or "") < _message_cutoff()
+
+
 def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | None = None,
                    topic: str | None = None) -> list[int]:
     """Take the waiting user messages about an application (or an untracked job with `job_id`, a
     `topic`, or, with none of them, the whole search) for this session; returns their ids, oldest first. Only one
     caller wins each: the update applies while it is still pending (or its claim has gone stale)."""
-    stamp, cutoff = now_iso(), _claim_cutoff()
+    stamp, cutoff = now_iso(), _message_cutoff()
     if app_id is not None:
         match, params = "application_id = ?", (app_id,)
     elif job_id is not None:
@@ -2383,7 +2408,7 @@ def claim_messages(conn: sqlite3.Connection, app_id: int | None, job_id: str | N
 def claim_message(conn: sqlite3.Connection, msg_id: int) -> bool:
     """Take one waiting user message for this session (a comparison is claimed on its own); True if
     this caller won it."""
-    stamp, cutoff = now_iso(), _claim_cutoff()
+    stamp, cutoff = now_iso(), _message_cutoff()
     cursor = conn.execute(
         "UPDATE agent_messages SET status = 'claimed', claimed_at = ? WHERE id = ? AND author = 'user' "
         "AND (status = 'pending' OR (status = 'claimed' AND claimed_at < ?))", (stamp, msg_id, cutoff))
@@ -2471,9 +2496,10 @@ def add_learn_message(conn: sqlite3.Connection, card_id: int | None, body: str) 
 
 
 def get_message(conn: sqlite3.Connection, msg_id: int) -> dict | None:
-    """One message: id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, created_at."""
+    """One message: id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, created_at,
+    claimed_at."""
     row = conn.execute("SELECT id, application_id, getjo_job_id, topic, card_id, author, body, status, reply_to, "
-                       "created_at FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
+                       "created_at, claimed_at FROM agent_messages WHERE id = ?", (msg_id,)).fetchone()
     return dict(row) if row else None
 
 
