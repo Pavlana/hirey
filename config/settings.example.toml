@@ -85,3 +85,11 @@ private_dir = "/absolute/path/to/inter_prep"
 # tailored CV may trace to cv.md or to this file; the AI check flags anything else. Default:
 # cv-facts.md in private_dir.
 # facts_file = "/absolute/path/to/inter_prep/cv-facts.md"
+
+# Optional. The job criteria: gates and ranking for New offers' Top 5 this week (template:
+# criteria.example.md). Default: notes/criteria.md in private_dir. Without the file, New offers is the
+# plain list of getjo matches.
+# criteria_file = "/absolute/path/to/inter_prep/notes/criteria.md"
+
+# Jobs in the week's Top 5 (1-20). The rest that pass the gates are under More.
+# top_per_week = 5

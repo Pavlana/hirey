@@ -247,7 +247,11 @@ the sent CV are changed by the agent through the Applications Assistant box.
 `/?view=offers` (the old Job Offers page) is the left column's other view. The panel, box and layout
 are shared with the Pipeline view.
 
-- **Rows**: open getjo jobs ([applications.md](applications.md#open-and-closed-jobs)) at or above
+- **Top 5 this week** (with a criteria file, default filters): the week's picks with a why line each and
+  the outcome once acted on, then Held: checking interviews (one click per company), Screening (a count),
+  More and Filtered out (folded). All offers (`all=1`), a search, a location box or another score shows
+  the plain list. Rules: [search.md](search.md).
+- **Rows** (the plain list): open getjo jobs ([applications.md](applications.md#open-and-closed-jobs)) at or above
   `score` that are neither tracked nor decided (`db.excluded_job_ids`; decided jobs live in the
   pipeline), newest day first (`first_seen`), then highest score (`web.offer_rows`).
 - Each row: its ☐ tick, score, company (a link to the offer panel), role with the chips (closed, may be
@@ -265,6 +269,7 @@ are shared with the Pipeline view.
 | `loc` | repeatable: london, remote, other (`getjo.location_tags`) |
 | `q` | company or role, case-insensitive substring |
 | `skipped=1` | Show skipped / Hide skipped |
+| `all=1` | All offers: the plain list instead of Top 5 |
 | `job=<getjo id>` | opens the offer panel |
 
 - Location tags: the word "london"; the words remote/anywhere/work from home/wfh; neither or empty is

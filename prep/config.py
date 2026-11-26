@@ -32,6 +32,9 @@ Keys:
                     worktree), used for tailored CV PDFs when the running Python lacks it
     facts_file      optional absolute path to the facts bank: true facts about the user not in cv.md,
                     which tailored CV claims may trace to (default private_dir/cv-facts.md)
+    criteria_file   optional absolute path to the job criteria (gates and ranking for Top 5 this week; shape in
+                    criteria.example.md; default private_dir/notes/criteria.md)
+    top_per_week    jobs in the week's Top 5 view (default 5, 1-20); the rest that pass are under More
     [workers]       optional routing of queued work to worker tasks: `research = <dev3 task seq>` sends the
                     pings for company research, CV fit, tailored CVs, AI CV checks and job briefs to that
                     standing task instead of assistant_task (env PREP_WORKER_RESEARCH; unset: assistant_task);
@@ -59,6 +62,7 @@ DEFAULT_NO_RESPONSE_DAYS = 14
 DEFAULT_RESEARCH_MAX_AGE_DAYS = 90
 DEFAULT_STALE_DAYS = 3
 DEFAULT_BRIEF_AUTO_MIN_SCORE = 8
+DEFAULT_TOP_PER_WEEK = 5
 
 # Environment variables that override the file. INTERPREP_SETTINGS points at another settings file.
 ENV_SETTINGS = "INTERPREP_SETTINGS"
@@ -79,6 +83,8 @@ ENV_KEYS = {
     "dev3_bin": "PREP_DEV3_BIN",
     "pdf_python": "PREP_PDF_PYTHON",
     "facts_file": "PREP_FACTS_FILE",
+    "criteria_file": "PREP_CRITERIA_FILE",
+    "top_per_week": "PREP_TOP_PER_WEEK",
 }
 # Route keys of the [workers] table (prep/assistant.py ROUTES maps work kinds to them) and their env vars.
 WORKER_ROUTES = ("research", "comms")
@@ -111,6 +117,8 @@ class Settings:
     pdf_python: Path | None = None
     facts_file: Path | None = None
     getjo_repo: Path | None = None
+    criteria_file: Path | None = None
+    top_per_week: int = DEFAULT_TOP_PER_WEEK
     workers: tuple[tuple[str, int], ...] = ()  # (route, dev3 task seq) from [workers], one pair per seq
 
 
@@ -173,7 +181,7 @@ def load_settings(path: Path | None = None) -> Settings:
         if os.environ.get(env) or (key in CLEARABLE and env in os.environ):
             data[key] = os.environ[env]
 
-    for key in ("getjo_db", "getjo_repo", "private_dir", "dev3_bin", "pdf_python", "facts_file"):
+    for key in ("getjo_db", "getjo_repo", "private_dir", "dev3_bin", "pdf_python", "facts_file", "criteria_file"):
         value = data.get(key)
         if value and not Path(value).expanduser().is_absolute():
             raise ConfigError(f"{key} must be an absolute path, got {value!r}")
@@ -196,6 +204,8 @@ def load_settings(path: Path | None = None) -> Settings:
         pdf_python=Path(data["pdf_python"]).expanduser() if data.get("pdf_python") else None,
         facts_file=Path(data["facts_file"]).expanduser() if data.get("facts_file") else None,
         getjo_repo=_getjo_repo(data),
+        criteria_file=Path(data["criteria_file"]).expanduser() if data.get("criteria_file") else None,
+        top_per_week=_int(data, "top_per_week", DEFAULT_TOP_PER_WEEK, 1, 20),
         workers=_workers(data.get("workers")),
     )
 

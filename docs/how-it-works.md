@@ -95,6 +95,7 @@ flowchart TD
 | CV checks | rule check; AI check results | `prep/cvcheck.py`, `prep/cveval.py` |
 | Learn | tracks, chapters, cards; notes files; explainers | `prep/learn.py`, `prep/learnnotes.py`, `prep/explainers.py` |
 | Evals reader | getjo's eval catalogue and results files, read only | `prep/evals.py` |
+| Search gate | criteria file, gate, ranking, Top 5 picks | `prep/criteria.py`, `prep/search.py` |
 | Pipeline stats | application numbers | `prep/stats.py`, `prep/charts.py` |
 | Markdown | safe, escaped Markdown subset | `prep/md.py` |
 | Settings | TOML settings and env overrides | `prep/config.py` |
@@ -109,7 +110,11 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    match["getjo job<br/>score 7 or more"] --> offers["New offers list"]
+    match["getjo job<br/>score 7 or more"] --> gate{"Gate: criteria file<br/>plain code, then the Research worker's screen"}
+    gate -->|"passed, ranked"| offers["Top 5 this week<br/>then More"]
+    gate -->|"interview style unknown"| held["Held<br/>one click per company"]
+    gate -->|"failed"| filtered["Filtered out, folded"]
+    held --> offers
     offers -->|"Skip with reason"| skipped["job_decisions: skipped"]
     offers -->|"Interested"| interested["Application: Interested<br/>research and CV fit queued"]
     interested -->|"Review research and apply"| applied["Applied<br/>Chase task +7"]
@@ -121,6 +126,8 @@ flowchart TD
 ```
 
 - A match is an open getjo job above the score that is neither tracked nor decided.
+- With a criteria file, matches pass a gate first and the best five of the week are shown with one
+  why line each; Pipeline stats counts how many of them were applied to ([search.md](reference/search.md)).
 - Every triage choice is stored in `job_decisions` with a copy of the job, so the labels survive getjo
   dropping it and can be exported to tune getjo's scoring.
 - Every stage change goes through one function, `db.move_application`. It writes history, records
@@ -343,7 +350,8 @@ erDiagram
     }
 ```
 
-Not shown: `job_decisions` and `job_briefs` / `brief_requests` (keyed by getjo job id),
+Not shown: `job_decisions`, `job_briefs` / `brief_requests`, `job_screens` and `top_picks` (keyed by getjo job id),
+`company_checks` / `company_aliases` (keyed by company slug),
 `company_profiles` (keyed by company slug), `cv_versions`, `runs` and the `usage_*` tables.
 
 ## Configuration
@@ -383,6 +391,7 @@ Every key, env var and the launchd job: [configuration.md](reference/configurati
 | --- | --- |
 | [applications.md](reference/applications.md) | matches, triage, stages, stage tasks, comments, notes, review order, `/today` |
 | [assistants.md](reference/assistants.md) | standing agents, routing, pings, claims and leases, the box, Resend / Cancel / Stop, drafts, Workers |
+| [search.md](reference/search.md) | criteria file, company checks, job screens, gate, ranking, Top 5, its metric |
 | [research.md](reference/research.md) | research queue, company profiles, CV fit, tier, job briefs |
 | [cvs.md](reference/cvs.md) | master CV, tailored CV versions, PDF, rule check, AI check |
 | [practice.md](reference/practice.md) | debriefs, gaps and drill tasks |

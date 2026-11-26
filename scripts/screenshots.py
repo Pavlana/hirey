@@ -75,6 +75,7 @@ def example_env(tmp: Path) -> dict[str, str]:
         "PREP_GETJO_DB": str(ROOT / "data" / "example-getjo.db"),
         "PREP_GETJO_REPO": str(ROOT / "data" / "example-getjo-repo"),
         "PREP_PRIVATE_DIR": str(tmp / "private"),
+        "PREP_CRITERIA_FILE": str(ROOT / "criteria.example.md"),  # Top 5 on the example criteria
         "PREP_DEV3_BIN": "/nonexistent/dev3",
         "PREP_ASSISTANT_TASK": "", "PREP_PREP_ASSISTANT_TASK": "",
         "PREP_WORKER_RESEARCH": "", "PREP_WORKER_COMMS": "",

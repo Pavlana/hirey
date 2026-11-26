@@ -33,7 +33,8 @@ tokens and dollars) was removed, and the Evals page shows no cost ([evals.md](ev
 - tiles: sent, response rate (with a warning), interviews, offers;
 - applications per week: 12 weeks, with a target line (`weekly_target`), full width;
 - the four-step funnel (`stats.stage_funnel`);
-- job boards (`web.boards_table`: `getjo.source_stats` over the read-only getjo database).
+- job boards (`web.boards_table`: `getjo.source_stats` over the read-only getjo database);
+- Top 5: how many were applied to (`web.top_picks_card`, `search.pick_stats`).
 
 Charts are server-rendered SVG from `prep/charts.py` ([dashboard.md](dashboard.md)).
 
@@ -55,4 +56,7 @@ Used everywhere the numbers appear (`prep/stats.py`).
   applications.
 - **Weeks** start on Monday. "Last 7 days" is today and the six days before, by `date_applied`.
 - **Open gaps** counts every open gap, including those from CV fit checks.
+- **Top 5 applied share**: of every job ever shown in a week's Top 5 ([search.md](search.md#the-weeks-picks)),
+  counted once, the share now applied (a linked application past Interested). The rest are Interested,
+  skipped (by reason) or not acted on.
 - **Skipped** is closed: never submitted, never a reply ([applications.md](applications.md)).

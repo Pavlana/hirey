@@ -1,0 +1,409 @@
+{
+ "_comment": "Made-up data for New offers' Top 5 (prep/search.py): fictional companies only, no pay values (pay is pass / fail / unknown). Loaded by python -m prep.seed_example on top of example.json, and by tests/test_search.py. Dates are relative to _anchor_date.",
+ "_anchor_date": "2026-01-20",
+ "getjo_jobs": [
+  {
+   "id": "ashby:initrode-ai:a1",
+   "source": "ashby",
+   "company": "Initrode AI",
+   "title": "Senior AI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/initrode-ai/a1",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-17T08:00:00Z",
+   "score": 9,
+   "posted_at": "2026-01-17T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "greenhouse:vehement-energy:v2",
+   "source": "greenhouse",
+   "company": "Vehement Energy",
+   "title": "Senior LLM Engineer",
+   "location": "London (hybrid)",
+   "url": "https://jobs.example.com/vehement-energy/v2",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-13T08:00:00Z",
+   "score": 8,
+   "posted_at": "2026-01-13T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "lever:bluth-retail:b3",
+   "source": "lever",
+   "company": "Bluth Retail",
+   "title": "AI Platform Engineer",
+   "location": "Remote (UK)",
+   "url": "https://jobs.example.com/bluth-retail/b3",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-16T08:00:00Z",
+   "score": 8,
+   "posted_at": "2026-01-16T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "workable:dunder-data-consulting:d4",
+   "source": "workable",
+   "company": "Dunder Data Consulting",
+   "title": "Senior AI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/dunder-data-consulting/d4",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-19T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-19T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:prestige-health:p5",
+   "source": "ashby",
+   "company": "Prestige Health",
+   "title": "Senior Forward Deployed Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/prestige-health/p5",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-02T08:00:00Z",
+   "score": 8,
+   "posted_at": "2026-01-02T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:cogswell-cloud:c6",
+   "source": "ashby",
+   "company": "Cogswell Cloud",
+   "title": "Senior AI Engineer",
+   "location": "Remote (UK)",
+   "url": "https://jobs.example.com/cogswell-cloud/c6",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-18T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-18T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:sterling-labs:s7",
+   "source": "ashby",
+   "company": "Sterling Labs",
+   "title": "Senior AI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/sterling-labs/s7",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-18T08:00:00Z",
+   "score": 8,
+   "posted_at": "2026-01-18T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:sterling-labs:s8",
+   "source": "ashby",
+   "company": "Sterling Labs",
+   "title": "AI Engineer, Agents",
+   "location": "London",
+   "url": "https://jobs.example.com/sterling-labs/s8",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-19T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-19T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:kramerica:k9",
+   "source": "ashby",
+   "company": "Kramerica",
+   "title": "AI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/kramerica/k9",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-20T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-20T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "greenhouse:gekko-analytics:g10",
+   "source": "greenhouse",
+   "company": "Gekko Analytics",
+   "title": "Staff AI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/gekko-analytics/g10",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-15T08:00:00Z",
+   "score": 9,
+   "posted_at": "2026-01-15T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "lever:wernham-paper:w11",
+   "source": "lever",
+   "company": "Wernham Paper",
+   "title": "Senior GenAI Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/wernham-paper/w11",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-14T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-14T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "workable:monsters-example:m12",
+   "source": "workable",
+   "company": "Monsters Example",
+   "title": "Senior AI Engineer",
+   "location": "Manchester (on-site)",
+   "url": "https://jobs.example.com/monsters-example/m12",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-12T08:00:00Z",
+   "score": 8,
+   "posted_at": "2026-01-12T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  },
+  {
+   "id": "ashby:hooli-example:h13",
+   "source": "ashby",
+   "company": "Hooli Example",
+   "title": "AI Evals Engineer",
+   "location": "London",
+   "url": "https://jobs.example.com/hooli-example/h13",
+   "description": "A fictional team building made-up AI tools.\n\nWhat you will do\n\n- Build agents\n- Write evals",
+   "first_seen": "2026-01-11T08:00:00Z",
+   "score": 7,
+   "posted_at": "2026-01-11T00:00:00Z",
+   "expires_at": null,
+   "last_seen": "2026-01-20T06:00:00Z",
+   "closed_at": null
+  }
+ ],
+ "company_checks": [
+  {
+   "company": "Initrode AI",
+   "verdict": "strong",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product",
+   "note": "Take-home and pairing session (made up)"
+  },
+  {
+   "company": "Vehement Energy",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product",
+   "note": "Practical coding and system design (made up)"
+  },
+  {
+   "company": "Bluth Retail",
+   "verdict": "strong",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product"
+  },
+  {
+   "company": "Dunder Data Consulting",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "consultancy"
+  },
+  {
+   "company": "Prestige Health",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product"
+  },
+  {
+   "company": "Cogswell Cloud",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product"
+  },
+  {
+   "company": "Sterling Labs",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "unknown",
+   "kind": "product",
+   "note": "No engineering interview reports found (made up)"
+  },
+  {
+   "company": "Kramerica",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product"
+  },
+  {
+   "company": "Wernham Paper",
+   "verdict": "possible",
+   "sector_ok": "yes",
+   "interviews": "no",
+   "kind": "product",
+   "note": "Timed online coding screen (made up)"
+  },
+  {
+   "company": "Hooli Example",
+   "verdict": "strong",
+   "sector_ok": "yes",
+   "interviews": "yes",
+   "kind": "product"
+  }
+ ],
+ "screens": [
+  {
+   "job": "ashby:initrode-ai:a1",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "pass",
+   "builds_agents": "yes",
+   "evals": "yes",
+   "contract": "permanent"
+  },
+  {
+   "job": "greenhouse:vehement-energy:v2",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "yes",
+   "evals": "no",
+   "contract": "permanent"
+  },
+  {
+   "job": "lever:bluth-retail:b3",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "yes",
+   "evals": "yes",
+   "contract": "contract"
+  },
+  {
+   "job": "workable:dunder-data-consulting:d4",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "unknown",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "unknown",
+   "evals": "unknown",
+   "contract": "permanent"
+  },
+  {
+   "job": "ashby:prestige-health:p5",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "yes",
+   "evals": "unknown",
+   "contract": "permanent"
+  },
+  {
+   "job": "ashby:cogswell-cloud:c6",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "no",
+   "evals": "no",
+   "contract": "permanent"
+  },
+  {
+   "job": "ashby:sterling-labs:s7",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "yes",
+   "evals": "unknown",
+   "contract": "permanent"
+  },
+  {
+   "job": "ashby:sterling-labs:s8",
+   "role_family": "yes",
+   "level": "unknown",
+   "team": "yes",
+   "location": "yes",
+   "pay": "unknown",
+   "builds_agents": "yes",
+   "evals": "unknown",
+   "contract": "permanent"
+  },
+  {
+   "job": "ashby:hooli-example:h13",
+   "role_family": "yes",
+   "level": "yes",
+   "team": "yes",
+   "location": "yes",
+   "pay": "fail",
+   "builds_agents": "yes",
+   "evals": "yes",
+   "contract": "permanent"
+  }
+ ],
+ "briefs": [
+  {
+   "job": "ashby:initrode-ai:a1",
+   "brief": "hybrid 2 days \u00b7 Python \u00b7 LLM agents \u00b7 Senior \u00b7 London\n## Summary\nSenior AI engineer on a fictional team building internal agents.\n## Must-haves\n- Python in production\n- LLM APIs and agent frameworks\n- Evals for LLM features\n## Where & terms\n- London, hybrid 2 days\n- Permanent, senior\n## Team & product\n- Team of 8 engineers building made-up agents"
+  }
+ ],
+ "decisions": [
+  {
+   "job": "lever:globex-labs:abc",
+   "decision": "skipped",
+   "reason": "role_type"
+  }
+ ],
+ "picks": [
+  {
+   "days_before": 7,
+   "job": "greenhouse:acme-rockets:1001",
+   "company": "Acme Rockets",
+   "title": "Platform Engineer",
+   "score": 9,
+   "why": "9/10 fit \u00b7 possible company \u00b7 posted 1 day ago"
+  },
+  {
+   "days_before": 7,
+   "job": "lever:globex-labs:abc",
+   "company": "Globex Labs",
+   "title": "Cloud Security Engineer",
+   "score": 8,
+   "why": "8/10 fit \u00b7 posted 0 days ago"
+  }
+ ]
+}
