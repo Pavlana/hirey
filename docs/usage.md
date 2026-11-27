@@ -153,7 +153,8 @@ Everyday flow:
 - **Applications Assistant box**: tick rows to say what a message is about (none: the whole search;
   two to four: a comparison), then ask a question, ask for a change or paste a recruiter email.
 - **Learn**: open a card, say the answer in Your answer, **Check my answer**, read the explainer;
-  highlight any text and **✦ Ask about this** sends it to the Learn Assistant.
+  highlight any text and **✦ Ask about this** asks the Learn Assistant to explain it; the answer shows in
+  the same box, and **Ask** there sends a follow-up question.
 
 ![New offers: Top 5 this week on example data](screenshots/new-offers.png)
 ![Pipeline stats](screenshots/pipeline-stats.png)

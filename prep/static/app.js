@@ -965,7 +965,7 @@
     const area = document.createElement("textarea");
     area.rows = 2;
     area.maxLength = 4000;
-    area.placeholder = "Ask ↵ explains it. Or type a question, or a note (dictation: Fn twice)…";
+    area.placeholder = "A follow-up question, or a note (dictation: Fn twice)…";
     area.setAttribute("aria-label", "Your question or note");
     const actions = document.createElement("div");
     actions.className = "hl-actions";
@@ -1040,10 +1040,11 @@
       };
       me.timer = setTimeout(tick, POLL_MS);
     }
-    async function ask() {
+    async function ask(first = false) {
+      const words = area.value.trim();
+      if (!first && !words) { area.focus(); return; } // Ask is for follow-ups: the explanation is already asked for
       busy(true);
       try {
-        const words = area.value.trim();
         const reply = await post("/learn/message", data());
         box.dataset.pinned = "1";
         asked.hidden = !words;
@@ -1072,8 +1073,9 @@
       } catch (err) { toast(err.message || "Not saved.", { error: true }); }
       busy(false);
     }
-    askBtn.addEventListener("click", ask);
+    askBtn.addEventListener("click", () => ask());
     noteBtn.addEventListener("click", note);
+    ask(true); // one click: "Ask about this" sends "Explain this." at once and the answer shows in this box
     area.addEventListener("keydown", (e) => {
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); ask(); }
     });
