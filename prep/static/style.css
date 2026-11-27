@@ -646,6 +646,11 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .artifact .gate-list li { display: inline-flex; align-items: center; gap: 4px; }
 .artifact .why { margin: 0; font-size: 13px; color: var(--text-muted); }
 #card-invite { margin-bottom: var(--space-3); }
+.paste-box { padding: var(--space-3); margin-bottom: var(--space-3); }
+.paste-form { display: grid; grid-template-columns: 1fr auto; gap: 6px var(--space-2); align-items: end; }
+.paste-form label { grid-column: 1 / -1; font-weight: 600; }
+.paste-form textarea { width: 100%; resize: vertical; }
+.draft-edit { width: 100%; resize: vertical; font: inherit; }
 /* Notes: the user's and the agent's notes on one application; Edit opens the form under them */
 .notes-body p, .notes-body ul { margin: 0 0 4px; }
 .notes-body ul { padding-left: 1.2em; }

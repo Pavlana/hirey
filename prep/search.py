@@ -14,7 +14,8 @@ Plain code where the answer is plain, the agent where it needs judgement:
 A job dict needs id, company, title, location, score, posted_at, first_seen; `origin` says where it came
 from ("getjo", the default: getjo polls the watch list, so its companies pass the company gate unless a
 check says drop). A recruiter's invitation (origin "linkedin", invite_jobs) builds the same dict: its id is
-"linkedin:<invitation id>", its score is the CV fit (1-5) doubled onto getjo's 0-10 scale, and it joins the
+"linkedin:<invitation id>", its score is the CV fit (1-5) doubled onto getjo's 0-10 scale (shown only out of
+10), and it joins the
 candidates while its application is still Interested.
 Every criterion is yes / no / unknown; pay is pass / fail / unknown and its figure is never seen here.
 """
@@ -136,10 +137,9 @@ def why_line(job: dict, check: dict | None, screen: dict | None, today: str) -> 
     "8/10 fit · strong company · builds agents · evals in role · posted 3 days ago"."""
     screen, check = screen or {}, check or {}
     parts = []
-    if job.get("origin") == "linkedin":
-        parts.append("LinkedIn")
-        if job.get("fit") is not None:
-            parts.append(f"{job['score']}/10 CV fit ({job['fit']}/5)")
+    if job.get("origin") == "linkedin":  # its row is marked LinkedIn; the fit is shown once, out of 10
+        if job.get("score") is not None:
+            parts.append(f"{job['score']}/10 CV fit")
     elif job.get("score") is not None:
         parts.append(f"{job['score']}/10 fit")
     if check.get("verdict") in ("strong", "possible"):
@@ -266,6 +266,22 @@ def invite_eval(conn: sqlite3.Connection, inv: dict, crit: Criteria, today: str)
     job = invite_job(conn, inv)
     return evaluate(job, db.company_check(conn, job["company"] or ""), db.job_screens(conn).get(job["id"]),
                     crit, today)
+
+
+STATE_LINES = {"passed": "Passes all gates", "held": "Held: interview style unknown", "screening": "Screening"}
+
+
+def gate_line(row: dict) -> str:
+    """The evaluation in one line: the state first ("Passes all gates", "Fails: level, team size"), then the why
+    line, e.g. "Passes all gates · 8/10 CV fit · strong company · builds agents · posted today"."""
+    state = f"Fails: {failed_text(row)}" if row["failed"] else STATE_LINES[row["state"]]
+    return " · ".join(x for x in (state, row["why"]) if x)
+
+
+def attention(row: dict) -> list[tuple[str, str]]:
+    """The gates that need a look: (label, value) for each one that is no or unknown, in the criteria's order.
+    The ones that say yes are covered by gate_line."""
+    return [(GATE_LABELS.get(k, k), v) for k, v in row["gates"].items() if v != "yes"]
 
 
 def decisions(conn: sqlite3.Connection) -> dict[str, dict]:

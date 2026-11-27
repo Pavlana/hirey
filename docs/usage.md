@@ -224,6 +224,11 @@ from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
 
 Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies.
 
+- **A new recruiter message about a job.** Paste it into **Paste recruiter message** at the top of
+  Applications and press Send. A named job is recorded at Interested, checked against the criteria and
+  shown with its LinkedIn invitation card; otherwise the reply asks for what is missing. The reply is
+  editable before Copy.
+
 - **From a message already in the box.** A recruiter's message pasted into the Applications
   Assistant box (for example to ask for feedback on it) gets an action row: **Draft reply ·
   LinkedIn | Email**. One click asks for the reply; nothing is pasted again.

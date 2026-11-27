@@ -177,14 +177,14 @@ check its company gate is unknown until the company is checked.
 
 ## Recruiters' invitations
 
-A recruiter's invitation pasted into Draft a reply as **Invitation reply** (the whole-search form only;
-[assistants.md](assistants.md#invitations)) is evaluated like a getjo job.
+A recruiter's message pasted into **Paste recruiter message** at the top of Applications
+([assistants.md](assistants.md#invitations)) is evaluated like a getjo job.
 
 ![An application from a recruiter's invitation: the LinkedIn invitation card, on example data](../screenshots/linkedin-invitation.png)
 
 ```mermaid
 flowchart TD
-    paste["Invitation reply<br/>pasted in the whole-search form"] --> read{"Comms worker: invite save"}
+    paste["Paste recruiter message<br/>top of Applications"] --> read{"Comms worker: invite save"}
     read -->|"company and role named"| app["Application at Interested<br/>source LinkedIn (recruiter)"]
     read -->|"company or role missing"| wait["invitations row, missing set<br/>the draft asks for it"]
     wait -->|"the recruiter's answer pasted, --invite N"| read
@@ -207,12 +207,20 @@ flowchart TD
   description, sector, size, team kind, interview format; never pay). The recruiter's answer, pasted
   later, updates the same row with `--invite N`.
 - **Job dict** (`search.invite_job`): origin `linkedin`; the score is the CV fit (1-5) doubled onto
-  getjo's 0-10 scale (`search.fit_on_ten`), so both sources compare at a glance; the why line starts
-  "LinkedIn · 8/10 CV fit (4/5)". With no company check the company gate is unknown and the interview
+  getjo's 0-10 scale (`search.fit_on_ten`), so both sources compare at a glance; it is shown only out
+  of 10 ("8/10 CV fit"; the 1-5 stays in the fit file and the CV fit card). With no company check the company gate is unknown and the interview
   style holds it until the Research worker's company check (printed in its research packet).
 - **Top 5**: named invitations whose application is still Interested join the candidates
   (`search.invite_jobs`, added in `search.board`). Their row is marked LinkedIn and opens the
   application. Moving the application on counts as applied, Skip as skipped (`db.invite_decisions`);
   Interested is not a decision here, because the code recorded it.
-- **Card** (`web._invite_card`): each gate yes / no / unknown, the state, the why line, the CV fit on
-  both scales, the week's rank when picked, and **Start the tailoring plan** once it passes.
+- **Card** (`web._invite_card`), only what needs attention:
+  - one line with the state and the why line (`search.gate_line`): "Passes all gates · 8/10 CV fit ·
+    strong company · builds agents · posted today", or "Fails: level, team size", or "Held: interview
+    style unknown";
+  - the gates that say no or unknown (`search.attention`), for example "pay: unknown";
+  - the week's rank when picked;
+  - "Named in the recruiter's answer of …" when a second paste named the job: it then goes through the
+    gate, company research and the CV fit like any invitation;
+  - the reply, editable with Copy, or "Drafting the reply…".
+- Tailoring starts with the panel's Tailor CV (the plan) or Just write it, as for any application.

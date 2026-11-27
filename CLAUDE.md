@@ -181,7 +181,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Draft a reply (used by /reply; recruiter messages pasted in, nothing sent): `python -m prep.cli reply show MSG [--claim]`,
   `reply save --to MSG [--subject S] [--note N]` (the draft on stdin; email needs a subject); routed to
   `[workers] comms`, else `assistant_task`
-- Recruiters' invitations (used by /reply; Draft a reply's "Invitation reply" in the whole-search form):
+- Recruiters' invitations (used by /reply; Paste recruiter message at the top of Applications):
   `python -m prep.cli invite save --to MSG --company C --role R [--location L]` (the job named: recorded at
   Interested, source "LinkedIn (recruiter)"; screen TOML on stdin) or `--missing company,description,…`
   (the reply asks for it), `--invite N` for the recruiter's answer to an earlier one; `invite list`

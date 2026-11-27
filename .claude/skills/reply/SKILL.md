@@ -44,8 +44,8 @@ notes for anything the user asked to remember.
 
 ## 1b. An invitation: evaluate it first
 
-When the first line says **Invitation reply**, the pasted message is a recruiter's invitation to a job not
-tracked yet. `reply show` prints the steps and the criteria file's path; read the criteria file (its pay floor
+When the first line says **Invitation reply** (the user pasted it into Paste recruiter message), the pasted
+message is a recruiter's invitation to a job not tracked yet. `reply show` prints the steps and the criteria file's path; read the criteria file (its pay floor
 is only for comparing: never copy it anywhere). Decide from the message:
 
 - **A. The company and the role are both named.** Record and evaluate it:
@@ -59,7 +59,8 @@ is only for comparing: never copy it anywhere). Decide from the message:
   (add `role`, or, when the recruiter keeps the client confidential, `sector,size,team_kind`; always
   `interviews`). The draft asks, politely and short, for what is missing: the company and the job description,
   or the sector, company size and whether it is an in-house team or a consultancy; and the interview format.
-  It offers a short call after that. Never refuse a call.
+  It offers a short call after that. Never refuse a call. Asking about the interview process is always in a
+  case-B draft (normal for a candidate).
 - **The recruiter's answer to an earlier invitation** (`reply show` lists the ones still waiting): add
   `--invite N` so that invitation is updated; with the job now named it becomes case A.
 

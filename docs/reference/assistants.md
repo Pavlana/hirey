@@ -422,8 +422,11 @@ sequenceDiagram
 
 ### Invitations
 
-- **Invitation reply** (`invite`) is the first choice of the whole-search form, and only there: an
-  invitation is about a job not tracked yet. It needs the paste.
+- **Paste recruiter message** is a textarea and Send, always visible at the top of Applications. It
+  posts `/applications/invite` (`web.paste_invitation`): a draft request with comms `invite`, channel
+  LinkedIn, about the whole search; no kind or channel to pick. Draft a reply's forms never offer it.
+- The invitation draft is an editable textarea, in the box and, once the job is recorded, in the
+  application's LinkedIn invitation card. Copy takes the edited text (`app.js`); edits are never saved.
 - `reply show` adds the steps: the criteria file's path, the invitations still waiting for the job to
   be named, and the two cases.
   - **Named**: `invite save --to MSG --company C --role R [--location L]` with the screen on stdin

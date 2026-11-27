@@ -223,12 +223,16 @@ Top to bottom:
    an Employer select (Product / Client / Unknown) that posts `/applications/employer` on change, the
    "Ask about this" tick, ✕ to the same view without `app`.
 2. **Job brief** or the readable description with Write brief (only with a getjo job;
-   [research.md](research.md)).
+   [research.md](research.md)); for an application from a recruiter's invitation, the **LinkedIn
+   invitation** card instead ([search.md](search.md#recruiters-invitations)).
 3. **Latest comment** with the number of earlier ones, read-only.
 4. **Shortcut row** (`web._shortcuts`):
-   - Research company, CV fit and Tailor CV queue a request (`/applications/research`), show
-     "Researching…" / "Checking CV fit…" / "Tailoring…" while it is open, and once there is a result
-     link to its card ("Research ✓ 2 Nov", "CV fit 4/5", "CV v2 · sent");
+   - the primary actions: Tailor CV and Just write it queue a request (`/applications/research`), show
+     "Planning…" / "Tailoring…" while it is open, and once there is a result link to its card
+     ("Plan ready", "CV v2 · sent");
+   - company research and the CV fit, queued on entering Interested, show here only while open
+     ("Researching…", "Checking CV fit…"); a result is its card under Results, with Open and Redo. An
+     application where they were never asked for gets Research company and CV fit buttons;
    - Mark applied and Skip while Interested, afterwards a disabled "Applied · 3 Nov" or "Skipped"
      ([applications.md](applications.md#mark-applied-and-skip));
    - Draft a reply, folded ([assistants.md](assistants.md#draft-a-reply-communication-worker)).

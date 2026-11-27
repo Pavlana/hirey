@@ -62,6 +62,25 @@ class StorageTest(InviteBase):
         self.assertEqual(moved, app["id"])  # the recruiter's text now sits with the application
         self.assertEqual(inv["job_id"], f"linkedin:{inv['id']}")
 
+    def test_answer_naming_the_job_shows_on_the_card(self) -> None:
+        first = self.request(VAGUE)
+        with self.conn() as conn:
+            inv, _ = db.save_invitation(conn, first, missing=("company", "interviews"))
+        answer = self.request("It's Northwind Robotics, Senior AI Engineer.")
+        code, _, err = self.save("--to", str(answer), "--company", "Northwind Robotics", "--role", "Senior AI Engineer",
+                                 "--invite", str(inv["id"]))
+        self.assertEqual(code, 0, err)
+        with self.conn() as conn:
+            app = db.get_invitation(conn, inv["id"])["application_id"]
+            kinds = {r["kind"] for r in db.open_requests(conn, app)}
+        self.assertEqual(kinds, {"research", "cv_fit"})
+        panel = self.get(f"/?app={app}")[2]
+        self.assertIn("Named in the recruiter's answer", panel)
+        self.assertIn("Held: interview style unknown", panel)
+        self.assertIn("CV fit being checked", panel)
+        self.assertIn("Drafting the reply…", panel)
+        self.assertIn("Researching…", panel)
+
     def test_missing_then_answered(self) -> None:
         first = self.request(VAGUE)
         with self.conn() as conn:
@@ -142,18 +161,24 @@ class GateTest(InviteBase):
         with self.conn() as conn:
             row = search.invite_eval(conn, inv, crit, TODAY)
             self.assertEqual(row["state"], "passed")
-            self.assertTrue(row["why"].startswith("LinkedIn · 8/10 CV fit (4/5)"))
+            self.assertTrue(row["why"].startswith("8/10 CV fit · strong company"))
             top = search.board(conn, [], crit, TODAY, 5)
         self.assertEqual([p["getjo_job_id"] for p in top["picks"]], [inv["job_id"]])
         body = self.get("/?view=offers")[2]
         self.assertIn(">LinkedIn</span>", body)
         self.assertIn(f'data-key="a:{inv["application_id"]}"', body)
+        with self.conn() as conn:
+            msg = db.thread(conn, inv["application_id"])[0]["id"]
+            reply = db.save_draft(conn, msg, "Hi Jo,\nThanks, this sounds interesting.\nFree Tue after 2.\nSam")
         panel = self.get(f"/?app={inv['application_id']}")[2]
-        self.assertIn('id="card-invite"', panel)
-        self.assertIn("passes the gate", panel)
-        self.assertIn("CV fit 4/5 · 8/10 on getjo&#x27;s scale", panel)
-        self.assertIn("Start the tailoring plan", panel)
-        self.assertIn("Top 5 this week · #1", panel)
+        card = panel[panel.index('id="card-invite"'):panel.index("</section>", panel.index('id="card-invite"'))]
+        self.assertIn("Passes all gates · 8/10 CV fit · strong company · builds agents", card)
+        self.assertNotIn("4/5", card)  # the fit once, out of 10
+        self.assertIn("pay: <span", card)  # only what needs a look: unknown or no
+        self.assertNotIn("sector:", card)
+        self.assertNotIn("tailoring plan", card)  # Tailor CV is the one way to start it
+        self.assertIn("Top 5 this week · #1", card)
+        self.assertIn(f'id="draft-body-panel-{reply}"', card)  # the reply lands in the panel, editable
 
     def test_acted_on_pick_stays_with_its_outcome(self) -> None:
         inv = self.named()
@@ -170,25 +195,30 @@ class GateTest(InviteBase):
 
 
 class FormTest(InviteBase):
-    def test_box_offers_invitation_first_and_panels_do_not(self) -> None:
+    def test_paste_box_is_one_step_and_draft_forms_offer_no_invitation(self) -> None:
         body = self.get("/?app=1")[2]
-        forms = [f.split("</form>")[0] for f in body.split('action="/applications/draft"')[1:]]
-        panel = next(f for f in forms if 'name="app_id" value="1"' in f)
-        box = next(f for f in forms if 'name="app_id"' not in f)
-        self.assertNotIn('value="invite"', panel)
-        self.assertIn('<option value="invite">Invitation reply</option><option value="reply">', box)
+        self.assertIn('action="/applications/invite"', body)
+        self.assertIn(">Paste recruiter message</label>", body)
+        self.assertNotIn('value="invite"', body)  # no type choice anywhere
 
-    def test_post_stores_an_invitation(self) -> None:
-        status, reply = self.post_json("/applications/draft", {"comms": "invite", "channel": "linkedin",
-                                                               "pasted": INVITE})
+    def test_paste_stores_an_invitation(self) -> None:
+        status, reply = self.post_json("/applications/invite", {"pasted": INVITE})
         self.assertEqual(status, 200, reply)
         with self.conn() as conn:
             msg = db.thread(conn)[-1]
-        self.assertEqual((msg["comms"], msg["application_id"]), ("invite", None))
-        for form in ({"comms": "invite", "channel": "linkedin", "pasted": ""},
-                     {"comms": "invite", "channel": "linkedin", "pasted": PASTED, "app_id": "1"}):
-            with self.subTest(form=form):
-                self.assertEqual(self.post_json("/applications/draft", form)[0], 400)
+        self.assertEqual((msg["comms"], msg["channel"], msg["application_id"]), ("invite", "linkedin", None))
+        self.assertEqual(self.post_json("/applications/invite", {"pasted": " "})[0], 400)
+        self.assertEqual(self.post_json("/applications/draft", {"comms": "invite", "channel": "linkedin",
+                                                                "pasted": INVITE})[0], 400)
+
+    def test_invitation_draft_is_editable_in_the_box(self) -> None:
+        msg = self.request(VAGUE)
+        with self.conn() as conn:
+            db.save_invitation(conn, msg, missing=("company", "interviews"))
+            reply = db.save_draft(conn, msg, "Hi Alex,\nWhich company is it, and what is the interview format?\nSam")
+        body = self.get("/")[2]
+        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body)
+        self.assertIn(f'data-copy="draft-body-{reply}">Copy</button>', body)
 
     def test_reply_show_prints_both_cases_and_waiting_invitations(self) -> None:
         first = self.request(VAGUE)
