@@ -1570,20 +1570,42 @@
 
   // --- CV editors (Tailored CV, My CV) ------------------------------------------------------------
   // Edit opens the form; Save (or Cmd/Ctrl-S, :w with vim keys) posts it. A saved edit refreshes the panel
-  // (the PDF, the check and the versions change) and opens the editor again on the saved text; the My CV
+  // (the PDF, the check and the versions change), closes the editor and flashes the CV's card, so the
+  // saved version, its PDF and its buttons are what is in view; the My CV
   // toast has Undo (Restore of the version it replaced). A save over a file that changed meanwhile comes
   // back refused: the editor again with the current text above, the user's text kept in it.
-  document.addEventListener("toggle", (e) => {
-    const edit = e.target;
-    if (!edit.matches?.(".cv-edit") || !edit.open) return;
-    const form = edit.querySelector("form[data-cv-editor]");
-    if (!form || form.dataset.vim) return;
-    form.dataset.vim = "1";
-    attachVim(form, form.querySelector("textarea"), () => form.requestSubmit());
-  }, true);
+  // A plain Markdown text box (no vim keys): the toolbar and Cmd/Ctrl-B / -I wrap the selection in ** or *,
+  // List and H2 put "- " or "## " at the start of the selected lines. setRangeText keeps native undo simple.
+  function mdApply(area, kind) {
+    const { selectionStart: a, selectionEnd: b, value } = area;
+    if (kind === "bold" || kind === "italic") {
+      const mark = kind === "bold" ? "**" : "*";
+      const text = value.slice(a, b) || (kind === "bold" ? "bold" : "italic");
+      area.setRangeText(`${mark}${text}${mark}`, a, b, "end");
+      if (a === b) area.setSelectionRange(a + mark.length, a + mark.length + text.length);
+    } else {
+      const start = value.lastIndexOf("\n", a - 1) + 1;
+      const prefix = kind === "bullet" ? "- " : "## ";
+      const block = value.slice(start, b).split("\n").map((l) => (l.startsWith(prefix) ? l : prefix + l)).join("\n");
+      area.setRangeText(block, start, b, "end");
+    }
+    area.focus();
+    area.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest?.("form[data-cv-editor] [data-md]");
+    if (!btn) return;
+    mdApply(btn.form.querySelector("textarea"), btn.dataset.md);
+  });
   document.addEventListener("keydown", (e) => {
     const form = e.target.closest?.("form[data-cv-editor]");
-    if (form && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); form.requestSubmit(); }
+    if (!form || !(e.metaKey || e.ctrlKey)) return;
+    const key = e.key.toLowerCase();
+    if (key === "s") { e.preventDefault(); form.requestSubmit(); }
+    else if ((key === "b" || key === "i") && e.target.matches("textarea")) {
+      e.preventDefault();
+      mdApply(e.target, key === "b" ? "bold" : "italic");
+    }
   });
   document.addEventListener("submit", async (e) => {
     const form = e.target.closest("form[data-cv-editor]");
@@ -1613,11 +1635,15 @@
         }
         throw new Error(reply.message || "Not saved.");
       }
-      const id = edit?.id;
-      if (edit) edit.open = false; // not kept over the refresh: the fresh one has the new stamp
+      const card = edit?.closest("section[id]")?.id;
+      if (edit) edit.open = false; // closed: the fresh panel shows the saved version, its PDF and buttons
       await refreshApps();
-      const again = id && document.getElementById(id);
-      if (again) { again.open = true; again.querySelector("textarea")?.focus(); }
+      const saved = card && document.getElementById(card);
+      if (saved) {
+        saved.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        saved.classList.add("is-flash");
+        setTimeout(() => saved.classList.remove("is-flash"), 1600);
+      }
       const undoIt = () => post("/cv/restore", new URLSearchParams({ version: reply.previous }))
         .then((r) => refreshApps().then(() => toast(r.message)))
         .catch((err) => toast(err.message, { error: true }));

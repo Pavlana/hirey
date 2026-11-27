@@ -98,9 +98,13 @@ A short, plain plan agreed before any CV is written: it keeps only what preparin
 ## Editor
 
 The same editor serves the latest tailored version (Tailored CV card) and the master CV (My CV panel),
-in `prep/cvedit.py`: the Notes card's Edit form with its stale-save stamp, a monospace text box, Save
-(also Cmd/Ctrl-S) and the optional vim keys of the Learn notes editor. No autosave: each save remakes
-the PDF.
+in `prep/cvedit.py`: the Notes card's Edit form with its stale-save stamp, a plain Markdown text box with a
+small toolbar (Bold, Italic, List, H2; Cmd/Ctrl-B and -I), and Save (also Cmd/Ctrl-S). No vim keys: the Learn
+notes editor keeps them. `**bold**` and `*italic*` show in the PDF; a line that is bold on its own is read
+as a role heading (title — company) by the PDF template. No autosave: each save remakes
+the PDF. After a save the editor closes and the CV's card is refreshed and flashed, so the saved
+version, its PDF and its buttons are in view; the PDF link carries the PDF's time (`t`), so an edit
+saved in place always opens the new PDF.
 
 - **Stamp**: the sha256 of the file the editor opened on. A save over a file that changed meanwhile is
   refused (400); the editor comes back with the user's text and the current text above it.

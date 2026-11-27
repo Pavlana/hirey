@@ -3206,7 +3206,8 @@ def _pdf_link(private_dir: Path | None, app_id: int, version: dict) -> str:
     pdf = research.inside(private_dir, str(cvpdf.pdf_path(Path(version["file_path"]))))
     if pdf is None or not pdf.is_file():
         return ""
-    href = "/research/pdf?" + urlencode([("app", app_id), ("v", version["version"])])
+    # t: the PDF's time, so an edit saved in place opens the new PDF, never a copy the browser kept.
+    href = "/research/pdf?" + urlencode([("app", app_id), ("v", version["version"]), ("t", int(pdf.stat().st_mtime))])
     return f'<a class="btn btn-ghost btn-sm" href="{h(href)}" target="_blank" rel="noopener">PDF</a>'
 
 
@@ -3395,10 +3396,19 @@ def _revise_form(count: int, here: str, app_id: int | None = None) -> str:
             + _button(f"Revise commented lines ({count})", "secondary", "sm") + "</form>")
 
 
+def _md_toolbar() -> str:
+    """The CV editor's Markdown buttons (app.js wraps or prefixes the selection; Cmd/Ctrl-B and -I too)."""
+    tools = (("bold", "B", "Bold (Cmd/Ctrl-B): **text**"), ("italic", "I", "Italic (Cmd/Ctrl-I): *text*"),
+             ("bullet", "• List", "Bullet: - at the line start"), ("heading", "H2", "Heading: ## at the line start"))
+    return ('<div class="md-tools" role="toolbar" aria-label="Markdown">'
+            + "".join(f'<button type="button" class="btn btn-ghost btn-sm" data-md="{k}" title="{h(t)}">{h(label)}</button>'
+                      for k, label, t in tools) + "</div>")
+
+
 def _editor_form(action: str, hidden: str, text: str, stamp: str, label: str, here: str, draft: str | None,
                  alert: str, current: str | None, extra: str = "", edit_id: str = "cv-edit") -> str:
-    """An Edit <details> with the CV editor: the text with its stamp, Save (also Cmd/Ctrl-S, :w with vim
-    keys), Cancel, and the vim keys toggle of the Learn notes editor. With `draft` (a refused save) it is
+    """An Edit <details> with the CV editor: a plain Markdown text box (a small Markdown toolbar, no vim keys),
+    its stamp, Save (also Cmd/Ctrl-S) and Cancel. With `draft` (a refused save) it is
     open with the user's text, `alert` and the `current` text above."""
     opened = " open" if draft is not None else ""
     shown = text if draft is None else draft
@@ -3408,13 +3418,13 @@ def _editor_form(action: str, hidden: str, text: str, stamp: str, label: str, he
             f'<form method="post" action="{action}" class="notes-form cv-editor" data-cv-editor>'
             f'{hidden}<input type="hidden" name="stamp" value="{h(stamp)}"><input type="hidden" name="return" value="{h(here)}">'
             f'{_banner(alert, "warning") if alert else ""}{now}'
+            + _md_toolbar() +
             f'<textarea name="text" rows="24" maxlength="{cvedit.MAX_CV}" class="mono-area" spellcheck="true" '
             f'aria-label="{h(label)}">{h(shown)}</textarea>{extra}'
             '<p class="notes-buttons">' + _button("Save", "primary", "sm")
             + f'<a class="btn btn-ghost btn-sm" href="{h(here)}" data-notes-cancel>Cancel</a>'
-            '<span class="ed-mode" data-ed-mode hidden></span><span class="mono muted" data-ed-pos hidden></span>'
-            '<button type="button" class="btn btn-ghost btn-sm" data-vim-toggle aria-pressed="false" hidden>vim keys off</button>'
-            '<span class="muted">%% under a line: a comment for the assistant.</span></p></form></details>')
+            '<span class="muted">Markdown: **bold** shows bold in the PDF. %% under a line: a comment for the assistant.'
+            '</span></p></form></details>')
 
 
 def _tailor_editor(app_id: int, current: dict, here: str, draft: str | None = None, alert: str = "") -> str:
