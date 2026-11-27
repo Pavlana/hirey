@@ -2268,7 +2268,8 @@ def _offer_panel(settings: Settings, conn: sqlite3.Connection, job: dict, decisi
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         '<div class="panel-body">'
         + _recommendation(fit, busy)
-        + _decide_company(profile, check, kind, brief, flags, busy, _fit_line(fit, busy and fit is None), more)
+        + _decide_company(profile, check, kind, brief, flags, busy, _fit_line(fit, busy and fit is None), more,
+                          _marked_needs(fit))
         + _decide_questions(decision_.call_questions(profile, gates, brief["facts"] if brief else ""),
                             f'j{job["id"]}', copy=False)
         + apply
@@ -2954,7 +2955,7 @@ def _panel(settings: Settings, conn: sqlite3.Connection, r: dict, today: str, f:
         f'<div class="panel-body">'
         + _recommendation(found["fit"], "cv_fit" in found["open"])
         + _decide_company(found["profile"], check, kind, brief, flags, researching,
-                          _fit_line(found["fit"], "cv_fit" in found["open"]), more)
+                          _fit_line(found["fit"], "cv_fit" in found["open"]), more, _marked_needs(found["fit"]))
         + _decide_questions(view["questions"], f'a{app["id"]}',
                             _panel_draft(conn, app["id"]) + _invite_card(conn, settings, app, today, here))
         + _decide_apply(conn, app, found, versions, here, settings.private_dir)
@@ -2967,6 +2968,20 @@ def _panel(settings: Settings, conn: sqlite3.Connection, r: dict, today: str, f:
 
 
 EMPLOYER_WORDS = {"product": "Product company", "client": "Client delivery"}
+NEED_SIGNS = {"have": ("✓", "have"), "partly": ("~", "partly"), "not": ("✗", "not yet")}
+
+
+def _needs_list(needs: list[dict]) -> str:
+    """What the role needs as a checklist: each need with its mark (✓ have, ~ partly, ✗ not yet; the screen
+    reader hears the word), or a plain item while it has none."""
+    items = []
+    for need in needs:
+        sign = NEED_SIGNS.get(need.get("mark") or "")
+        mark = (f'<span class="need-mark need-{h(need["mark"])}" aria-label="{sign[1]}" title="{sign[1]}">{sign[0]}</span>'
+                if sign else "")
+        cls = ' class="has-mark"' if sign else ""
+        items.append(f'<li{cls}>{mark}<span>{h(need["text"])}</span></li>')
+    return f'<h4>What the role needs</h4><ul class="needs">{"".join(items)}</ul>'
 VERDICT_TONES = {"apply": "success", "stretch": "warning", "skip": "danger"}
 REC_LABELS = {"soft": "Gaps that matter less", "real": "Gaps that are real", "favour": "In its favour",
               "decide": "What would decide it", "effort": "If you apply"}
@@ -2983,7 +2998,7 @@ def _recommendation(fit: dict | None, busy: bool) -> str:
                     '<span class="spinner" aria-hidden="true"></span>Recommendation: written with the CV fit…</p></section>')
         return ""
     head = (f'<h3 id="decide-rec">Recommendation {_badge(research.VERDICTS[rec["verdict"]], VERDICT_TONES[rec["verdict"]])}'
-            f' {_badge("CV fit " + str(fit["score"]) + "/5", _fit_tone(fit["score"]))}</h3>')
+            f' {_badge(_fit_text(fit), _fit_tone(fit["score"]))}</h3>')
     why = f'<p class="rec-why">{h(rec["why"])}</p>' if rec.get("why") else ""
     parts = "".join(f'<div class="rec-part rec-{key}"><h4>{h(label)}</h4><ul>'
                     + "".join(f"<li>{h(x)}</li>" for x in rec[key]) + "</ul></div>"
@@ -2993,20 +3008,31 @@ def _recommendation(fit: dict | None, busy: bool) -> str:
 
 
 def _fit_line(fit: dict | None, busy: bool) -> str:
-    """The CV fit as a badge for section 1 ("CV fit 4/5"), or "Checking CV fit…" while it is queued. Nothing
+    """The CV fit as a badge for section 1 ("8/10 CV fit"), or "Checking CV fit…" while it is queued. Nothing
     when the recommendation above already shows the score."""
     if busy:
         return '<span class="muted"><span class="spinner" aria-hidden="true"></span>Checking CV fit…</span>'
     if not fit or fit.get("recommendation"):
         return ""
-    return _badge(f'CV fit {fit["score"]}/5', _fit_tone(fit["score"]))
+    return _badge(_fit_text(fit), _fit_tone(fit["score"]))
+
+
+def _marked_needs(fit: dict | None) -> list[dict] | None:
+    """The CV fit's "What the role needs" checklist (its recommendation's `needs`), or None."""
+    return ((fit or {}).get("recommendation") or {}).get("needs") or None
+
+
+def _fit_text(fit: dict) -> str:
+    """The CV fit out of 10, as the lists show it ("8/10 CV fit"): Hirey's 1-5 doubled (search.fit_on_ten)."""
+    return f'{search.fit_on_ten(fit["score"])}/10 CV fit'
 
 
 def _decide_company(profile: dict | None, check: dict | None, kind: str | None, brief: dict | None, flags: list[str],
-                    busy: bool, fit: str, more: str) -> str:
+                    busy: bool, fit: str, more: str, marked: list[dict] | None = None) -> str:
     """1. Company and red flags: what the company does, one line of facts (size, sector, product or client
-    work, where), the engineering team and the interview style, the brief's key facts and what the role needs
-    (its must-haves), then the red flags.
+    work, where), the engineering team and the interview style, the brief's key facts and what the role needs:
+    the CV fit's checklist (`marked`: ✓ have / ~ partly / ✗ not yet, _needs_list) when it has one, else the
+    brief's must-haves as plain items; then the red flags.
     "Researching…" while the research or the brief is being written. More: the full brief, research and fit."""
     lines = []
     if profile and profile["what_it_does"]:
@@ -3027,10 +3053,9 @@ def _decide_company(profile: dict | None, check: dict | None, kind: str | None, 
     if brief:
         chips = "".join(f'<span class="fact">{h(x.strip())}</span>' for x in brief["facts"].split("·") if x.strip())
         lines.append(f'<p class="brief-facts" aria-label="Key facts">{chips}</p>')
-        needs = decision_.role_needs(brief["brief"])
-        if needs:
-            lines.append('<h4>What the role needs</h4><ul class="needs">'
-                         + "".join(f"<li>{h(x)}</li>" for x in needs) + "</ul>")
+    needs = marked or ([{"mark": None, "text": x} for x in decision_.role_needs(brief["brief"])] if brief else [])
+    if needs:
+        lines.append(_needs_list(needs))
     if fit:
         lines.append(f'<p>{fit}</p>')
     if busy:
@@ -3246,7 +3271,7 @@ def _fit_card(app: dict, found: dict, here: str) -> str:
     fit = found["fit"]
     gaps = ('<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>") if fit["top_gaps"] else ""
     actions = _open_link(app["id"], "cv_fit") + ("" if "cv_fit" in found["open"] else _redo(app["id"], "cv_fit", here))
-    meta = f' {_badge(str(fit["score"]) + "/5", _fit_tone(fit["score"]))} <span class="mono muted">{h(fit["checked_at"])}</span>'
+    meta = f' {_badge(_fit_text(fit), _fit_tone(fit["score"]))} <span class="mono muted">{h(fit["checked_at"])}</span>'
     return _artifact("card-fit", "CV fit", meta, actions, gaps)
 
 

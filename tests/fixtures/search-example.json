@@ -508,6 +508,20 @@
     ],
     "effort": [
      "One tailored version; lead with the evals work; do not claim multi-agent production"
+    ],
+    "needs": [
+     {
+      "mark": "have",
+      "text": "Python in production"
+     },
+     {
+      "mark": "have",
+      "text": "LLM APIs and agent frameworks"
+     },
+     {
+      "mark": "partly",
+      "text": "Evals for LLM features (offline evals; no online monitoring)"
+     }
     ]
    }
   }
@@ -538,6 +552,20 @@
     ],
     "effort": [
      "One tailored version only if the call confirms mostly build work"
+    ],
+    "needs": [
+     {
+      "mark": "have",
+      "text": "Building LLM assistants"
+     },
+     {
+      "mark": "partly",
+      "text": "Azure AI services"
+     },
+     {
+      "mark": "not",
+      "text": "Client-facing delivery"
+     }
     ]
    }
   }

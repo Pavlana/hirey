@@ -353,7 +353,8 @@ class DashboardTest(WebTestCase):
         self.save_both()
         panel = self.panel(self.MDE)
         self.assertNotIn("CV fit", self.shortcuts(panel))  # primary actions only: the result is in section 1
-        self.assertIn("CV fit 4/5", self.company(panel))
+        self.assertIn("8/10 CV fit", self.company(panel))  # out of 10, as the lists
+        self.assertNotIn("4/5", panel)
         self.assertIn(">Tailor CV</button>", self.shortcuts(panel))
         company = panel[panel.index('id="card-research"'):panel.index('id="card-fit"')]
         self.assertIn(">Tier A</span></p>", company)  # the fixture's tier A, not the research's B: no B reason

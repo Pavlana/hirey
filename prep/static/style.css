@@ -627,6 +627,11 @@ main:has(.apps) { max-width: 1880px; }
 .decide h4 { margin: var(--space-2) 0 0; font-size: 12px; font-weight: 650; color: var(--text-muted); }
 .decide .label { color: var(--text-muted); margin-right: 4px; }
 .decide .needs { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.decide .needs li.has-mark { list-style: none; margin-left: -1.2em; display: flex; gap: 8px; }
+.need-mark { flex: none; width: 1.1em; text-align: center; font-weight: 700; }
+.need-have { color: var(--success); }
+.need-partly { color: var(--warning); }
+.need-not { color: var(--danger); }
 .decide .flags { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
 .decide .flags li::marker { color: var(--danger); }
 .decide .questions { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }

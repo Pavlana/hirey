@@ -237,6 +237,11 @@ Verdict: Stretch: apply only if cheap — two real gaps, but it builds agents an
 
 ### If you apply
 - One tailored version; lead with the evals work; do not claim multi-agent production
+
+### What the role needs
+- ✓ Shipping LLM features to production
+- ~ Benchmarking LLMs (evals on a labelled set; no safety monitoring)
+- ✗ Multi-agent systems in production (personal project only)
 ```
 
 (The example is made up.) **The recommendation** is what the user reads first in the job's panel to decide.
@@ -251,6 +256,9 @@ Write it with the criteria file open (path in the packet; never copy its pay fig
 - **In its favour**: the ranking signals it meets, by the criteria.
 - **What would decide it**: the one or two things to check on the recruiter call or in the first interview.
 - **If you apply**: how much effort it is worth (one tailored version, what to lead with, what not to claim).
+- **What the role needs**: the 3-5 must-haves in the posting's words, each starting with `✓` have, `~` partly
+  or `✗` not yet, then a few plain words (no cv.md quotes). The panel shows it as the checklist in section 1,
+  the same marks as the tailoring plan; a need without a mark shows as a plain item.
 
 Honest and plain: no flattery, no invented strengths; every claim traces to `cv.md` or the facts bank, as the
 fit itself. At most 5 bullets per part. Never pay.

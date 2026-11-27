@@ -223,12 +223,14 @@ recruiter call, then Tailor CV and apply. Top to bottom (`web._panel`):
 1. **Header**: company, role, stage badge with interview step dots, "N days in this stage", the job
    posting link, the "closed" badge when it applies, ✕ to the same view without `app`.
 2. **Recommendation** (`web._recommendation`), from the CV fit's "## Recommendation" section: the verdict
-   (Apply, Stretch: apply only if cheap, Skip) with its sentence and the CV fit score, then short lists:
+   (Apply, Stretch: apply only if cheap, Skip) with its sentence and the CV fit out of 10 ("8/10 CV fit", the
+   1-5 doubled, as in the lists), then short lists:
    gaps that matter less, gaps that are real, in its favour, what would decide it, if you apply
    ([research.md](research.md#the-recommendation)). "Written with the CV fit…" while the fit is queued.
 3. **1. Company and red flags** (`web._decide_company`): what the company does, one facts line (size,
    sector, "Product company" or "Client delivery", where), the engineering team and the interview style,
-   the job brief's key facts and "What the role needs" (its Must-haves), the CV fit badge, then the red
+   the job brief's key facts and "What the role needs": the CV fit's checklist (✓ have, ~ partly, ✗ not yet;
+   `web._needs_list`), or the brief's Must-haves as plain items until the fit marks them; the CV fit badge, then the red
    flags ([how they are built](#red-flags-and-questions)). "Researching…" while the company research or
    the brief is being written. **More** holds the full brief (with Write brief / Redo brief and Show
    original), the company research card and the CV fit card, each with Open and Redo.

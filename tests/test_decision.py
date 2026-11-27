@@ -38,6 +38,12 @@ Verdict: Stretch: apply only if cheap — two real gaps, but it builds agents an
 
 ### If you apply
 - One tailored version; lead with the evals work; do not claim multi-agent production
+
+### What the role needs
+- ✓ Shipping LLM features to production
+- ~ Benchmarking LLMs (evals on a labelled set)
+- ✗ Multi-agent systems in production
+- Insurance domain knowledge
 """
 
 
@@ -51,6 +57,8 @@ class RecommendationParseTest(IsolatedTestCase):
         self.assertEqual(rec["favour"][1], "Presentation interview, no puzzle rounds")
         self.assertEqual(len(rec["decide"]), 1)
         self.assertTrue(rec["effort"][0].startswith("One tailored version"))
+        self.assertEqual([n["mark"] for n in rec["needs"]], ["have", "partly", "not", None])
+        self.assertEqual(rec["needs"][1]["text"], "Benchmarking LLMs (evals on a labelled set)")
 
     def test_none_without_a_section_and_a_verdict_is_required(self) -> None:
         self.assertIsNone(research.read_recommendation("## Fit summary\nx"))
@@ -136,7 +144,15 @@ class OfferPanelTest(WebTestCase):
         panel = self.panel(job_url(WONKA))
         rec = panel[panel.index('class="decide decide-rec"'):panel.index('class="decide decide-company"')]
         self.assertIn("Stretch: apply only if cheap", rec)
-        self.assertIn("CV fit 3/5", rec)
+        self.assertIn("6/10 CV fit", rec)  # out of 10, as the lists; the 1-5 stays in the fit file
+        self.assertNotIn("3/5", panel)
+        company = panel[panel.index('class="decide decide-company"'):panel.index('class="decide decide-questions"')]
+        self.assertIn('<li class="has-mark"><span class="need-mark need-have" aria-label="have" title="have">✓</span>'
+                      '<span>Shipping LLM features to production</span></li>', company)
+        self.assertIn('need-partly', company)
+        self.assertIn('need-not', company)
+        self.assertIn("<li><span>Insurance domain knowledge</span></li>", company)  # no mark yet: a plain item
+        self.assertNotIn("What the role needs", rec)  # in section 1, not repeated in the recommendation
         self.assertIn("Gaps that are real", rec)
         self.assertIn("Whether the interview probes &lt;model internals&gt;", rec)  # escaped
 

@@ -170,10 +170,22 @@ def read_fit(path: Path) -> dict:
 
 # The recommendation in a fit file (27 Nov 2026): "## Recommendation", a "Verdict: <Apply | Stretch | Skip> — why"
 # line, then "### <part>" headings with "-" bullets. The part headings are matched by their first words.
+# "### What the role needs" is the checklist the panel shows in section 1: each bullet starts with a mark,
+# ✓ have, ~ partly or ✗ not yet (NEED_MARKS), then a few plain words.
 VERDICTS = {"apply": "Apply", "stretch": "Stretch: apply only if cheap", "skip": "Skip"}
 REC_PARTS = (("soft", "gaps that matter less"), ("real", "gaps that are real"), ("favour", "in its favour"),
-             ("decide", "what would decide"), ("effort", "if you apply"))
+             ("decide", "what would decide"), ("effort", "if you apply"), ("needs", "what the role needs"))
 MAX_REC_ITEMS = 5
+NEED_MARKS = {"✓": "have", "✔": "have", "~": "partly", "≈": "partly", "✗": "not", "✘": "not", "x": "not"}
+_NEED = re.compile(r"^([✓✔~≈✗✘]|x(?=\s))\s*(.*)$", re.IGNORECASE)
+
+
+def read_need(text: str) -> dict:
+    """{"mark": have / partly / not / None, "text"} from one "What the role needs" bullet ("✓ Python in production")."""
+    found = _NEED.match(text.strip())
+    if not found:
+        return {"mark": None, "text": text.strip()}
+    return {"mark": NEED_MARKS[found.group(1).lower()], "text": found.group(2).strip()}
 
 
 def read_recommendation(body: str) -> dict | None:
@@ -207,7 +219,8 @@ def read_recommendation(body: str) -> dict | None:
             continue
         item = re.match(r"^\s*[-*]\s+(.*\S)", line)
         if item and part and len(rec[part]) < MAX_REC_ITEMS:
-            rec[part].append(item.group(1).replace("**", "").strip())
+            text = item.group(1).replace("**", "").strip()
+            rec[part].append(read_need(text) if part == "needs" else text)
     if rec["verdict"] is None:
         raise ValueError('the "## Recommendation" section needs a "Verdict: Apply | Stretch | Skip — why" line')
     return rec

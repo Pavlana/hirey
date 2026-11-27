@@ -124,13 +124,19 @@ Verdict: Stretch: apply only if cheap — one sentence why.
 ### In its favour (by the criteria)
 ### What would decide it
 ### If you apply
+### What the role needs
+- ✓ a must-have, a few plain words   (~ partly, ✗ not yet)
 ```
 
 - The verdict is Apply, Stretch (shown "Stretch: apply only if cheap") or Skip (`research.VERDICTS`); a
   section without one is refused. Parts are matched by their first words, at most 5 bullets each.
 - The skill weighs the gaps against the criteria's ranking; the gap count alone never decides it. Claims
   trace to cv.md or the facts bank, as in the fit; pay is refused.
+- "What the role needs" bullets start with a mark (`research.read_need`: ✓ have, ~ partly, ✗ not yet; a
+  bullet without one has no mark). The panel shows them as section 1's checklist, not in the recommendation.
 - A fit file without the section saves as before (no recommendation).
+- The panel shows every fit out of 10, as the lists do (`search.fit_on_ten`: the 1-5 doubled); the 1-5 stays
+  in the fit file and `cv_fits`.
 
 ### A job offer's CV fit
 
