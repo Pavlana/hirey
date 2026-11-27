@@ -272,6 +272,7 @@ flowchart TD
     version -->|"AI check button"| ai["AI check<br/>separate pass: claims, fit, skim"]
     rules --> verdict{"Verdict"}
     ai --> verdict
+    ai -->|"Apply ticked changes:<br/>editorial only, one undoable edit"| version
     verdict --> card["Ready, Look at these lines, or Blocked<br/>on the Tailored CV card"]
 ```
 
@@ -283,6 +284,8 @@ flowchart TD
   an edit becomes the next version. `%%` comments ask the agent to revise only those lines.
 - Every save of a tailored version makes its PDF and runs the rule check; the AI check runs when the
   card's AI check button asks for it. One verdict merges both: Blocked when any finding blocks.
+- The AI check's editorial changes (wording, grammar, spelling) show as tick boxes; Apply ticked changes
+  writes the ticked ones in one undoable edit, in plain code. Grounding findings are never applied.
 - Which version was sent is recorded only when the user says so (`cv sent`).
 
 Reference: [cvs.md](reference/cvs.md).

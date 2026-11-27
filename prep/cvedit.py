@@ -13,6 +13,12 @@ Tailored CV (save_tailored, undo_tailored):
 
 Master CV (save_master): the same editor, saved through cvfile.write_cv (a backup version first).
 
+The AI check's editorial changes (apply_ai_changes): the ticked ones replace their quoted words with the suggestion
+(exact match, first occurrence on its line) in one save_tailored with author "ai-check", so one Undo brings the text
+back; unticked ones are declined. Each change is marked applied, declined or skipped (its words are gone) in the AI
+check's summary, so it does not show again for that version, and the rest of the AI check is kept (not out of date:
+only the applied words changed, on the same lines).
+
 Comments for the agent: a line starting with "%%" in the editor is a comment on the line above it
 ("%% make this sound less junior"). Comments are split off before anything is written (split_comments)
 and kept in db.cv_comments, so they never reach the file, the PDF or the checks; the editor and the
@@ -207,6 +213,65 @@ def undo_tailored(settings: Settings, conn: sqlite3.Connection, app_id: int) -> 
     db.mark_edit_undone(conn, edit["id"])
     left = sum(1 for e in db.cv_edits(conn, app_id, current["version"]) if not e["undone_at"])
     return {"version": current["version"], "left": left, **refresh(settings, conn, app_id, current["version"], path)}
+
+
+def _replace_in(lines: list[str], change: dict) -> bool:
+    """Replace the change's quote with its suggestion in `lines` (the editor text: body and %% comments): on
+    the line it was found on when that line is unchanged, else on the first line that holds the quote.
+    False when no line holds it any more."""
+    quote = change["quote"]
+    spots = [i for i, line in enumerate(lines) if quote in line and not is_comment(line)]
+    if not spots:
+        return False
+    i = next((i for i in spots if lines[i].strip() == change.get("text")), spots[0])
+    lines[i] = lines[i].replace(quote, change["suggestion"], 1)
+    return True
+
+
+def apply_ai_changes(settings: Settings, conn: sqlite3.Connection, app_id: int, version: int, stamp: str | None,
+                     ticked: set[int]) -> dict:
+    """Apply the AI check's ticked editorial changes (`ticked`: their numbers) to the latest version in one
+    save (save_tailored, author "ai-check"); the other open changes are declined. Returns {"version",
+    "new_version", "applied", "declined", "skipped", "pdf_error"}."""
+    current, path = latest(conn, app_id)
+    if current["version"] != version:
+        raise db.NotesChanged(f"v{current['version']} was saved after this AI check was shown; nothing was changed.")
+    check = db.cv_check(conn, app_id, version)
+    summary = (check or {}).get("summary") or {}
+    if not summary or summary.get("stale"):
+        raise ValueError(f"v{version} has no up-to-date AI check, so there are no changes to apply")
+    edits = [dict(e) for e in summary.get("edits") or []]
+    open_ = [e for e in edits if e["state"] == "open"]
+    if not open_:
+        raise ValueError("there are no open changes from the AI check")
+    current_text = editor_text(conn, app_id)
+    if stamp is not None and current_text["stamp"] != stamp:
+        raise db.NotesChanged("This CV changed after the AI check was shown (an edit or the assistant); nothing was "
+                              "changed. Look at the changes again, then apply.")
+    lines = current_text["text"].split("\n")
+    for e in open_:
+        if e["n"] not in ticked:
+            e["state"] = "declined"
+        else:
+            e["state"] = "applied" if _replace_in(lines, e) else "skipped"
+    counts = {k: sum(1 for e in open_ if e["state"] == k) for k in ("applied", "declined", "skipped")}
+    result = {"version": version, "new_version": False, "pdf_error": "", **counts}
+    if counts["applied"]:
+        saved = save_tailored(settings, conn, app_id, version, "\n".join(lines), current_text["stamp"],
+                              author="ai-check")
+        result.update(version=saved["version"], new_version=saved["new_version"], pdf_error=saved["pdf_error"])
+    handled = {e["n"] for e in open_}
+    target = latest(conn, app_id)[1]
+    now = dict(cvcheck.body_lines(target.read_text(encoding="utf-8")))
+    kept = []
+    for f in check["findings"]:
+        if f["source"] != "ai" or f.get("edit") in handled:
+            continue
+        if f["line"] in now and f["text"] and not db.PAY_PATTERN.search(now[f["line"]]):
+            f = {**f, "text": cvcheck._finding(f["check"], f["severity"], "", f["line"], now[f["line"]])["text"]}
+        kept.append(f)
+    db.save_cv_check(conn, app_id, result["version"], "ai", kept, summary={**summary, "edits": edits, "stale": False})
+    return result
 
 
 def draft_path(path: Path) -> Path:

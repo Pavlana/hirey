@@ -500,6 +500,12 @@ Free notes (optional).
   wording. The suggestion keeps the job's exact keywords (the version's front matter `keywords`):
   merge the examples under the keyword rather than drop it; `tailor eval` refuses a suggestion that
   leaves out a keyword its quote holds. Matters of taste with no rule behind them are not entries.
+- **Every suggestion is a drop-in replacement for its quote**: the panel shows each editorial entry
+  as a change with a tick box, and Apply ticked changes puts the suggestion in place of the quoted
+  words, as is, with no further edit. So quote the words exactly as written in the version (case,
+  punctuation and Markdown such as `**`), and write the suggestion as the replacement for exactly
+  those words: same line, one line, no new claims, the job's keywords kept. A quote that is not in
+  the version exactly stays a plain finding the user fixes by hand.
 - No pay anywhere in the file.
 
 `tailor eval` maps the file to findings with fixed rules (an unsourced claim blocks; a must-have

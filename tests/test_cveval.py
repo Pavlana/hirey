@@ -9,11 +9,13 @@ from contextlib import closing
 from pathlib import Path
 from unittest import mock
 
-from prep import config, cveval, db, privacy, research
+from prep import config, cvedit, cveval, cvpdf, db, privacy, research
 from tests.helpers import IsolatedTestCase
 from tests.test_cvcheck import CLEAN, MASTER, OFFSET
 from tests.test_research import write
-from tests.test_web import TODAY, WebTestCase
+from tests.test_web import HOST, TODAY, WebTestCase
+
+HOST_JSON = {**HOST, "Accept": "application/json"}
 
 # The CLEAN tailored CV's lines (file line numbers, front matter counted) used below.
 SUMMARY_LINE = OFFSET + 5   # "Platform engineer who builds delivery pipelines for AI teams."
@@ -99,6 +101,11 @@ class ParseTest(IsolatedTestCase):
             with self.subTest(why=why), self.assertRaisesRegex(ValueError, why):
                 self.read(eval_text(editorial=text))
 
+    def test_a_suggestion_stays_on_one_line(self) -> None:
+        entry = '[[editorial]]\nquote = "x"\nissue = "y"\nsuggestion = """first\nsecond"""\n'
+        with self.assertRaisesRegex(ValueError, "one line"):
+            self.read(eval_text(editorial=entry))
+
     def test_eval_file_sits_beside_its_version(self) -> None:
         self.assertEqual(cveval.eval_file(Path("/p/cv-tailored/CV_Globex_FDE_101126_2.md")),
                          Path("/p/cv-tailored/CV_Globex_FDE_101126_2.eval.md"))
@@ -141,6 +148,16 @@ class FindingsTest(IsolatedTestCase):
         self.assertEqual(found[1]["text"], "- LLM APIs, Acme Model API, Globex Model API, Python")
         self.assertIn("suggest: LLM APIs (Acme Model API, Globex Model API)", found[1]["message"])
         self.assertEqual(cveval.summary(review, 4)["editorial"], 2)
+
+    def test_exact_entries_become_changes_to_apply(self) -> None:
+        loose = editorial("spearheaded A SHARED deployment pipeline", "banned word", "Built a shared deployment pipeline")
+        pay = editorial("Ran Kubernetes clusters", "vague", "Ran Kubernetes clusters for £123,456 a year")
+        review = cveval.read_eval(write(self.tmp / "x.eval.md", eval_text(editorial=REDUNDANT + loose + pay)))
+        edits = cveval.edits(review, EDITED)
+        self.assertEqual([(e["n"], e["line"], e["state"]) for e in edits], [(1, SKILLS_LINE, "open")])
+        self.assertEqual(edits[0]["text"], "- LLM APIs, Acme Model API, Globex Model API, Python")
+        found = cveval.findings(review, EDITED, None)
+        self.assertEqual([f.get("edit") for f in found if f["check"] == "editorial"], [None, None, 1])
 
     def test_never_shows_pay(self) -> None:
         text = CLEAN.replace("- Ran the on-call rotation.", "- Expected salary £123,456")
@@ -361,17 +378,107 @@ class PanelTest(WebTestCase):
         self.assertIn("Skim: Opens with &lt;old&gt; roles", panel)
         self.assertIn('<li class="finding-block">No source in cv.md', panel)
 
-    def test_card_shows_editorial_findings_as_look(self) -> None:
+    def checked(self, entries: str) -> Path:
         path = write(research.tailored_file(self.tmp / "private", "Massive Dynamic Example", "AISE", TODAY, 1), EDITED)
         with self.conn() as conn:
             db.save_tailored_cv(conn, self.MDE, str(path), "v1")
             db.save_cv_check(conn, self.MDE, 1, "rules", [])
-            cveval.save(conn, self.MDE, 1, write(cveval.eval_file(path), eval_text(editorial=REDUNDANT)))
+            cveval.save(conn, self.MDE, 1, write(cveval.eval_file(path), eval_text(editorial=entries)))
+        return path
+
+    def apply(self, path: Path, ticked: list[int]) -> tuple[int, dict, str]:
+        form = [("app_id", self.MDE), ("version", 1), ("stamp", cvedit.cvfile.sha256(path.read_text(encoding="utf-8"))),
+                ("return", f"/?app={self.MDE}")] + [("change", n) for n in ticked]
+        with mock.patch("prep.cvpdf.write_pdf", side_effect=cvpdf.PdfUnavailable("no WeasyPrint")):
+            return self.post("/applications/cv/ai-changes", form, {**HOST_JSON})
+
+    def test_card_shows_editorial_changes_as_ticked_boxes(self) -> None:
+        self.checked(REDUNDANT + editorial("Platform engineer who builds", "a <loose> fit", "Platform engineer building"))
         panel = self.panel()
         self.assertIn('<span class="badge badge-warning">Look at these lines</span>', panel)
-        self.assertIn("· 1 editorial", panel)
+        self.assertIn("· 2 editorial", panel)
+        self.assertIn('<form method="post" action="/applications/cv/ai-changes"', panel)
+        self.assertIn('<input type="checkbox" name="change" value="1" checked>', panel)
+        self.assertIn('<del>LLM APIs, Acme Model API, Globex Model API</del>', panel)
+        self.assertIn('<ins>LLM APIs (Acme Model API, Globex Model API)</ins>', panel)
+        self.assertIn('Editorial · a &lt;loose&gt; fit', panel)
+        self.assertIn(">Apply ticked changes</button>", panel)
+        self.assertNotIn('<li class="finding-look">Editorial', panel)  # shown as changes, not twice
+
+    def test_a_loose_quote_stays_a_plain_finding(self) -> None:
+        self.checked(editorial("llm apis acme model api", "a general term next to its own examples",
+                               "LLM APIs (Acme Model API, Globex Model API)"))
+        panel = self.panel()
+        self.assertNotIn("Apply ticked changes", panel)
         self.assertIn('<li class="finding-look">Editorial: a general term next to its own examples; '
                       'suggest: LLM APIs (Acme Model API, Globex Model API)', panel)
+
+    def test_apply_ticked_changes_in_one_undoable_edit(self) -> None:
+        path = self.checked(REDUNDANT + BANNED + UNSOURCED_EDITED)
+        status, _, out = self.apply(path, [1])
+        self.assertEqual(status, 200, out)
+        self.assertIn("1 change applied, 1 declined. Undo brings back the text before.", out)
+        text = path.read_text(encoding="utf-8")
+        self.assertIn("- LLM APIs (Acme Model API, Globex Model API), Python", text)
+        self.assertIn("- Spearheaded a shared deployment pipeline.", text)  # declined: left as it was
+        with self.conn() as conn:
+            edits = db.cv_edits(conn, self.MDE, 1)
+            self.assertEqual([e["author"] for e in edits], ["ai-check"])
+            check = db.cv_check(conn, self.MDE, 1)
+            self.assertFalse(check["summary"].get("stale"))
+            self.assertEqual([e["state"] for e in check["summary"]["edits"]], ["applied", "declined"])
+            self.assertEqual([f["check"] for f in check["findings"] if f["source"] == "ai"], ["grounding"])
+        panel = self.panel()
+        self.assertNotIn("Apply ticked changes", panel)  # applied and declined ones leave the list
+        self.assertNotIn("AI check out of date", panel)
+        self.assertIn(">Undo edit</button>", panel)
+        with self.conn() as conn, mock.patch("prep.cvpdf.write_pdf", side_effect=cvpdf.PdfUnavailable("x")):
+            cvedit.undo_tailored(self.settings, conn, self.MDE)
+        self.assertIn("- LLM APIs, Acme Model API, Globex Model API, Python", path.read_text(encoding="utf-8"))
+
+    def test_nothing_ticked_declines_all_and_writes_nothing(self) -> None:
+        path = self.checked(REDUNDANT)
+        before = path.read_text(encoding="utf-8")
+        status, _, out = self.apply(path, [])
+        self.assertEqual(status, 200, out)
+        self.assertIn("0 changes applied, 1 declined.", out)
+        self.assertNotIn("Undo", out)
+        self.assertEqual(path.read_text(encoding="utf-8"), before)
+        self.assertNotIn("Apply ticked changes", self.panel())
+
+    def test_words_gone_are_skipped(self) -> None:
+        path = self.checked(REDUNDANT + BANNED)
+        write(path, path.read_text(encoding="utf-8").replace("Acme Model API, Globex", "Acme Model API and Globex"))
+        status, _, out = self.apply(path, [1, 2])
+        self.assertEqual(status, 200, out)
+        self.assertIn("1 change applied, 0 declined. 1 skipped: the words are no longer in the CV.", out)
+        self.assertIn("- Built a shared deployment pipeline.", path.read_text(encoding="utf-8"))
+
+    def test_a_page_shown_before_a_change_is_refused(self) -> None:
+        path = self.checked(REDUNDANT)
+        form = [("app_id", self.MDE), ("version", 1), ("stamp", "old"), ("change", 1)]
+        status, _, out = self.post("/applications/cv/ai-changes", form, {**HOST_JSON})
+        self.assertEqual(status, 400)
+        self.assertIn("changed after the AI check was shown", out)
+        self.assertIn("LLM APIs, Acme Model API", path.read_text(encoding="utf-8"))
+        form = [("app_id", self.MDE), ("version", 1), ("stamp", "old"), ("change", "1; x")]
+        self.assertEqual(self.post("/applications/cv/ai-changes", form, {**HOST_JSON})[0], 400)
+
+    def test_a_sent_version_is_kept_and_the_changes_become_the_next(self) -> None:
+        path = self.checked(REDUNDANT)
+        with self.conn() as conn:
+            db.record_cv_sent(conn, self.MDE, path.name)
+        status, _, out = self.apply(path, [1])
+        self.assertIn("The sent version is kept as it was: the changes are saved as v2.", out)
+        self.assertIn("LLM APIs, Acme Model API", path.read_text(encoding="utf-8"))
+        with self.conn() as conn:
+            v2 = db.tailored_versions(conn, self.MDE)[-1]
+            self.assertEqual(v2["version"], 2)
+            self.assertIn("LLM APIs (Acme Model API", Path(v2["file_path"]).read_text(encoding="utf-8"))
+            self.assertEqual([e["state"] for e in db.cv_check(conn, self.MDE, 2)["summary"]["edits"]], ["applied"])
+
+
+UNSOURCED_EDITED = '[[claims]]\nquote = "Ran Kubernetes clusters"\nsource = "none"\nnote = "no source"\n'
 
 
 class SettingsTest(IsolatedTestCase):

@@ -97,6 +97,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | POST | `/applications/plan/write` | Write the CV: the plan is agreed and a `tailor` request queued (saves `text` first when sent) | [cvs.md](cvs.md#tailoring-plan) |
 | POST | `/applications/cv/edit` | save the Tailored CV editor over the latest version (`app_id`, `version`, `stamp`, `text`) | [cvs.md](cvs.md#editor) |
 | POST | `/applications/cv/undo` | bring back the latest version's text from before its newest edit (`app_id`) | [cvs.md](cvs.md#editor) |
+| POST | `/applications/cv/ai-changes` | apply the AI check's ticked editorial changes, decline the rest (`app_id`, `version`, `stamp`, `change` per tick) | [cvs.md](cvs.md#applying-editorial-changes) |
 | POST | `/applications/cv/revise` | ask the Applications Assistant to revise only the commented lines (`app_id`, or `topic=cv`) | [cvs.md](cvs.md#comments-for-the-agent) |
 | POST | `/workers/stop` | end one worker's open runs, optionally back to the queue | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 
