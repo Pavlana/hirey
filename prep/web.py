@@ -2271,7 +2271,7 @@ def _offer_panel(settings: Settings, conn: sqlite3.Connection, job: dict, decisi
         '<div class="panel-body">'
         + _recommendation(fit, busy)
         + _decide_company(profile, check, kind, brief, flags, busy, _fit_line(fit, busy and fit is None), more,
-                          _marked_needs(fit))
+                          _marked_needs(fit), decision_.criteria_misses(gates))
         + _decide_questions(decision_.call_questions(profile, gates, brief["facts"] if brief else ""),
                             f'j{job["id"]}', copy=False)
         + apply
@@ -2933,7 +2933,8 @@ def _panel(settings: Settings, conn: sqlite3.Connection, r: dict, today: str, f:
         f'<div class="panel-body">'
         + _recommendation(found["fit"], "cv_fit" in found["open"])
         + _decide_company(found["profile"], check, kind, brief, flags, researching,
-                          _fit_line(found["fit"], "cv_fit" in found["open"]), more, _marked_needs(found["fit"]))
+                          _fit_line(found["fit"], "cv_fit" in found["open"]), more, _marked_needs(found["fit"]),
+                          view["misses"])
         + _decide_questions(view["questions"], f'a{app["id"]}', _invite_card(conn, settings, app, today, here))
         + _decide_apply(conn, app, found, versions, here, settings.private_dir)
         + '<div class="panel-quiet">'
@@ -3005,7 +3006,8 @@ def _fit_text(fit: dict) -> str:
 
 
 def _decide_company(profile: dict | None, check: dict | None, kind: str | None, brief: dict | None, flags: list[str],
-                    busy: bool, fit: str, more: str, marked: list[dict] | None = None) -> str:
+                    busy: bool, fit: str, more: str, marked: list[dict] | None = None,
+                    misses: list[str] | tuple = ()) -> str:
     """1. Company and red flags: what the company does, one line of facts (size, sector, product or client
     work, where), the engineering team and the interview style, the brief's key facts and what the role needs:
     the CV fit's checklist (`marked`: ✓ have / ~ partly / ✗ not yet, _needs_list) when it has one, else the
@@ -3039,6 +3041,9 @@ def _decide_company(profile: dict | None, check: dict | None, kind: str | None, 
         lines.append('<p class="muted is-busy"><span class="spinner" aria-hidden="true"></span>Researching…</p>')
     elif not (profile or brief):
         lines.append('<p class="muted">No research yet.</p>')
+    if misses:  # the user's own guardrails, not red flags
+        lines.append('<p class="criteria-miss"><strong>Outside your criteria:</strong> '
+                     + h("; ".join(misses)) + "</p>")
     if flags:
         body = "".join(f"<li>{h(x)}</li>" for x in flags)
         lines.append(f'<h4>Red flags</h4><ul class="flags">{body}</ul>')

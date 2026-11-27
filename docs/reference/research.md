@@ -89,7 +89,8 @@ The `/research` skill loops on `python -m prep.cli research next`.
 - For the job's panel, all optional and never pay (`db.check_no_pay`): `employer_kind` (product or
   client), one line each on the `engineering_team` and the `interview_style`, `red_flags` and
   `call_questions` (lists of at most 6; the questions are recruiter-call level, never technical, and the
-  panel uses at most 2).
+  panel uses at most 2). `red_flags` are concerns only (a team of one, a wide scope, layoffs), never a
+  restated criteria check: a failed check shows as "Outside your criteria" ([dashboard.md](dashboard.md)).
 - A company save closes the research requests of every application at that company and sets
   `applications.employer_kind` where it is unknown (a kind already set is kept). The panel has no
   employer control; `update ID --employer-kind` still changes it.
@@ -200,7 +201,8 @@ Stored per getjo job in `job_briefs` as Markdown:
 5. `## Where & terms`
 6. `## Team & product`
 7. `## Interview process`, when the posting states it.
-8. `## Red flags / notable`
+8. `## Red flags / notable`: concerns, not the user's criteria (level, sector, location, interview
+   style, pay are checks, not red flags).
 
 `db.save_brief` refuses:
 

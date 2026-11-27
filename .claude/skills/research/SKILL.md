@@ -113,7 +113,9 @@ The brief is what the user reads to decide Interested or Skip, so it is short an
 - Then `## Summary` (one line), `## Must-haves`, `## Nice-to-haves`, `## Where & terms`
   (location, office days, seniority, contract), `## Team & product`, `## Interview process` (only
   if the posting states it) and `## Red flags / notable` (only if there are any). Bullets of a few
-  words each, in the posting's terms; nothing the posting does not say.
+  words each, in the posting's terms; nothing the posting does not say. Red flags are concerns, not
+  the user's criteria: never restate a criteria check (level, sector, location, role family, interview
+  style, pay); the screen records those and the panel shows a miss as "Outside your criteria".
 - At most 300 words. **No pay**: no salary, bonus, equity or currency, even when the posting
   states them; `brief save` refuses them.
 
@@ -183,8 +185,9 @@ two of the same level, specific to this role: plain English, about the product, 
 or the interview process. **Nothing technical** (how their agents, evals or safety work: that goes to the
 Applications Assistant chat) and **never pay**. None is fine.
 
-**Red flags** (`red_flags`): only what the research shows (a team of one, a lead title with unclear IC scope,
-consultancy work, LeetCode-style interviews, an unclear location, layoffs). A few words each.
+**Red flags** (`red_flags`): only concerns the research shows (a team of one, a very wide scope, layoffs,
+high turnover, a young product). A few words each. Not the user's criteria (level, sector, location,
+interview style, product or consultancy): those are checks, shown as "Outside your criteria" when they fail.
 
 ### Tier rubric (the research sets it; one tier per application)
 

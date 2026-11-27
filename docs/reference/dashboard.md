@@ -263,10 +263,13 @@ buttons above; tasks, comments, stage, tier and the sent CV are changed through 
 
 `prep/decision.py` builds both in plain code from what is stored:
 
-- **Red flags**: a gate that says no (level, location, interview style, sector, role family, a stated pay
-  below the floor), team size (a team of one; an unclear team once the ad is screened), client delivery,
-  a contract, the research's `red_flags` and the brief's "## Red flags / notable" bullets, duplicates
-  dropped. Team size is never a gate ([search.md](search.md#the-criteria-file)).
+- **Outside your criteria** (`decision.criteria_misses`): a gate that says no (company, sector, interview
+  style, role family, level, location, a stated pay below the floor). These are the user's own guardrails,
+  shown on one line apart from the red flags, never as a red flag.
+- **Red flags** (`decision.red_flags`): concerns only: team size (a team of one; an unclear team once the
+  ad is screened), client delivery, a contract, the research's `red_flags` and the brief's
+  "## Red flags / notable" bullets, duplicates and any restated criteria check dropped. Team size is
+  never a gate ([search.md](search.md#the-criteria-file)).
 - **Questions** (about 4-6, recruiter-call level, never technical): a fixed template where the answer is not
   known (interview stages and what to prepare always; AI team size; office days unless the key facts or
   the research say; the product without a research summary; the level), up to two of the research's

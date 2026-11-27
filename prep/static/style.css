@@ -1218,3 +1218,4 @@ h2 .emp-kind { font-size: 11px; vertical-align: 3px; }
 .tile .badge { align-self: flex-start; }
 /* The message an empty Draft a reply form uses */
 .draft-uses { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
+.criteria-miss { margin: 0; color: var(--text-muted); }  /* the user's guardrails: plain, not a red flag */
