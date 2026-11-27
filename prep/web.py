@@ -3206,7 +3206,8 @@ def _pdf_link(private_dir: Path | None, app_id: int, version: dict) -> str:
     pdf = research.inside(private_dir, str(cvpdf.pdf_path(Path(version["file_path"]))))
     if pdf is None or not pdf.is_file():
         return ""
-    href = "/research/pdf?" + urlencode([("app", app_id), ("v", version["version"])])
+    # t: the PDF's time, so an edit saved in place opens the new PDF, never a copy the browser kept.
+    href = "/research/pdf?" + urlencode([("app", app_id), ("v", version["version"]), ("t", int(pdf.stat().st_mtime))])
     return f'<a class="btn btn-ghost btn-sm" href="{h(href)}" target="_blank" rel="noopener">PDF</a>'
 
 

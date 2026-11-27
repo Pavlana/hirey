@@ -1570,7 +1570,8 @@
 
   // --- CV editors (Tailored CV, My CV) ------------------------------------------------------------
   // Edit opens the form; Save (or Cmd/Ctrl-S, :w with vim keys) posts it. A saved edit refreshes the panel
-  // (the PDF, the check and the versions change) and opens the editor again on the saved text; the My CV
+  // (the PDF, the check and the versions change), closes the editor and flashes the CV's card, so the
+  // saved version, its PDF and its buttons are what is in view; the My CV
   // toast has Undo (Restore of the version it replaced). A save over a file that changed meanwhile comes
   // back refused: the editor again with the current text above, the user's text kept in it.
   document.addEventListener("toggle", (e) => {
@@ -1613,11 +1614,15 @@
         }
         throw new Error(reply.message || "Not saved.");
       }
-      const id = edit?.id;
-      if (edit) edit.open = false; // not kept over the refresh: the fresh one has the new stamp
+      const card = edit?.closest("section[id]")?.id;
+      if (edit) edit.open = false; // closed: the fresh panel shows the saved version, its PDF and buttons
       await refreshApps();
-      const again = id && document.getElementById(id);
-      if (again) { again.open = true; again.querySelector("textarea")?.focus(); }
+      const saved = card && document.getElementById(card);
+      if (saved) {
+        saved.scrollIntoView({ block: "nearest", behavior: "smooth" });
+        saved.classList.add("is-flash");
+        setTimeout(() => saved.classList.remove("is-flash"), 1600);
+      }
       const undoIt = () => post("/cv/restore", new URLSearchParams({ version: reply.previous }))
         .then((r) => refreshApps().then(() => toast(r.message)))
         .catch((err) => toast(err.message, { error: true }));
