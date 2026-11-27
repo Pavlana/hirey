@@ -1195,6 +1195,5 @@ form.employer-form select { height: 26px; font-size: 12.5px; padding: 0 6px; }
 .back { margin: 0; font-size: 13.5px; }
 .eval-chart { padding: var(--space-3) var(--space-5) 0; }
 .tile .badge { align-self: flex-start; }
-/* Draft reply · LinkedIn | Email under the user's own message; the message an empty Draft a reply form uses */
-.msg-draft { align-items: center; font-size: 12.5px; }
+/* The message an empty Draft a reply form uses */
 .draft-uses { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }

@@ -117,7 +117,7 @@ class StorageTest(ResendCancelBase):
 class DashboardTest(ResendCancelBase):
     def test_form_in_panels_and_box(self) -> None:
         body = self.get(f"/?app={ACME}")[2]
-        self.assertEqual(body.count('action="/applications/draft"'), 2)  # the panel and the box (whole search)
+        self.assertEqual(body.count('action="/applications/draft"'), 1)  # the panel only: the box is for conversation
         self.assertIn(f'<input type="hidden" name="app_id" value="{ACME}">', body.split('action="/applications/draft"')[1])
         self.assertIn('name="channel" value="linkedin" checked', body)
 
@@ -160,13 +160,30 @@ class DashboardTest(ResendCancelBase):
         self.assertIn(">Copy subject</button>", panel)
         self.assertIn(f'data-copy="draft-body-panel-{email_reply}">Copy body</button>', panel)
 
-    def test_draft_about_no_application_stays_in_the_box(self) -> None:
+    def test_whole_search_draft_shows_under_the_paste_box(self) -> None:
         with self.conn() as conn:
             msg = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
             reply = db.save_draft(conn, msg, "Thanks, happy to talk.")
         body = self.get("/")[2]
-        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body)
+        top = body.index('class="card paste-box"')
+        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body[top:])
         self.assertIn(f'data-copy="draft-body-{reply}">Copy</button>', body)
+        self.assertIn('<details class="draft-moved">', body)  # folded in the box
+        self.assertIn(f'id="draft-body-thread-{reply}"', body)
+
+    def test_reply_save_app_links_a_whole_search_request(self) -> None:
+        with self.conn() as conn:
+            msg = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
+            db.attach_draft_request(conn, msg, ACME)
+            reply = db.save_draft(conn, msg, "Thanks, happy to talk.")
+            self.assertEqual(db.get_message(conn, msg)["application_id"], ACME)
+            self.assertEqual(db.get_message(conn, reply)["application_id"], ACME)
+            with self.assertRaises(LookupError):
+                db.attach_draft_request(conn, msg, 99999)
+        body = self.get("/")[2]
+        self.assertIn('class="muted draft-moved">Draft ready in', body)
+        panel = self.get(f"/?app={ACME}")[2]
+        self.assertIn(f'id="draft-body-panel-{reply}"', panel)
 
     def test_resend_routes_to_comms(self) -> None:
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("comms", 72),)})
@@ -268,49 +285,12 @@ class FromThreadTest(ResendCancelBase):
                 db.save_draft(conn, asked, "I would expect £90k.", "Re: call")
             db.save_draft(conn, asked, "Could you share the salary range first?", "Re: call")
 
-    def test_action_row_under_own_messages_only(self) -> None:
+    def test_box_is_for_conversation_only(self) -> None:
         with self.conn() as conn:
-            src = db.add_message(conn, ACME, "<b>Hi</b> " + PASTED)
-            db.reply_message(conn, ACME, src, "Looks good.")
-            db.add_draft_request(conn, ACME, "reply", "email", PASTED)
+            db.add_message(conn, ACME, PASTED)
         body = self.get("/")[2]
-        self.assertEqual(body.count('action="/applications/draft-from"'), 1)
-        self.assertIn(f'<input type="hidden" name="msg_id" value="{src}">', body)
-        self.assertIn('name="channel" value="linkedin"', body)
-        self.assertIn('name="channel" value="email"', body)
-        self.assertNotIn("<b>Hi</b>", body)
-
-    def test_draft_from_message_routes_to_comms(self) -> None:
-        self.comms()
-        with self.conn() as conn:
-            src = db.add_message(conn, ACME, PASTED)
-        status, reply = self.post_json("/applications/draft-from", {"msg_id": str(src), "channel": "email"})
-        self.assertEqual(status, 200, reply)
-        with self.conn() as conn:
-            msg = db.thread(conn)[-1]
-            full = db.get_message(conn, msg["id"])
-        self.assertEqual((msg["comms"], msg["channel"], msg["application_id"], full["source_id"]),
-                         ("reply", "email", ACME, src))
-        assistant.notify_message_in_background.assert_called_once_with(self.settings, ACME, msg["id"], job=False,
-                                                                        kind="comms", seq=72)
-        self.assertIn("→ Comms worker", reply["html"])
-
-    def test_draft_from_message_falls_back_to_the_assistant(self) -> None:
-        self.with_tasks()
-        with self.conn() as conn:
-            src = db.add_message(conn, None, PASTED)
-        status, reply = self.post_json("/applications/draft-from", {"msg_id": str(src), "channel": "linkedin"})
-        self.assertEqual(status, 200, reply)
-        self.assertIn("→ Applications Assistant", reply["html"])
-
-    def test_draft_from_message_is_validated(self) -> None:
-        with self.conn() as conn:
-            src = db.add_message(conn, ACME, PASTED)
-            agent = db.reply_message(conn, ACME, src, "ok")
-        for form in ({"msg_id": str(src), "channel": "sms"}, {"msg_id": str(agent), "channel": "email"},
-                     {"msg_id": "999", "channel": "email"}, {"channel": "email"}):
-            with self.subTest(form=form):
-                self.assertEqual(self.post_json("/applications/draft-from", form)[0], 400)
+        self.assertNotIn("/applications/draft-from", body)
+        self.assertNotIn("Draft reply ·", body)
 
     def test_empty_form_uses_the_named_message(self) -> None:
         with self.conn() as conn:

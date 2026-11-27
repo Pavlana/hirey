@@ -121,11 +121,14 @@ Never put pay in a comment, task or note.
 ## 4. Save it
 
 ```bash
-python -m prep.cli reply save --to MSG [--subject "Re: …"] --note "ONE LINE" <<'EOF'
+python -m prep.cli reply save --to MSG [--app ID] [--subject "Re: …"] --note "ONE LINE" <<'EOF'
 the draft text, exactly as it should be pasted
 EOF
 ```
 
+- `--app ID`: a request made from the whole search (`/reply general MSG`) whose message is clearly about
+  one tracked application (the company and role match an application in the context): link it, so the
+  draft shows in that application's panel. Leave it out when unsure or when no application matches.
 - Email: `--subject` is required, and the body has no "Subject:" line. LinkedIn: no `--subject`.
 - `--note`: one line above the draft — the stage change made or proposed, placeholders to fill,
   anything to check. Leave it out when there is nothing to say.

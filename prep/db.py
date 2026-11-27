@@ -3448,6 +3448,22 @@ def _move_message(conn: sqlite3.Connection, msg_id: int, app_id: int) -> None:
             conn.execute("INSERT INTO agent_message_targets (message_id, application_id) VALUES (?, ?)", (mid, app_id))
 
 
+def attach_draft_request(conn: sqlite3.Connection, msg_id: int, app_id: int) -> None:
+    """A whole-search draft request is about application `app_id`: it (and any reply) moves there, so the
+    draft shows in that application's panel. Refused for a request already about something else."""
+    msg = get_message(conn, msg_id)
+    if msg is None or msg["author"] != "user" or not msg["comms"]:
+        raise LookupError(f"no draft request {msg_id}")
+    if conn.execute("SELECT 1 FROM applications WHERE id = ?", (app_id,)).fetchone() is None:
+        raise LookupError(f"no application {app_id}")
+    if msg["application_id"] == app_id:
+        return
+    if msg["application_id"] is not None or msg["getjo_job_id"] or msg["topic"]:
+        raise ValueError(f"request {msg_id} is not a whole-search request")
+    with conn:
+        _move_message(conn, msg_id, app_id)
+
+
 def save_invitation(conn: sqlite3.Connection, msg_id: int, company: str | None = None, role: str | None = None,
                     location: str | None = None, missing: tuple[str, ...] = (), invite_id: int | None = None,
                     today: str | None = None) -> tuple[dict, bool]:
