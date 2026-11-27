@@ -7,7 +7,8 @@ first two from what is already stored, in plain code (no agent call):
     company research (company_profiles: red_flags, call_questions, employer_kind)
     + the job brief's "## Red flags / notable" bullets (job_briefs)
     + the job's gates (search.gates with a criteria file, else the screen and the company check)
-    -> red_flags(...)      short lines, a gate that says no first, duplicates dropped
+    -> red_flags(...)      short lines: concerns only, duplicates and criteria wording dropped
+    -> criteria_misses(..) the gates that say no: "Outside your criteria", shown apart
     -> call_questions(...) about 4-6 plain questions for the recruiter call, never technical: a fixed
                            template (interview stages, team size, office days, ...) where the gates say
                            unknown, one or two from the research, and pay last as "ask on the call"
@@ -26,16 +27,21 @@ MAX_QUESTIONS = 6          # pay included
 MAX_RESEARCH_QUESTIONS = 2  # role-specific ones from the company research
 PAY_QUESTION = "What is the pay range?"
 
-# A gate that says no, as a red flag.
-NO_FLAGS = {
+# A gate that says no: outside the user's criteria (a guardrail she set), shown apart from the red flags.
+CRITERIA_MISSES = {
     "company": "Company dropped in its check",
-    "sector": "Sector outside the criteria",
-    "interviews": "LeetCode-style rounds or a timed coding screen reported",
+    "sector": "Sector outside your criteria",
+    "interviews": "LeetCode-style rounds or a timed coding screen",
     "role_family": "Not a hands-on AI-building role",
-    "level": "Not a senior IC role (lead, staff, manager or junior)",
-    "location": "Location outside London or UK remote",
-    "pay": "Stated pay below the floor",
+    "level": "Not senior IC (lead, staff, manager or junior)",
+    "location": "Outside London or UK remote",
+    "pay": "Stated pay below your floor",
 }
+# Older wording of the same checks, as the research or a brief may still carry it: never a red flag.
+_CRITERIA_WORDING = tuple(CRITERIA_MISSES.values()) + (
+    "Not a senior IC role (lead, staff, manager or junior)", "Sector outside the criteria",
+    "Location outside London or UK remote", "Stated pay below the floor",
+    "LeetCode-style rounds or a timed coding screen reported")
 TEAM_FLAGS = {"no": "Team of one (or very small)", "unknown": "Team size unclear"}
 
 # The fixed recruiter-call template, in this order: (gate key or None for always, question).
@@ -95,11 +101,15 @@ def employer_kind(profile: dict | None, check: dict | None, app_kind: str | None
     return {"consultancy": "client", "product": "product"}.get((check or {}).get("kind") or "")
 
 
+def _key(text: str) -> str:
+    return re.sub(r"\W+", " ", text.lower()).strip()
+
+
 def _dedupe(items: list[str]) -> list[str]:
     seen: set[str] = set()
     out = []
     for item in items:
-        key = re.sub(r"\W+", " ", item.lower()).strip()
+        key = _key(item)
         if key and key not in seen:
             seen.add(key)
             out.append(item.strip())
@@ -111,7 +121,7 @@ def red_flags(profile: dict | None, brief_text: str | None, gates: dict[str, str
     """The red flags, gates that say no first, then team size, client work, a contract, the research's and
     the brief's own. `screened`: the ad has been screened, so an unclear team is a flag (before that it is
     only a question)."""
-    flags = [NO_FLAGS[k] for k, v in gates.items() if v == "no" and k in NO_FLAGS]
+    flags: list[str] = []
     team = gates.get("team", "unknown")
     if team == "no" or (team == "unknown" and screened):
         flags.append(TEAM_FLAGS[team])
@@ -121,7 +131,14 @@ def red_flags(profile: dict | None, brief_text: str | None, gates: dict[str, str
         flags.append("Contract role")
     flags += (profile or {}).get("red_flags") or []
     flags += brief_flags(brief_text)
-    return _dedupe(flags)
+    criteria = {_key(x) for x in _CRITERIA_WORDING}
+    return [x for x in _dedupe(flags) if _key(x) not in criteria]
+
+
+def criteria_misses(gates: dict[str, str]) -> list[str]:
+    """The user's criteria this job fails (gates that say no), in the criteria's order: guardrails, not red
+    flags. The team is not a gate (a red flag instead)."""
+    return [text for key, text in CRITERIA_MISSES.items() if gates.get(key) == "no"]
 
 
 _OFFICE = re.compile(r"\b(\d\s*days?|fully remote|remote|on-?site)\b", re.IGNORECASE)
@@ -170,4 +187,4 @@ def for_application(conn, app: dict, crit: Criteria | None, location: str | None
     flags = red_flags(profile, brief["brief"] if brief else None, gates, screen is not None, kind == "client",
                       (screen or {}).get("contract"))
     return {"profile": profile, "check": check, "screen": screen, "brief": brief, "gates": gates, "kind": kind,
-            "flags": flags, "questions": call_questions(profile, gates, brief["facts"] if brief else "")}
+            "flags": flags, "misses": criteria_misses(gates), "questions": call_questions(profile, gates, brief["facts"] if brief else "")}

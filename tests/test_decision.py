@@ -81,14 +81,15 @@ class FlagsAndQuestionsTest(IsolatedTestCase):
         self.assertEqual(decision.red_flags(None, None, {**gates, "team": "unknown"}, True, False), ["Team size unclear"])
         self.assertEqual(decision.red_flags(None, None, {**gates, "team": "unknown"}, False, False), [])  # not screened yet
 
-    def test_flags_from_gates_research_brief_and_kind_without_duplicates(self) -> None:
-        gates = {"level": "no", "team": "yes", "interviews": "no"}
+    def test_criteria_misses_are_not_red_flags(self) -> None:
+        gates = {"level": "no", "team": "yes", "interviews": "no", "location": "yes"}
         brief = "facts\n## Summary\nx\n## Red flags / notable\n- On-call every other week\n- Not a senior IC role (lead, staff, manager or junior)"
         flags = decision.red_flags({"red_flags": ["Unclear location"]}, brief, gates, True, True, "contract")
-        self.assertEqual(flags, ["Not a senior IC role (lead, staff, manager or junior)",
-                                 "LeetCode-style rounds or a timed coding screen reported",
-                                 "Client delivery (consultancy or agency)", "Contract role", "Unclear location",
-                                 "On-call every other week"])  # the brief's copy of the level flag is dropped
+        self.assertEqual(flags, ["Client delivery (consultancy or agency)", "Contract role", "Unclear location",
+                                 "On-call every other week"])  # the brief's copy of the level check is dropped too
+        self.assertEqual(decision.criteria_misses(gates), [decision.CRITERIA_MISSES["interviews"],
+                                                           decision.CRITERIA_MISSES["level"]])
+        self.assertEqual(decision.criteria_misses({"level": "yes", "team": "no"}), [])  # team is never a gate
 
     def test_call_questions_are_few_plain_and_end_with_pay_for_the_call(self) -> None:
         qs = decision.call_questions({"what_it_does": "Makes widgets.", "call_questions": ["Who uses the agents?", "A", "B"]},
