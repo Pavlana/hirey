@@ -3100,6 +3100,7 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
     elif app["date_applied"]:
         buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
     return (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div>'
+            + _panel_draft(conn, app["id"])
             + _draft_form(here, app_id=app["id"], source=db.draft_source(conn, app["id"])) + "</section>")
 
 
@@ -3716,7 +3717,7 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
         + about(m) + _channel_tag(m) + flags.get(m["id"], "") + _route_tag(settings, m, m["id"] in flags)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _draft_box(m) + _draft_actions(m)
+        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _thread_draft(m) + _draft_actions(m)
         + (_wait_actions(m, "/applications", "thread", "",
                          bool(assistant.message_target(settings, "comms" if m.get("comms") else "ask")))
            if m["author"] == "user" else "")
@@ -3777,30 +3778,45 @@ def _draft_actions(m: dict) -> str:
 
 
 def _draft_box(m: dict, prefix: str = "") -> str:
-    """The agent's draft under its note: the text as typed (escaped, in a pre-wrap block) with Copy, and for
-    an email the subject line with its own Copy subject (Copy body then copies the body alone). Copy takes
-    the element's text (data-copy names it), so what is copied is exactly what is shown. An invitation
-    reply is an editable textarea: Copy takes what the user edited there (never saved). `prefix` keeps the
-    ids apart when the same draft is shown twice (the panel's invitation card)."""
+    """The agent's draft: an editable textarea with Copy (Copy takes what the user edited there; never saved),
+    and for an email the subject line with its own Copy subject. `prefix` keeps the ids apart when the same
+    draft is shown twice."""
     if m.get("author") != "agent" or not m.get("draft_body"):
         return ""
     n = h(f'{prefix}{m["id"]}')
-    if m.get("comms") == "invite":
-        return (f'<div class="draft"><textarea class="draft-body draft-edit" id="draft-body-{n}" rows="6" '
-                f'aria-label="The reply, to edit before copying">{h(m["draft_body"])}</textarea>'
-                f'<div class="draft-actions"><button type="button" class="btn btn-secondary btn-sm" '
-                f'data-copy="draft-body-{n}">Copy</button>'
-                '<span class="muted">Edit it here, copy it, and send it yourself.</span></div></div>')
     subject = ""
     if m.get("draft_subject"):
         subject = (f'<div class="draft-subject"><span class="draft-label">Subject</span>'
                    f'<span class="draft-text" id="draft-subject-{n}">{h(m["draft_subject"])}</span>'
                    f'<button type="button" class="btn btn-ghost btn-sm" data-copy="draft-subject-{n}">Copy subject</button></div>')
     label = "Copy body" if m.get("draft_subject") else "Copy"
-    return (f'<div class="draft">{subject}<div class="draft-body" id="draft-body-{n}">{h(m["draft_body"])}</div>'
+    return (f'<div class="draft">{subject}<textarea class="draft-body draft-edit" id="draft-body-{n}" rows="6" '
+            f'aria-label="The reply, to edit before copying">{h(m["draft_body"])}</textarea>'
             f'<div class="draft-actions"><button type="button" class="btn btn-secondary btn-sm" '
             f'data-copy="draft-body-{n}">{label}</button>'
-            '<span class="muted">Paste it in LinkedIn or your mail app and send it yourself.</span></div></div>')
+            '<span class="muted">Edit it here, copy it, and send it yourself.</span></div></div>')
+
+
+def _thread_draft(m: dict) -> str:
+    """A draft in the Applications Assistant box: one line pointing at the application's panel, where the draft
+    is shown to edit and copy; a draft about no application (the whole search) is shown here, editable."""
+    if m.get("author") != "agent" or not m.get("draft_body"):
+        return ""
+    if m.get("application_id") is None:
+        return _draft_box(m)
+    return (f'<p class="muted draft-moved">Draft ready in <a href="{h(_here(m["application_id"]))}">'
+            f'{h(m.get("company") or "the application")}\'s panel</a>: edit it there and copy it.</p>')
+
+
+def _panel_draft(conn: sqlite3.Connection, app_id: int) -> str:
+    """The application's latest reply draft (not an invitation's: its card shows it), editable with Copy."""
+    drafts = [m for m in db.thread(conn, app_id)
+              if m["author"] == "agent" and m["draft_body"] and m["comms"] != "invite"]
+    if not drafts:
+        return ""
+    m = drafts[-1]
+    return (f'<div class="panel-draft"><p class="muted">Latest draft · {h(_short_day(m["created_at"]))}</p>'
+            + _draft_box(m, prefix="panel-") + "</div>")
 
 
 def _route_tag(settings: Settings, m: dict, flagged: bool) -> str:

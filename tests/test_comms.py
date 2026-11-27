@@ -140,23 +140,33 @@ class DashboardTest(ResendCancelBase):
             with self.subTest(form=form):
                 self.assertEqual(self.post_json("/applications/draft", form)[0], 400)
 
-    def test_draft_shows_with_copy_and_is_escaped(self) -> None:
+    def test_draft_shows_in_the_panel_editable_and_escaped(self) -> None:
         with self.conn() as conn:
-            email = db.add_draft_request(conn, ACME, "reply", "email", "<script>alert(1)</script>")
-            db.save_draft(conn, email, "Hi <b>Jo</b>,\nThanks & see you.", "Re: <i>call</i>")
             li = db.add_draft_request(conn, ACME, "thanks", "linkedin", notes="thank them")
             li_reply = db.save_draft(conn, li, "Thanks for your time today, Jo.")
-        body = self.get("/")[2]
+            email = db.add_draft_request(conn, ACME, "reply", "email", "<script>alert(1)</script>")
+            email_reply = db.save_draft(conn, email, "Hi <b>Jo</b>,\nThanks & see you.", "Re: <i>call</i>")
+        body = self.get("/")[2]  # the box: one line pointing at the panel, no draft text
         self.assertNotIn("<script>alert(1)", body)
-        self.assertNotIn("<b>Jo</b>", body)
-        self.assertIn("Hi &lt;b&gt;Jo&lt;/b&gt;,\nThanks &amp; see you.", body)
-        self.assertIn("Re: &lt;i&gt;call&lt;/i&gt;", body)
-        self.assertIn('data-copy="draft-subject-', body)
-        self.assertIn(">Copy subject</button>", body)
-        self.assertIn(">Copy body</button>", body)
-        self.assertIn(f'<div class="draft-body" id="draft-body-{li_reply}">', body)
-        self.assertIn(f'data-copy="draft-body-{li_reply}">Copy</button>', body)
+        self.assertIn('class="muted draft-moved">Draft ready in', body)
+        self.assertNotIn(f'id="draft-body-{li_reply}"', body)
         self.assertIn('msg-channel-linkedin">LinkedIn · Thank-you note</span>', body)
+        panel = self.get(f"/?app={ACME}")[2]  # the panel: the latest draft, editable, with Copy
+        self.assertNotIn("<b>Jo</b>", panel)
+        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-panel-{email_reply}"', panel)
+        self.assertIn("Hi &lt;b&gt;Jo&lt;/b&gt;,\nThanks &amp; see you.</textarea>", panel)
+        self.assertIn("Re: &lt;i&gt;call&lt;/i&gt;", panel)
+        self.assertIn('data-copy="draft-subject-panel-', panel)
+        self.assertIn(">Copy subject</button>", panel)
+        self.assertIn(f'data-copy="draft-body-panel-{email_reply}">Copy body</button>', panel)
+
+    def test_draft_about_no_application_stays_in_the_box(self) -> None:
+        with self.conn() as conn:
+            msg = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
+            reply = db.save_draft(conn, msg, "Thanks, happy to talk.")
+        body = self.get("/")[2]
+        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body)
+        self.assertIn(f'data-copy="draft-body-{reply}">Copy</button>', body)
 
     def test_resend_routes_to_comms(self) -> None:
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("comms", 72),)})

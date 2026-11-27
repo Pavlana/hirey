@@ -415,8 +415,11 @@ sequenceDiagram
   change made or proposed) as its body.
 - Pay guard (`db.check_draft_pay`): a pay figure only when the user's notes give one; pay wording only
   when the notes, the pasted message or the source message raise it.
-- The box shows a channel tag on both messages and the draft (escaped, pre-wrap) with **Copy**, or
-  **Copy subject** and **Copy body** for email (`web._draft_box`; app.js copies the element's text).
+- The box shows a channel tag on both messages. A draft about an application is shown in its panel
+  (`web._panel_draft`: the latest draft, not an invitation's, which its card shows) and the box shows one
+  line linking there (`web._thread_draft`); a draft about no application stays in the box. Either way the
+  draft is an escaped, editable textarea with **Copy**, or **Copy subject** and **Copy body** for email
+  (`web._draft_box`; app.js copies the textarea's edited value; edits are never saved).
 - A factual interview booking in the pasted message is recorded the way /stage does. Anything else
   (rejection, offer, withdrawal, skip) is only proposed in the note.
 
