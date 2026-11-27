@@ -146,6 +146,16 @@ class LayoutTest(IsolatedTestCase):
         no_summary = cvpdf.cv_layout(HEADED_CV.replace("## Summary", "## Interests"))
         self.assertIn('<div class="about"></div>', no_summary, "no summary: the right side stays empty")
 
+    def test_underscore_emphasis_and_a_bold_link_line(self) -> None:
+        from prep.md import render_inline
+        self.assertEqual(render_inline("__github.com/example/tool__"), "<strong>github.com/example/tool</strong>")
+        self.assertEqual(render_inline("_github.com/example/tool_"), "<em>github.com/example/tool</em>")
+        self.assertEqual(render_inline("see my_var and file_name.py"), "see my_var and file_name.py")
+        page = cvpdf.cv_layout(HEADED_CV.replace("### Example tool · personal project, 2025 · Python",
+                                                 "### Example tool · personal project, 2025 · Python\n\n__github.com/example/tool__"))
+        self.assertIn("<p><strong>github.com/example/tool</strong></p>", page,
+                      "a bold line with no ' — ' and no place or dates stays a paragraph, not a role")
+
     def test_role_lines(self) -> None:
         page = cvpdf.cv_layout(HEADED_CV)
         self.assertIn('<p class="role job"><strong>Platform Engineer</strong> <span class="when">Jan 2020 – Present</span>'

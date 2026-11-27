@@ -6,6 +6,9 @@ import re
 
 _BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*")
 _ITALIC = re.compile(r"(?<![\w*])\*(?=[^\s*])(.+?)(?<=[^\s*])\*(?![\w*])")
+# __bold__ and _italic_ too, only between non-word characters, so snake_case and URLs stay as they are.
+_BOLD_U = re.compile(r"(?<![\w_])__(?=[^\s_])(.+?)(?<=[^\s_])__(?![\w_])")
+_ITALIC_U = re.compile(r"(?<![\w_])_(?=[^\s_])(.+?)(?<=[^\s_])_(?![\w_])")
 # [text](https://…) or [text](mailto:…), matched in the escaped text: the URL can hold no quote or
 # angle bracket (escaped to &quot; &lt; &gt;, and "&" is the only "&…;" an escaped URL may carry).
 _LINK = re.compile(r"\[([^\]\n]+)\]\(((?:https?://|mailto:)[^\s()\"'<>]+)\)")
@@ -19,8 +22,8 @@ _CODE_SPAN = re.compile(r"`([^`\n]+)`")
 
 
 def _inline(text: str, links: bool = False) -> str:
-    """Escape, then turn `code` into <code> (its text kept as is), **bold** and *italic* into <strong>
-    and <em> (and, with `links`, [text](url) with an http(s) or mailto URL into <a>). The markers are
+    """Escape, then turn `code` into <code> (its text kept as is), **bold** / __bold__ and *italic* /
+    _italic_ into <strong> and <em> (and, with `links`, [text](url) with an http(s) or mailto URL into <a>). The markers are
     matched in the escaped text, so nothing from the file can add other markup."""
     parts = _CODE_SPAN.split(text)
     out = []
@@ -28,7 +31,9 @@ def _inline(text: str, links: bool = False) -> str:
         if i % 2:
             out.append(f"<code>{_h(part)}</code>")
             continue
-        styled = _ITALIC.sub(r"<em>\1</em>", _BOLD.sub(r"<strong>\1</strong>", _h(part)))
+        styled = _BOLD.sub(r"<strong>\1</strong>", _h(part))
+        styled = _BOLD_U.sub(r"<strong>\1</strong>", styled)
+        styled = _ITALIC_U.sub(r"<em>\1</em>", _ITALIC.sub(r"<em>\1</em>", styled))
         out.append(_LINK.sub(r'<a href="\2">\1</a>', styled) if links else styled)
     return "".join(out)
 
