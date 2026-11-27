@@ -2070,10 +2070,13 @@ def cmd_reply(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     then how to save the draft. `reply save --to MSG`: stores the draft (stdin or --file) as the reply."""
     if args.reply_cmd == "save":
         draft = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+        if args.app is not None:
+            db.attach_draft_request(conn, args.to, args.app)
         reply_id = db.save_draft(conn, args.to, draft, args.subject, args.note or "")
         late = db.get_message(conn, args.to)["status"] == "cancelled"
         print(f"Draft {reply_id} saved; request {args.to} {'was cancelled; shown as after cancel' if late else 'answered'}. "
-              "The Applications Assistant box shows it with Copy. Nothing was sent.")
+              + ("The application's panel" if args.app is not None else "Paste recruiter message (top of Applications)")
+              + " shows it to edit and copy. Nothing was sent.")
         return 0
     msg = db.get_message(conn, args.message)
     if msg is None or msg["author"] != "user" or not msg["comms"]:
@@ -2881,6 +2884,7 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--claim", action="store_true", help="take this request for this session first")
     t = rsub.add_parser("save", help="store the draft (stdin or --file) as the reply to a request")
     t.add_argument("--to", type=int, required=True, help="the request's message id")
+    t.add_argument("--app", type=int, help="a whole-search request about this tracked application: link it (the draft shows in its panel)")
     t.add_argument("--subject", help="the email's subject line (email only, required there)")
     t.add_argument("--note", help="one line shown above the draft: the stage change proposed or made, what to check")
     t.add_argument("--file", help="a file holding the draft (default: stdin)")

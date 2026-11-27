@@ -62,8 +62,6 @@ BY_HAND = {
     "draft-reply-form": "the Draft a reply form open and filled",
     "draft-linkedin": "a LinkedIn draft in the thread",
     "draft-email": "an email draft in the thread",
-    "draft-reply-from-message": "the Draft reply row under a pasted message",
-    "draft-reply-from-message-draft": "the draft that row produces",
 }
 
 

@@ -675,20 +675,6 @@ def paste_invitation(settings: Settings, conn: sqlite3.Connection, form: Form, t
     return _route_draft(settings, conn, form, msg_id, "invite", "linkedin")
 
 
-def draft_from_message(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
-    """Draft reply · LinkedIn | Email on a message in the Applications Assistant box: a reply request that
-    answers that message (by id: its text stays on the server), about its application, job offer or the
-    whole search, routed as request_draft. Only the user's own plain messages (db.is_draft_source)."""
-    channel = form.get("channel") or ""
-    if channel not in db.CHANNELS:
-        raise BadRequest("Pick the channel (LinkedIn or Email).")
-    source = db.get_message(conn, _msg_id(form))
-    if not db.is_draft_source(source):
-        raise BadRequest("A reply can be drafted only from one of your own messages in this box.")
-    msg_id = db.add_draft_request(conn, None, "reply", channel, notes=form.get("notes", ""), source_id=source["id"])
-    return _route_draft(settings, conn, form, msg_id, "reply", channel)
-
-
 def _route_draft(settings: Settings, conn: sqlite3.Connection, form: Form, msg_id: int, kind: str,
                  channel: str) -> dict:
     """Ping `/reply …` about a stored draft request (the comms worker, else the Applications Assistant)."""
@@ -1356,7 +1342,6 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/draft": (request_draft, "/", "draft_requested"),
-    "/applications/draft-from": (draft_from_message, "/", "draft_requested"),
     "/applications/invite": (paste_invitation, "/", "invite_pasted"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
@@ -2594,7 +2579,7 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     else:
         panel = ""
     agent = _agent_box(conn, settings, f, targets)
-    content = (f'<div class="apps"><div class="apps-main" id="apps-main">{_paste_box(home_url(f))}{list_card}{agent}</div>'
+    content = (f'<div class="apps"><div class="apps-main" id="apps-main">{_paste_box(home_url(f), _search_draft(conn))}{list_card}{agent}</div>'
                f'{SPLIT_HANDLE}{panel}</div>'
                + _skip_dialog())
     new = f" · {offers} new offer{'s' if offers != 1 else ''}" if offers is not None else ""
@@ -2604,9 +2589,20 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     return "Applications", f"{open_count} open · {closed_count} closed{new} · {today}", content, my_cv
 
 
-def _paste_box(here: str) -> str:
-    """Paste recruiter message: a textarea and Send, always visible at the top of Applications. The job is
-    evaluated and the reply drafted by the agent (paste_invitation)."""
+def _search_draft(conn: sqlite3.Connection) -> str:
+    """The latest draft about no application (a whole-search request), editable with Copy, under the paste box."""
+    row = conn.execute("SELECT id FROM agent_messages WHERE author = 'agent' AND draft_body IS NOT NULL "
+                       "AND application_id IS NULL AND getjo_job_id IS NULL ORDER BY id DESC LIMIT 1").fetchone()
+    if row is None:
+        return ""
+    m = db.get_message(conn, row[0])
+    return (f'<div class="panel-draft"><p class="muted">Latest draft · {h(_short_day(m["created_at"]))}</p>'
+            + _draft_box(m) + "</div>")
+
+
+def _paste_box(here: str, draft: str = "") -> str:
+    """Paste recruiter message: a textarea and Send, always visible at the top of Applications, and under it
+    the latest whole-search draft. The job is evaluated and the reply drafted by the agent (paste_invitation)."""
     return ('<section class="card paste-box" aria-labelledby="paste-title">'
             '<form method="post" action="/applications/invite" class="paste-form" data-ajax="draft">'
             f'<input type="hidden" name="return" value="{h(here)}">'
@@ -2614,7 +2610,7 @@ def _paste_box(here: str) -> str:
             f'<textarea id="paste-recruiter" name="pasted" rows="2" maxlength="{db.MAX_MESSAGE}" required '
             'placeholder="A recruiter\'s LinkedIn or email message. The job is checked against your criteria and a '
             'reply is drafted for you to edit and copy. Nothing is sent."></textarea>'
-            + _button("Send", size="sm") + "</form></section>")
+            + _button("Send", size="sm") + "</form>" + draft + "</section>")
 
 
 def sel_targets(conn: sqlite3.Connection, f: dict, rows: list[dict], found: dict) -> list[dict]:
@@ -3636,7 +3632,7 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         'placeholder="Ask anything: which tasks need me, a question about the ticked jobs, a comparison, a change '
         '(tasks, comments, stage, tier, CV), or paste a recruiter email…" aria-label="Message to the Applications Assistant"></textarea>'
         '<div class="ask-foot"><span class="muted">The assistant does the edits and replies here.</span>'
-        + _button("Send", size="sm") + "</div></form>" + _draft_form(home_url(f), source=db.draft_source(conn))
+        + _button("Send", size="sm") + "</div></form>"
         + "</div></section>"
     )
 
@@ -3717,7 +3713,7 @@ def _thread(conn: sqlite3.Connection, settings: Settings, app_id: int | None = N
         f'<div class="msg-meta"><span class="msg-who">{"assistant" if m["author"] == "agent" else "you"}</span>'
         + about(m) + _channel_tag(m) + flags.get(m["id"], "") + _route_tag(settings, m, m["id"] in flags)
         + f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></div>'
-        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _thread_draft(m) + _draft_actions(m)
+        f'<div class="msg-body">{_linkify(m["body"])}</div>' + _thread_draft(m)
         + (_wait_actions(m, "/applications", "thread", "",
                          bool(assistant.message_target(settings, "comms" if m.get("comms") else "ask")))
            if m["author"] == "user" else "")
@@ -3765,18 +3761,6 @@ def _channel_tag(m: dict) -> str:
             f'{what}</span>')
 
 
-def _draft_actions(m: dict) -> str:
-    """Draft reply · LinkedIn | Email under one of the user's own messages (db.is_draft_source): one click
-    drafts a reply to the recruiter text in it, by the message's id (/applications/draft-from)."""
-    if not db.is_draft_source(m):
-        return ""
-    buttons = "".join(f'<button class="btn btn-ghost btn-sm" name="channel" value="{c}" '
-                      f'title="Draft a {h(db.CHANNEL_LABELS[c])} reply to the message above">{h(db.CHANNEL_LABELS[c])}</button>'
-                      for c in db.CHANNELS)
-    return ('<form method="post" action="/applications/draft-from" class="msg-actions msg-draft" data-ajax="draft">'
-            f'<input type="hidden" name="msg_id" value="{h(m["id"])}"><span class="muted">Draft reply ·</span>{buttons}</form>')
-
-
 def _draft_box(m: dict, prefix: str = "") -> str:
     """The agent's draft: an editable textarea with Copy (Copy takes what the user edited there; never saved),
     and for an email the subject line with its own Copy subject. `prefix` keeps the ids apart when the same
@@ -3802,8 +3786,9 @@ def _thread_draft(m: dict) -> str:
     is shown to edit and copy; a draft about no application (the whole search) is shown here, editable."""
     if m.get("author") != "agent" or not m.get("draft_body"):
         return ""
-    if m.get("application_id") is None:
-        return _draft_box(m)
+    if m.get("application_id") is None:  # folded: the latest is shown open under Paste recruiter message
+        return ('<details class="draft-moved"><summary class="muted">Draft (the latest is under Paste recruiter '
+                'message at the top)</summary>' + _draft_box(m, prefix="thread-") + "</details>")
     return (f'<p class="muted draft-moved">Draft ready in <a href="{h(_here(m["application_id"]))}">'
             f'{h(m.get("company") or "the application")}\'s panel</a>: edit it there and copy it.</p>')
 

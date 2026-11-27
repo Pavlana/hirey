@@ -362,7 +362,7 @@ The Learn box has its own Stop ([learn.md](learn.md)); each Stop touches only it
 ## Draft a reply (Communication worker)
 
 Hirey drafts, the user sends. There is no LinkedIn or mail integration. The recruiter's text comes
-from a paste in the form or from a message the user already sent in the Applications Assistant box.
+from a paste in the form, or answers the latest message the user sent about the same application.
 
 ```mermaid
 sequenceDiagram
@@ -371,7 +371,6 @@ sequenceDiagram
     participant DB as prep.db
     participant C as Comms worker
     U->>W: POST /applications/draft, kind, channel, pasted message or none, notes
-    U->>W: or POST /applications/draft-from, msg_id, channel
     W->>DB: add_draft_request, pending, comms, channel and source_id set
     W->>C: dev3 message /reply about msg, ids only
     C->>DB: reply show MSG --claim
@@ -380,16 +379,12 @@ sequenceDiagram
     Note over U: the user pastes and sends it
 ```
 
-- **Draft a reply** is a folded form in the application panel, the job offer panel and under the
-  Applications Assistant box (whole search). It posts `/applications/draft`:
+- **Draft a reply** is a folded form in the application panel and the job offer panel (the Applications
+  Assistant box is for conversation only; a new recruiter message goes to Paste recruiter message). It posts `/applications/draft`:
   - what to write (`db.COMMS_KINDS`: reply, chase = follow-up, thanks = thank-you note, invite =
     invitation reply, see [Invitations](#invitations));
   - the channel (`db.CHANNELS`: linkedin, email);
   - the recruiter's message pasted in (optional, see below), and the user's notes.
-- **Draft reply · LinkedIn | Email** is an action row under each of the user's own messages in the box
-  (`web._draft_actions`). One click posts `/applications/draft-from` with the message id and the
-  channel; the text never goes back through the browser. The request is a reply about that message's
-  application, job offer or the whole search.
 - A source message is one `db.is_draft_source` accepts: written by the user, in the Applications box
   (no `topic`: not a CV, comparison or Learn message), not a draft request, not cancelled.
 - **Empty paste.** A reply with nothing pasted answers the latest source message on the same subject
@@ -417,7 +412,10 @@ sequenceDiagram
   when the notes, the pasted message or the source message raise it.
 - The box shows a channel tag on both messages. A draft about an application is shown in its panel
   (`web._panel_draft`: the latest draft, not an invitation's, which its card shows) and the box shows one
-  line linking there (`web._thread_draft`); a draft about no application stays in the box. Either way the
+  line linking there (`web._thread_draft`). A draft about no application shows under Paste recruiter
+  message (`web._search_draft`, the latest) and folded in the box. `reply save --app ID` links a
+  whole-search request to the application it is about (`db.attach_draft_request`), so its draft goes to
+  that panel. Either way the
   draft is an escaped, editable textarea with **Copy**, or **Copy subject** and **Copy body** for email
   (`web._draft_box`; app.js copies the textarea's edited value; edits are never saved).
 - A factual interview booking in the pasted message is recorded the way /stage does. Anything else

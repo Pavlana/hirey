@@ -230,11 +230,7 @@ Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the repl
   shown with its LinkedIn invitation card; otherwise the reply asks for what is missing. The reply is
   editable before Copy.
 
-- **From a message already in the box.** A recruiter's message pasted into the Applications
-  Assistant box (for example to ask for feedback on it) gets an action row: **Draft reply ·
-  LinkedIn | Email**. One click asks for the reply; nothing is pasted again.
-- **From the form.** Open the application (or the job offer, or use the box's own form for the whole
-  search), unfold **Draft a reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email,
+- **From the form.** Open the application (or the job offer), unfold **Draft a reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email,
   and add a line on what to say ("free Tue/Wed after 2, ask about hybrid"). Paste the recruiter's
   message, or leave the box empty: a reply then uses the latest message sent about this application,
   named under the box ("Left empty, a reply uses your message of Nov 26, 14:02: '…'"). With no such
@@ -242,14 +238,14 @@ Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the repl
 
 A draft about an application appears in that application's panel (the latest draft, under the
 shortcuts), editable, with **Copy** (email: **Copy subject** and **Copy body**); the box shows one line
-pointing there. A draft about the whole search stays in the box, editable too. Edit it, copy it and send
+pointing there. A draft about no application (an invitation that names no job yet) shows under
+**Paste recruiter message**, editable too; the box keeps it folded. The Applications Assistant box is
+for conversation only: it has no drafting controls. Edit it, copy it and send
 it yourself. Nothing is sent from Hirey. An interview the message books is
 recorded on the application; a rejection or anything else is only proposed in the note above the
 draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
 /reply in any Claude Code session.
 
-![Draft reply under a message in the box](screenshots/draft-reply-from-message.png)
-![The draft in the same thread](screenshots/draft-reply-from-message-draft.png)
 ![Draft a reply form](screenshots/draft-reply-form.png)
 ![A LinkedIn draft with Copy](screenshots/draft-linkedin.png)
 ![An email draft with Copy subject and Copy body](screenshots/draft-email.png)
