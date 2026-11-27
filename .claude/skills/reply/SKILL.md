@@ -1,6 +1,6 @@
 ---
 name: reply
-description: Draft a message to a recruiter or interviewer in Hirey from a "Draft a reply" request — a LinkedIn reply (short, no subject), an email reply (subject line, 4-5 lines, sign-off), a follow-up / chase when an answer is overdue, or a thank-you note after an interview (using the debrief when there is one). Reads the application's context, writes the draft into the Applications Assistant box with Copy, and records a factual interview booking the way /stage does. Never sends anything. Use when the Comms worker or the Applications Assistant receives "/reply <application id | job | general> <message id>", when the user types /reply MSG, or when /today or the session-start note says draft replies are waiting.
+description: Draft a message to a recruiter or interviewer in Hirey from a "Draft a reply" request — a reply to a recruiter's invitation (the job evaluated against the criteria and recorded, or the missing details asked for), a LinkedIn reply (short, no subject), an email reply (subject line, 4-5 lines, sign-off), a follow-up / chase when an answer is overdue, or a thank-you note after an interview (using the debrief when there is one). Reads the application's context, writes the draft into the Applications Assistant box with Copy, and records a factual interview booking the way /stage does. Never sends anything. Use when the Comms worker or the Applications Assistant receives "/reply <application id | job | general> <message id>", when the user types /reply MSG, or when /today or the session-start note says draft replies are waiting.
 ---
 
 # /reply
@@ -42,6 +42,30 @@ Read only the context the draft needs: the stage and the latest comments always;
 research and the job brief for "why this role"; the latest debrief file for a thank-you note;
 notes for anything the user asked to remember.
 
+## 1b. An invitation: evaluate it first
+
+When the first line says **Invitation reply**, the pasted message is a recruiter's invitation to a job not
+tracked yet. `reply show` prints the steps and the criteria file's path; read the criteria file (its pay floor
+is only for comparing: never copy it anywhere). Decide from the message:
+
+- **A. The company and the role are both named.** Record and evaluate it:
+  `python -m prep.cli invite save --to MSG --company "…" --role "…" [--location "…"]` with the job's screen as
+  TOML on stdin (the format `reply show` prints; `unknown` where the message does not say; pay only pass / fail /
+  unknown, never the figure). It records the job at Interested with source "LinkedIn (recruiter)", queues
+  company research and the CV fit for the Research worker, and prints the gate. The draft shows interest and
+  proposes call times. When a gate fails (a bank, a lead role, a team of one), still write the draft and say
+  which gate failed in `--note`: the user decides whether to reply. Never skip or move the application.
+- **B. The company or the role is missing.** `python -m prep.cli invite save --to MSG --missing company,description`
+  (add `role`, or, when the recruiter keeps the client confidential, `sector,size,team_kind`; always
+  `interviews`). The draft asks, politely and short, for what is missing: the company and the job description,
+  or the sector, company size and whether it is an in-house team or a consultancy; and the interview format.
+  It offers a short call after that. Never refuse a call.
+- **The recruiter's answer to an earlier invitation** (`reply show` lists the ones still waiting): add
+  `--invite N` so that invitation is updated; with the job now named it becomes case A.
+
+Every invitation draft: 4-5 lines, never asks about pay in writing (pay is for the call), never names a pay
+figure; `reply save` refuses pay wording on an invitation unless the user's own notes raise it.
+
 ## 2. Write the draft
 
 Style for every kind: plain, warm, short. Thanks, interest in the role, the practical answer
@@ -51,6 +75,7 @@ the recruiter's first name when the message gives it.
 
 | Kind and channel | Shape |
 |---|---|
+| Invitation reply · either | 4-5 lines: thanks, interest (case A) or the short questions (case B), call times or the offer of a short call, first name. Never pay. |
 | Reply · LinkedIn | 2-4 short lines, conversational, no subject line, no formal sign-off block (first name is fine). Ready to paste into the chat. |
 | Reply · Email | A subject line (keep "Re: <their subject>" when the pasted email has one) and a body of 4-5 lines: greeting, thanks, interest, call times or the answer, sign-off. |
 | Follow-up · either | A polite nudge, 2-4 lines: the role and when they last spoke (from comments), still interested, a simple question ("is there an update on next steps?"). Never pushy, never guilt. |

@@ -84,6 +84,7 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 | `company_aliases` | other name of a company | `alias` (slug), `slug` |
 | `job_screens` | getjo job screened for the gate | role family, level, team, location, `pay` (pass / fail / unknown), agents, evals, contract |
 | `top_picks` | job in a week's Top 5 | `week` (Monday), `rank`, `why`, copied company, title, score |
+| `invitations` | recruiter's invitation (job id `linkedin:<id>`) | `message_id`, `application_id` (NULL until named), `company`, `role`, `location`, `missing` |
 
 - A partial unique index (`idx_agent_requests_open`) allows one open (pending or claimed) request per
   application and kind, even when two requests race.

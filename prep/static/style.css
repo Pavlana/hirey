@@ -642,6 +642,10 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .artifact-actions { margin-left: auto; display: inline-flex; gap: 4px; }
 .artifact-actions form.inline { margin: 0; }
 .artifact .gaps { margin: 0; padding-left: 1.2em; display: grid; gap: 2px; }
+.artifact .gate-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 13px; }
+.artifact .gate-list li { display: inline-flex; align-items: center; gap: 4px; }
+.artifact .why { margin: 0; font-size: 13px; color: var(--text-muted); }
+#card-invite { margin-bottom: var(--space-3); }
 /* Notes: the user's and the agent's notes on one application; Edit opens the form under them */
 .notes-body p, .notes-body ul { margin: 0 0 4px; }
 .notes-body ul { padding-left: 1.2em; }

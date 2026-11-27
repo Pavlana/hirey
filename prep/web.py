@@ -642,6 +642,10 @@ def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, toda
     kind, channel = form.get("comms") or "reply", form.get("channel") or ""
     if kind not in db.COMMS_KINDS or channel not in db.CHANNELS:
         raise BadRequest("Pick what to write and the channel (LinkedIn or Email).")
+    if kind == "invite" and (app_id is not None or job_id):
+        raise BadRequest("An invitation is pasted into the box under the list: it is about a job not tracked yet.")
+    if kind == "invite" and not form.get("pasted", "").strip():
+        raise BadRequest("Paste the recruiter's invitation.")
     source = None
     if kind == "reply" and not form.get("pasted", "").strip():
         # nothing pasted: the message the form named (source_id), else the latest one the user sent about it
@@ -2566,7 +2570,8 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
         panel = _cv_panel(conn, settings, f)
     elif focus:
         job_id = focus["app"]["getjo_job_id"]
-        brief = _brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id else ""
+        brief = (_brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id
+                 else _invite_card(conn, settings, focus["app"], today, home_url(f, app=focus["app"]["id"])))
         panel = _panel(conn, focus, today, f, brief, bool(job_id) and job_id in briefs["open"], settings.private_dir)
     elif job:
         brief = _brief_section(job["id"], briefs, found["description"], home_url(f),
@@ -2689,15 +2694,20 @@ def _top_rows(items: list[tuple[dict, str, str]], f: dict, now: str, stale_days:
     """Rows of a Top 5 table: (job, why line, last cell) each; the role cell carries the why line."""
     trs = []
     for job, why, last in items:
-        key = f'j:{job["id"]}'
-        href = home_url(f, job=job["id"], app=None, sel=auto_sel(f, key))
+        app_id = job.get("app_id")  # a recruiter's invitation: its application
+        key = f'a:{app_id}' if app_id else f'j:{job["id"]}'
+        href = (home_url(f, app=app_id, job=None, sel=auto_sel(f, key)) if app_id
+                else home_url(f, job=job["id"], app=None, sel=auto_sel(f, key)))
         chips = _job_chips(getjo.job_state(job, now, stale_days)) if job.get("first_seen") else ""
+        if app_id:
+            chips = _badge("LinkedIn", "info")
         role = (f'<span class="clamp" title="{h(job["title"])}">{h(job["title"])}</span>'
                 + (f'<span class="why">{h(why)}</span>' if why else "")
                 + (f'<span class="chips">{chips}</span>' if chips else ""))
         cells = (_sel_tick(f, key, f'{job["company"]} — {job["title"]}'), _score_badge(job["score"]),
                  f'<a href="{h(href)}">{h(job["company"])}</a>', role, last)
-        focus = ' class="is-focus"' if job["id"] == f["job"] and f["app"] is None else ""
+        focus = (' class="is-focus"' if (app_id and app_id == f["app"]) or (job["id"] == f["job"] and f["app"] is None)
+                 else "")
         trs.append(f'<tr data-href="{h(href)}" data-job="{h(job["id"])}" data-key="{h(key)}"{focus}>'
                    + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
     head = SEL_HEAD + "".join(f'<th scope="col" class="col-{c.lower()}">{c}</th>'
@@ -2716,7 +2726,7 @@ def _top_view(top: dict, f: dict, found: dict, now: str, today: str, settings: S
     here = home_url(f)
     picks = []
     for p in top["picks"]:
-        job = (p["row"]["job"] if p["row"] else None) or found["jobs"].get(p["getjo_job_id"]) or {
+        job = (p["row"]["job"] if p["row"] else None) or p.get("job") or found["jobs"].get(p["getjo_job_id"]) or {
             "id": p["getjo_job_id"], "company": p["company"], "title": p["title"], "score": p["score"],
             "location": None, "first_seen": None}
         why = p["row"]["why"] if p["row"] else p["why"]
@@ -2919,6 +2929,48 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
     )
 
 
+GATE_TONES = {"yes": "success", "no": "danger", "unknown": "neutral"}
+STATE_TEXT = {"passed": ("passes the gate", "success"), "failed": ("fails the gate", "danger"),
+              "held": ("held: interview style unknown", "warning"), "screening": ("screening", "neutral")}
+
+
+def _invite_card(conn: sqlite3.Connection, settings: Settings, app: dict, today: str, here: str) -> str:
+    """The evaluation card of an application recorded from a recruiter's invitation: the Top 5 gate (each
+    criterion yes / no / unknown), the why line, the CV fit on both scales, whether it is in this week's Top 5,
+    and, once it passes, the button that starts the tailoring plan. "" for any other application."""
+    inv = db.invitation_for_app(conn, app["id"])
+    if inv is None:
+        return ""
+    crit = _criteria(settings)
+    fit = db.cv_fit(conn, app["id"])
+    open_kinds = {r["kind"] for r in db.open_requests(conn, app["id"])}
+    fit_line = (f'CV fit {fit["score"]}/5 · {search.fit_on_ten(fit["score"])}/10 on getjo\'s scale' if fit
+                else "CV fit: being checked" if "cv_fit" in open_kinds else "CV fit: not checked yet")
+    body = f'<p class="muted">{h(fit_line)}</p>'
+    meta = ""
+    if crit is None:
+        body += '<p class="muted">No criteria file: the gate is off.</p>'
+    else:
+        row = search.invite_eval(conn, inv, crit, today)
+        text, tone = STATE_TEXT[row["state"]]
+        if row["failed"]:
+            text = f'{text}: {search.failed_text(row)}'
+        meta = " " + _badge(text, tone)
+        chips = "".join(f'<li>{h(search.GATE_LABELS.get(k, k))} {_badge(v, GATE_TONES[v])}</li>'
+                        for k, v in row["gates"].items())
+        body = (f'<ul class="gate-list">{chips}</ul>' + (f'<p class="why">{h(row["why"])}</p>' if row["why"] else "")
+                + body)
+        week = search.week_start(today)
+        rank = next((p["rank"] for p in db.week_picks(conn, week) if p["getjo_job_id"] == inv["job_id"]), None)
+        if rank is not None:
+            body += f'<p>{_badge(f"Top {settings.top_per_week} this week · #{rank}", "accent")}</p>'
+        if row["failed"]:
+            body += '<p class="muted">A gate says no: decide whether to reply at all. Nothing is skipped for you.</p>'
+        elif row["state"] == "passed" and not db.tailor_plan(conn, app["id"]) and not open_kinds & {"plan", "tailor"}:
+            body += f'<p>{_redo(app["id"], "plan", here, "Start the tailoring plan")}</p>'
+    return _artifact("card-invite", "LinkedIn invitation", meta, "", body)
+
+
 def _employer_select(app: dict, here: str) -> str:
     """Product / Client / Unknown for the application, saved on change (a Save button without the script)."""
     current = app["employer_kind"] or ""
@@ -3031,12 +3083,17 @@ def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None,
     `source` (db.draft_source): the message a reply answers when nothing is pasted, named under the box."""
     about = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
              else f'<input type="hidden" name="job_id" value="{h(job_id)}">' if job_id else "")
-    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS)
+    general = app_id is None and not job_id  # an invitation is about a job not tracked yet: this form only
+    order = ("invite", "reply", "chase", "thanks") if general else tuple(k for k in db.COMMS_KINDS if k != "invite")
+    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in order)
     channels = "".join(f'<label class="draft-channel"><input type="radio" name="channel" value="{c}"'
                        f'{" checked" if c == "linkedin" else ""}> {h(db.CHANNEL_LABELS[c])}</label>'
                        for c in db.CHANNELS)
     if source is None:
         placeholder, uses = "Paste the recruiter's message (LinkedIn or email). Needed for a reply.", ""
+        if general:
+            placeholder = ("Paste the recruiter's message (LinkedIn or email). An invitation is evaluated against your "
+                           "criteria; the reply asks for whatever is missing.")
     else:
         placeholder = "Paste the recruiter's message, or leave it empty to use your message below."
         uses = (f'<input type="hidden" name="source_id" value="{h(source["id"])}">'
