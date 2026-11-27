@@ -2161,7 +2161,8 @@ def _print_invite_steps(settings: Settings, conn: sqlite3.Connection, msg: dict)
     The draft asks for what is missing: the company and the job description, or, when the client is confidential,
     the sector, company size and whether it is an in-house team or a consultancy; always the interview format.
     It offers a short call after that; it never refuses a call.
-  Every invitation draft: 4-5 lines, never asks about pay in writing, never names a pay figure.""")
+  Every invitation draft: dry and professional (no flattery, no enthusiasm words, one neutral line of interest),
+  short; questions as a short list; never asks about pay in writing, never names a pay figure.""")
 
 
 def cmd_invite(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -2210,7 +2211,7 @@ def cmd_invite(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conne
         print("  gate: " + ", ".join(f"{search.GATE_LABELS.get(k, k)} {v}" for k, v in row["gates"].items()))
         print(f"  state: {row['state']}" + (f" (failed: {search.failed_text(row)}: say so in --note; the user decides "
                                              "whether to reply)" if row["failed"] else ""))
-    print(f"Now write the draft: reply save --to {args.to} (interest, call times; 4-5 lines; no pay).")
+    print(f"Now write the draft: reply save --to {args.to} (dry and professional, call times; no pay).")
     return 0
 
 

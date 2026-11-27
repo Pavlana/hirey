@@ -436,7 +436,7 @@ sequenceDiagram
     and the job description (or the sector, size and in-house or consultancy when the client is
     confidential) and the interview format, then offers a short call.
 - Pay guard: an invitation reply never mentions pay, even when the recruiter raises it, unless the
-  user's notes do (`db.check_draft_pay(invite=True)`). The skill keeps it to 4-5 lines.
+  user's notes do (`db.check_draft_pay(invite=True)`). The skill keeps it dry and professional: no flattery or enthusiasm, a neutral line of interest, questions as a short list.
 
 ## Workers sidebar and run history
 

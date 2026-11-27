@@ -59,24 +59,30 @@ is only for comparing: never copy it anywhere). Decide from the message:
   (add `role`, or, when the recruiter keeps the client confidential, `sector,size,team_kind`; always
   `interviews`). The draft asks, politely and short, for what is missing: the company and the job description,
   or the sector, company size and whether it is an in-house team or a consultancy; and the interview format.
-  It offers a short call after that. Never refuse a call. Asking about the interview process is always in a
+  The questions come first (before a call), as a short list; the call is offered after them, to go
+  through the answers. Never refuse a call. Asking about the interview process is always in a
   case-B draft (normal for a candidate).
 - **The recruiter's answer to an earlier invitation** (`reply show` lists the ones still waiting): add
   `--invite N` so that invitation is updated; with the job now named it becomes case A.
 
-Every invitation draft: 4-5 lines, never asks about pay in writing (pay is for the call), never names a pay
+Every invitation draft: dry and short (the questions as a list), never asks about pay in writing (pay is for the call), never names a pay
 figure; `reply save` refuses pay wording on an invitation unless the user's own notes raise it.
 
 ## 2. Write the draft
 
-Style for every kind: plain, warm, short. Thanks, interest in the role, the practical answer
-(call times, the next step), sign-off with the user's first name. No buzzwords, no exclamation marks
-in a row, no "I hope this email finds you well". Mirror the recruiter's level of formality. Use
-the recruiter's first name when the message gives it.
+Style for every kind: dry, professional, short. Thanks, a neutral line of interest, the practical answer
+(call times, the next step), sign-off with the user's first name. Use the recruiter's first name when the
+message gives it.
+
+- No enthusiasm or flattery: no praise of the company or the role, no "excited", "thrilled", "great fit",
+  "love to", "amazing", "wonderful", no exclamation marks. One plain line of interest is enough ("the role
+  sounds interesting").
+- No buzzwords, no "I hope this email finds you well", no summary of the user's experience.
+- Questions are asked as questions: when there are several, a short list, one per line.
 
 | Kind and channel | Shape |
 |---|---|
-| Invitation reply · either | 4-5 lines: thanks, interest (case A) or the short questions (case B), call times or the offer of a short call, first name. Never pay. |
+| Invitation reply · either | Dry and short: thanks, one neutral line of interest, then case A: call times; case B: "before a call, could you share" and the questions as a short list, then the offer of a call. First name. Never pay. |
 | Reply · LinkedIn | 2-4 short lines, conversational, no subject line, no formal sign-off block (first name is fine). Ready to paste into the chat. |
 | Reply · Email | A subject line (keep "Re: <their subject>" when the pasted email has one) and a body of 4-5 lines: greeting, thanks, interest, call times or the answer, sign-off. |
 | Follow-up · either | A polite nudge, 2-4 lines: the role and when they last spoke (from comments), still interested, a simple question ("is there an update on next steps?"). Never pushy, never guilt. |
