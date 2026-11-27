@@ -478,14 +478,16 @@ Messages from the frame:
 ### Highlight to ask
 
 A selection in the card body (not in its forms) or in the explainer shows "✦ Ask about this". Its box
-is built with DOM calls, text only, and has the quote, a plain textarea and Add to notes / Ask ↵.
+is built with DOM calls, text only, and has the quote, the answer, a plain textarea and Add to notes / Ask ↵.
 
+- **One click asks.** Clicking "✦ Ask about this" opens the box and sends the quote at once with
+  `web.EXPLAIN_THIS` ("Explain this.") as the question. **Ask ↵** is for follow-ups: it sends only
+  when words are typed (an empty Ask just focuses the textarea).
 - **Ask** posts `/learn/message` with `quote` and `quote_src` (card or explainer).
   `web.send_learn_message` folds them into the body as
   "About this passage (Explainer):\n> quote\n\nquestion" (`web.PASSAGE_HEAD`, up to `web.MAX_QUOTE`,
-  1000 characters). With nothing typed the question is `web.EXPLAIN_THIS` ("Explain this."), so one click
-  asks. Same queue and skill as the chat (`/learn-ask`).
-- **The answer in the box.** After Ask the box stays where it is and is pinned (only ✕ or Escape
+  1000 characters). With nothing typed (the first, automatic ask) the question is `web.EXPLAIN_THIS`. Same queue and skill as the chat (`/learn-ask`).
+- **The answer in the box.** After an ask the box stays where it is and is pinned (only ✕ or Escape
   closes it). It shows the words sent, "Thinking…", then the reply inside the box. `app.js` polls
   `GET /learn/answer?msg=ID` every 4 s for up to 5 minutes: `state` (waiting, answered, cancelled), the
   reply as the safe Markdown subset (`prep/md.py`), its `reply_id` and the card's Your questions HTML.
