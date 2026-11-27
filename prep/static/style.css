@@ -1219,3 +1219,5 @@ h2 .emp-kind { font-size: 11px; vertical-align: 3px; }
 /* The message an empty Draft a reply form uses */
 .draft-uses { margin: 0; font-size: 12.5px; overflow-wrap: anywhere; }
 .criteria-miss { margin: 0; color: var(--text-muted); }  /* the user's guardrails: plain, not a red flag */
+.md-tools { display: flex; gap: 4px; margin-bottom: var(--space-2); }
+.md-tools .btn { min-width: 32px; font-weight: 600; }

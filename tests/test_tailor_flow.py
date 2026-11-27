@@ -374,6 +374,9 @@ class PanelTest(WebTestCase):
             db.save_tailored_cv(conn, self.app, str(v1), "v1")
             current = cvedit.editor_text(conn, self.app)
         self.assertIn('id="tailor-edit"', self.panel())
+        editor = self.panel()[self.panel().index('id="tailor-edit"'):]
+        self.assertIn('data-md="bold"', editor)  # a Markdown toolbar, not vim keys
+        self.assertNotIn("data-vim-toggle", editor[:editor.index("</details>")])
         text = current["text"].replace("Python, Go", "Python and Go\n%% say which services")
         with self.assertLogs("prep", level="INFO") as logs:
             status, _, out = self.post("/applications/cv/edit", {"app_id": self.app, "version": 1,
