@@ -35,10 +35,10 @@ application.
    - Interested: no task yet. Company research and a CV fit check are queued for the agent;
      the output says so. When the Research worker or the Applications Assistant is set in the
      settings, the work was already sent to it: say so. Otherwise offer to run /research now.
-     Once both are saved, a "Review research
-     and apply" task (due in 2 days) appears.
+     A job researched and fitted as an offer keeps that work: nothing is queued twice. No task follows
+     the results: the job's panel shows the next step itself.
    - Applied: Chase if no reply (due in 7 days); an open Review research and apply (or older
-     Apply) task is marked done.
+     Apply) task from before is marked done.
 
 4. Report the printed line in one or two sentences: what was recorded, whether it was linked
    to a getjo job, and the tasks created. If the output says several getjo jobs matched, show

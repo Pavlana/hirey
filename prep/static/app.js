@@ -1602,12 +1602,6 @@
     }
   });
 
-  // A select marked data-autosubmit (the panel's Employer) saves on change.
-  document.addEventListener("change", (e) => {
-    const select = e.target.closest?.("select[data-autosubmit]");
-    if (select?.form) select.form.requestSubmit();
-  });
-
   document.addEventListener("submit", async (e) => {
     const form = e.target.closest("form[data-ajax]");
     if (!form || !window.fetch) return;
@@ -1661,7 +1655,7 @@
         toast(`v${form.elements.version.value} restored as v${reply.version}. The CV it replaced is kept as v${reply.previous}.`,
           reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
       } else if (mode === "draft") {
-        // Draft a reply: the request joins the Applications Assistant box, which waits for the draft.
+        // Paste recruiter message: the request joins the Applications Assistant box, which waits for the draft.
         const thread = document.querySelector(".agent [data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
         form.reset();

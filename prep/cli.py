@@ -102,7 +102,7 @@ from contextlib import closing
 from datetime import date, timedelta
 from pathlib import Path
 
-from prep import (assistant, config, criteria, cvcheck, cvedit, cveval, cvfile, cvpdf, db, explainers, getjo, learn,
+from prep import (assistant, config, criteria, cvcheck, cvedit, cveval, cvfile, cvpdf, db, decision, explainers, getjo, learn,
                   learnnotes, research, search, tailorplan)
 from prep.config import ConfigError, Settings, load_settings, worker_task, worker_tasks
 
@@ -294,8 +294,6 @@ def cmd_applied(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
         print("\n".join(f"    {_task_line(t)}" for t in tasks))
     if queued:
         print(f"  queued for the agent: {_kinds(queued)} (run /research)")
-    if app["status"] == "to_apply":
-        print(f"  a \"{db.REVIEW_TASK[0]}\" task follows once company research and CV fit are both saved")
     return 0
 
 
@@ -443,16 +441,21 @@ def cmd_learn_notes(args: argparse.Namespace, settings: Settings, conn: sqlite3.
     return 0
 
 
+def _print_decision(settings: Settings, conn: sqlite3.Connection, app: dict) -> None:
+    """The panel's red flags and questions to clarify (decision.for_application): context for an answer or a
+    reply to the recruiter, which may ask them (never the pay one in writing)."""
+    view = decision.for_application(conn, app, _criteria_or_none(settings))
+    print("\nRed flags (the panel's section 1):")
+    print("\n".join(f"  - {x}" for x in view["flags"]) or "  none")
+    print("Questions to clarify on the recruiter call (section 2; pay only spoken, never in writing):")
+    print("\n".join(f"  - {q['text']}" + (" (on the call only)" if q["call_only"] else "") for q in view["questions"]))
+
+
 def _print_notes(conn: sqlite3.Connection, app_id: int) -> None:
     """The notes as context for the agent, with the command that adds to them."""
     notes = db.get_notes(conn, app_id)["notes"]
     print(f"\nNotes (the panel's Notes card; add with: python -m prep.cli notes {app_id} --append, text on stdin):")
     print("\n".join(f"  {line}" for line in notes.splitlines()) if notes else "  none")
-
-
-def has_questions_section(notes: str) -> bool:
-    """True when the notes already hold a "Questions to ask" section (a heading or a bold line)."""
-    return bool(re.search(r"^\s*(?:#+\s*|\*\*)?questions to ask\b", notes, re.IGNORECASE | re.MULTILINE))
 
 
 def cmd_comments(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
@@ -926,10 +929,6 @@ def _research_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     for r in sorted(claimed, key=lambda r: db.REQUEST_KINDS.index(r["kind"])):  # the fit before tailoring
         if r["kind"] == "research":
             _print_research_step(conn, settings, private_dir, app_id, slug, bool(r["force"]))
-            if not has_questions_section(db.get_notes(conn, app_id)["notes"]):
-                print(f"  no \"Questions to ask\" yet: after the research, add 3-5 specific to this company and role: "
-                      f"python -m prep.cli notes {app_id} --append <<'NOTES' … NOTES (a \"**Questions to ask**\" line, then "
-                      "a list; never pay)")
             _print_invite_check(settings, conn, app)
             if app.get("getjo_job_id") and (r["force"] or not db.job_briefs(conn, {app["getjo_job_id"]})):
                 _print_brief_step(settings, app["getjo_job_id"], f"#{app_id} (from the job description)")
@@ -1143,7 +1142,6 @@ def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
         raise SystemExit(f"error: no file at {path}")
     profile = research.read_profile(path)
     profile["company"] = profile["company"] or app["company"]
-    mark = _last_task_id(conn)
     app_ids = db.save_company_profile(conn, slug, profile)
     if profile["suggested_tier"]:  # whoever researches sets the tier on this application (per role, not per company)
         db.update_application(conn, app["id"], tier=profile["suggested_tier"])
@@ -1151,7 +1149,6 @@ def _research_save(args: argparse.Namespace, settings: Settings, conn: sqlite3.C
     tier = f", tier {profile['suggested_tier']} set on #{app['id']}" if profile["suggested_tier"] else ""
     print(f"Saved company profile {slug} ({profile['researched_at']}{tier}); "
           f"research done for applications {', '.join(map(str, app_ids))}")
-    _print_review_tasks(conn, mark)
     return 0
 
 
@@ -1193,18 +1190,6 @@ def _research_save_job(args: argparse.Namespace, settings: Settings, conn: sqlit
     print(f"Saved company profile {slug} ({profile['researched_at']})"
           + (f"; research done for applications {', '.join(map(str, app_ids))}" if app_ids else "; no tier set"))
     return 0
-
-
-def _last_task_id(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COALESCE(MAX(id), 0) FROM tasks").fetchone()[0]
-
-
-def _print_review_tasks(conn: sqlite3.Connection, after_id: int) -> None:
-    """Review tasks a save just added (both results are in for an Interested application)."""
-    rows = conn.execute("SELECT * FROM tasks WHERE id > ? AND title = ? ORDER BY id",
-                        (after_id, db.REVIEW_TASK[0]))
-    for t in rows:
-        print(f"  both results in for #{t['application_id']}: added {_task_line(dict(t))}")
 
 
 BRIEF_FORMAT = """\
@@ -1295,7 +1280,7 @@ SCREEN_FORMAT = """  screen (Top 5 gate): put this TOML block before the brief's
     +++
     role_family = "yes"      # the criteria's role family (a hands-on AI-building role)
     level = "yes"            # the criteria's level, judged from the ad (scope, years), not only the title
-    team = "unknown"         # at least the criteria's team size of engineers
+    team = "unknown"         # not a gate: yes = two or more engineers named, no = a team of one, unknown = unclear
     location = "yes"         # the criteria's location rule
     pay = "unknown"          # pass / fail / unknown against the criteria's floor: NEVER write the figure
     builds_agents = "yes"    # builds agents or LLM products (internal customers count)
@@ -1316,9 +1301,14 @@ COMPANY_CHECK_FORMAT = """  company check (once per company; {company} has {stat
 
 
 def _print_screen_steps(settings: Settings, conn: sqlite3.Connection, job_id: str, company: str) -> None:
-    """The Top 5 parts of a brief packet: the screen, and the company check and profile when missing."""
+    """The parts of a brief packet for a job not tracked yet: with a criteria file the Top 5 screen and the
+    company check when missing; always the company research when no fresh profile exists."""
+    if db.find_by_job(conn, job_id):
+        return
     crit = _criteria_or_none(settings)
-    if crit is None or db.find_by_job(conn, job_id):
+    if crit is None:  # no Top 5 gate, but the panel still shows the company research and the CV fit
+        _print_profile_step(settings, conn, job_id, company)
+        _print_job_fit_step(settings, conn, job_id, company)
         return
     print(f"\nTop 5 screen (read the criteria first: {crit.path}; its pay floor is only for comparing, never copy it):")
     print(SCREEN_FORMAT)
@@ -1327,6 +1317,29 @@ def _print_screen_steps(settings: Settings, conn: sqlite3.Connection, job_id: st
             check["interviews"] == "unknown" or check["verdict"] == "unknown"):
         state = "no check yet" if check is None else f"interview style {check['interviews']}, verdict {check['verdict']}"
         print(COMPANY_CHECK_FORMAT.format(company=company, state=state, job=job_id))
+    _print_profile_step(settings, conn, job_id, company)
+    _print_job_fit_step(settings, conn, job_id, company)
+
+
+def _print_job_fit_step(settings: Settings, conn: sqlite3.Connection, job_id: str, company: str) -> None:
+    """The CV fit of a job offer not tracked yet, with its recommendation, when it has none (or a Redo)."""
+    request = next(iter(db.open_briefs(conn, job_id)), {})
+    if db.job_fit(conn, job_id) is not None and not request.get("force"):
+        return
+    private_dir = _private_dir(settings)
+    cv = private_dir / research.CV_FILE
+    print("\nCV fit of this job offer (with the Recommendation section; format in the /research skill's CV fit):")
+    print(f"  CV: {cv} ({'exists' if cv.is_file() else 'MISSING: ask the user for cv.md before the fit check'})")
+    crit = _criteria_or_none(settings)
+    if crit is not None:
+        print(f"  weigh the gaps against the criteria's ranking ({crit.path}); never copy its pay figure")
+    print(f"  file: {research.job_fit_file(private_dir, job_id, db.company_slug(company))}")
+    print(f"  then: python -m prep.cli fit save --job {job_id}")
+
+
+def _print_profile_step(settings: Settings, conn: sqlite3.Connection, job_id: str, company: str) -> None:
+    """The company research step of a brief packet for a job not tracked yet, when no fresh profile exists
+    (one profile per company: its other jobs reuse it)."""
     slug = db.company_slug(company)
     fresh, _ = research.freshness(db.company_profile(conn, slug), settings.research_max_age_days, db.today_iso())
     if fresh != "fresh":
@@ -1369,7 +1382,9 @@ def _brief_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
           + (f" (application #{tracked['id']})" if tracked else " (new offer, not tracked)"))
     print(f"  location: {shown['location'] or '–'}" + (f" · link: {shown['url']}" if shown["url"] else ""))
     request = next((r for r in db.open_briefs(conn, job_id)), {})
-    if db.job_briefs(conn, {job_id}) and request.get("screen_asked") and not request.get("force"):
+    if db.job_briefs(conn, {job_id}) and request.get("fit_asked") and not request.get("force"):
+        print("  the brief is saved: write only the parts below (the CV fit; the screen too if it is listed)")
+    elif db.job_briefs(conn, {job_id}) and request.get("screen_asked") and not request.get("force"):
         print("  the brief is saved: write only the screen (a brief save with the +++ block and nothing after it)")
     else:
         if db.job_briefs(conn, {job_id}):
@@ -1383,6 +1398,11 @@ def _brief_next(args: argparse.Namespace, settings: Settings, conn: sqlite3.Conn
 
 
 def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """fit save APP: an application's CV fit; fit save --job ID: a job offer's, before it is tracked."""
+    if (args.job is None) == (args.app_id is None):
+        raise ValueError("give an application id or --job, one of them")
+    if args.job:
+        return _fit_save_job(args, settings, conn)
     app = db.get_application(conn, args.app_id)
     if app is None:
         raise LookupError(f"no application with id {args.app_id}")
@@ -1391,12 +1411,36 @@ def cmd_fit(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connecti
     if not path.is_file():
         raise SystemExit(f"error: no file at {path}")
     fit = research.read_fit(path)
-    mark = _last_task_id(conn)
-    new_gaps = db.save_cv_fit(conn, args.app_id, fit["score"], fit["gaps"], str(path), fit["checked_at"])
+    new_gaps = db.save_cv_fit(conn, args.app_id, fit["score"], fit["gaps"], str(path), fit["checked_at"],
+                              fit["recommendation"])
     log.info("cv fit saved for application %s", args.app_id)  # never the gaps or the CV
     print(f"Saved CV fit for #{args.app_id}: {fit['score']}/5, {len(fit['gaps'])} gaps "
-          f"({len(new_gaps)} new in the gaps list)")
-    _print_review_tasks(conn, mark)
+          f"({len(new_gaps)} new in the gaps list)" + _verdict_note(fit))
+    return 0
+
+
+def _verdict_note(fit: dict) -> str:
+    rec = fit["recommendation"]
+    return f"; recommendation: {research.VERDICTS[rec['verdict']]}" if rec else "; no recommendation section"
+
+
+def _fit_save_job(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connection) -> int:
+    """The CV fit of a job offer not tracked yet (db.save_job_fit). A tracked job's application takes it too."""
+    company = _job_company(settings, conn, args.job)
+    slug = db.company_slug(company)
+    path = (Path(args.file).expanduser() if args.file
+            else research.job_fit_file(_private_dir(settings), args.job, slug))
+    if not path.is_file():
+        raise SystemExit(f"error: no file at {path}")
+    fit = research.read_fit(path)
+    db.save_job_fit(conn, args.job, fit["score"], fit["gaps"], str(path), fit["checked_at"], fit["recommendation"])
+    tracked = db.find_by_job(conn, args.job)
+    if tracked or _criteria_or_none(settings) is None or args.job in db.job_screens(conn):
+        _screen_done(conn, args.job)  # a fit-only pass (the brief and screen are in) closes the request
+    if tracked and db.adopt_job_fit(conn, tracked["id"]):
+        print(f"  application #{tracked['id']} takes it over")
+    log.info("cv fit saved for a job offer")  # never the gaps or the CV
+    print(f"Saved CV fit for job {args.job}: {fit['score']}/5, {len(fit['gaps'])} gaps" + _verdict_note(fit))
     return 0
 
 
@@ -1526,8 +1570,9 @@ def cmd_plan(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connect
         text = tailorplan.check(path.read_text(encoding="utf-8"))
         asked = tailorplan.questions(text)
         note = "" if sys.stdin.isatty() else sys.stdin.read().strip()
-        note = note or (f"Tailoring plan ready ({len(asked)} question{'s' if len(asked) != 1 else ''}). "
-                        "Read it in the panel's Tailoring plan card, edit or answer there, then press Write the CV.")
+        asks = f" ({len(asked)} question{'s' if len(asked) != 1 else ''})" if asked else ""
+        note = note or (f"Tailoring plan ready{asks}. "
+                        "Read it in the panel's Tailoring plan card, edit it there if needed, then press Write the CV.")
         db.save_tailor_plan(conn, app["id"], str(path), note, args.to)
         log.info("tailoring plan saved for application %s", app["id"])  # never the plan
         print(f"Saved the tailoring plan for #{app['id']} ({path.name}, {len(asked)} questions); the note is in the thread.")
@@ -1806,6 +1851,7 @@ def _thread_show(args: argparse.Namespace, settings: Settings, conn: sqlite3.Con
     print(f"Comments ({len(found)}, newest first; refs for comments amend/remove):")
     print("\n".join(_comment_line(c) for c in found) or "  none")
     _print_notes(conn, app["id"])
+    _print_decision(settings, conn, app)
 
     _print_messages(db.thread(conn, app["id"]), f"Messages about #{app['id']}", conn)
     _print_claim(args, claimed, db.pending_messages(conn, app["id"]))
@@ -2128,7 +2174,7 @@ INVITE_SCREEN = """  The screen (Top 5 gate) goes on stdin with the job named, e
   file, unknown when the message does not say:
     role_family = "yes"      # the criteria's role family
     level = "unknown"        # the criteria's level, from the message (a lead or staff role is no)
-    team = "unknown"         # at least the criteria's team size of engineers (a team of one is no)
+    team = "unknown"         # not a gate: yes = two or more engineers named, no = a team of one, unknown = unclear
     location = "yes"         # the criteria's location rule
     pay = "unknown"          # pass / fail / unknown against the criteria's floor: NEVER write the figure
     builds_agents = "unknown"
@@ -2801,8 +2847,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("fit", help="CV fit results (used by /research)")
     fsub = p.add_subparsers(dest="fit_cmd", required=True)
-    f = fsub.add_parser("save", help="store the CV fit from fit/<app-id>-<slug>.md")
-    f.add_argument("app_id", type=int)
+    f = fsub.add_parser("save", help="store the CV fit from fit/<app-id>-<slug>.md (or a job offer's, --job)")
+    f.add_argument("app_id", type=int, nargs="?")
+    f.add_argument("--job", help="a job offer not tracked yet: its getjo job id (fit/job-<job>-<slug>.md)")
     f.add_argument("--file", help="default: private_dir/fit/<app-id>-<slug>.md")
     p.set_defaults(func=cmd_fit)
 

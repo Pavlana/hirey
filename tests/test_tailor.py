@@ -248,7 +248,7 @@ class DashboardTest(WebTestCase):
             for kind in db.RESEARCH_KINDS:
                 db.finish_requests(conn, [self.MDE], kind)
         panel = self.panel()
-        self.assertIn('data-jump="card-tailor">CV v1</a>', panel)
+        self.assertNotIn(">Tailor CV</button>", panel)  # the card is right under section 3's buttons
         self.assertIn(f"/research/file?app=8&amp;kind=tailor&amp;v=1", panel)
         self.assertIn(self.path.name, panel)
         self.assertIn(">New from cv.md</button>", panel)

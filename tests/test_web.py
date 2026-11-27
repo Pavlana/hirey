@@ -466,7 +466,7 @@ class OfferPanelTest(WebTestCase):
         for part in ("Wonka Systems", "Senior Python Engineer", '<span class="badge s6">7</span>', "London / Remote",
                      "seen 18 Jan", "Job posting ↗", "expires in 4 days", 'href="/?view=offers" aria-label="Close"'):
             self.assertIn(part, head)
-        shortcuts = panel[panel.index('class="shortcuts"'):panel.index('class="panel-brief"')]
+        shortcuts = panel[panel.index('class="decide decide-apply"'):]
         self.assertIn('action="/offers/interested" class="inline" data-ajax="interested"', shortcuts)
         self.assertIn(f'name="return" value="{h(job_url(WONKA))}"', shortcuts)
         self.assertIn('data-skip-field="job_id" data-skip-action="/offers/skip"', shortcuts)
@@ -475,12 +475,13 @@ class OfferPanelTest(WebTestCase):
         self.assertIn("<h4>About the team</h4><p>A fictional team building made-up tools.\nPython, Postgres and AWS.</p>",
                       description)
         self.assertIn("<h4>What you will do</h4><ul><li>Build services</li><li>Review code</li></ul>", description)
-        self.assertIn("Writing brief…", panel)
-        self.assertLess(panel.index('class="shortcuts"'), panel.index('class="panel-brief"'))  # decide at the top
+        self.assertIn("Researching…", panel)
+        self.assertLess(panel.index('class="decide decide-company"'), panel.index('class="decide decide-apply"'))
+        self.assertLess(panel.index('class="panel-brief"'), panel.index('class="decide decide-questions"'))  # in More
         self.assertIn(f'data-job="{WONKA}" data-key="j:{WONKA}" data-company="wonka systems" data-role="senior python engineer" class="is-focus"', body)
         about = body[body.index('class="agent-about"'):]
         self.assertIn("the whole search", about[:400])  # opening only shows it; the row link ticks it
-        self.assertIn(f'data-sel="j:{WONKA}" aria-label="Ask the assistant about Wonka Systems — Senior Python Engineer"', head)
+        self.assertNotIn(f'data-sel="j:{WONKA}"', head)  # the row's tick does it; the header has none
         self.assertIn('data-view="offers" aria-current="true"', body)  # the list stays New offers
 
     def test_description_is_escaped_and_missing_ones_say_so(self) -> None:
@@ -866,8 +867,6 @@ class TasksTest(WebTestCase):
     def test_done_and_reopen(self) -> None:
         with self.conn() as conn:
             task = db.add_task(conn, "Mock system design", "drill", "2026-01-19", 1)
-        panel = self.get("/?app=1")[2]
-        self.assertIn('<span class="badge s4 overdue">2026-01-19</span>', panel)
         status, headers, _ = self.post("/tasks/done", {"task_id": str(task), "return": "/?app=1"})
         self.assertEqual((status, headers["Location"]), (303, "/?app=1&msg=task_done"))
         with self.conn() as conn:
@@ -982,10 +981,14 @@ class ApplicationsPageTest(WebTestCase):
         for part in ("Wayne Analytics", "AI Platform Engineer", ">coding interview</span>", 'class="steps"',
                      "5 days in this stage", "Job posting ↗"):
             self.assertIn(part, head)
-        order = [panel.index(s) for s in ('class="panel-comments"', 'class="shortcuts"', 'class="panel-tasks"',
+        order = [panel.index(s) for s in ('class="decide decide-company"', 'class="decide decide-questions"',
+                                           'class="decide decide-apply"', 'class="panel-quiet"', 'class="panel-comments"',
                                            'class="history"')]
         self.assertEqual(order, sorted(order))
-        comments = panel[panel.index('class="panel-comments"'):panel.index('class="shortcuts"')]
+        for gone in ('class="panel-tasks"', 'class="shortcuts"', "Just write it", "Draft a reply", 'name="employer_kind"',
+                     'data-sel="a:3"'):
+            self.assertNotIn(gone, panel)  # no Tasks, no Just write it, Draft a reply, Employer select or header tick
+        comments = panel[panel.index('class="panel-comments"'):panel.index('class="history"')]
         self.assertIn("Newer note", comments)  # the latest only
         self.assertNotIn("Older note", comments)
         self.assertIn("1 earlier comment; ask the assistant to list them.", comments)
@@ -1015,8 +1018,9 @@ class ApplicationsPageTest(WebTestCase):
     def test_shortcuts_for_interested(self) -> None:
         app_id = self.app_id("interested")
         panel = self.panel(self.get(f"/?app={app_id}")[2])
-        shortcuts = panel[panel.index('class="shortcuts"'):panel.index('class="panel-tasks"')]
-        labels = ["Researching…", "Checking CV fit…", "Tailor CV", "Mark applied", ">Skip<"]
+        shortcuts = panel[panel.index('class="decide decide-apply"'):panel.index('class="panel-quiet"')]
+        labels = ["Tailor CV", "Mark applied", ">Skip<"]
+        self.assertIn("Researching…", panel[:panel.index('class="decide decide-questions"')])
         self.assertEqual([shortcuts.index(l) for l in labels], sorted(shortcuts.index(l) for l in labels))
         self.assertIn('action="/applications/apply" class="inline" data-ajax="applied"', shortcuts)
         self.assertIn(f'href="/applications/skip?app={app_id}&amp;return=', shortcuts)
@@ -1026,8 +1030,7 @@ class ApplicationsPageTest(WebTestCase):
 
     def test_shortcuts_after_applying(self) -> None:
         panel = self.panel(self.get("/?app=3")[2])  # Wayne, coding interview
-        shortcuts = panel[panel.index('class="shortcuts"'):panel.index('class="panel-tasks"')]
-        self.assertIn("Research company", shortcuts)
+        shortcuts = panel[panel.index('class="decide decide-apply"'):panel.index('class="panel-quiet"')]
         self.assertIn("Applied · ", shortcuts)
         self.assertNotIn("Mark applied", shortcuts)
         self.assertNotIn("data-skip", shortcuts)
@@ -1084,16 +1087,10 @@ class ApplicationsPageTest(WebTestCase):
         self.assertIn("skipped: location — On-site only", panel)
         self.assertIn("Globex Labs", self.table(self.get("/?closed=1")[2]))
 
-    def test_task_tick(self) -> None:
+    def test_no_tasks_in_the_panel(self) -> None:
         panel = self.panel(self.get("/?app=3")[2])
-        tasks = panel[panel.index('class="panel-tasks"'):]
-        self.assertIn('action="/tasks/done" class="inline" data-ajax="tick"', tasks)
-        self.assertIn('<button class="tick" aria-label="Mark done: ', tasks)
-        task_id = int(tasks.split('name="task_id" value="')[1].split('"')[0])
-        status, headers, _ = self.post("/tasks/done", {"task_id": str(task_id), "return": "/?app=3"})
-        self.assertEqual(headers["Location"], "/?app=3&msg=task_done")
-        with self.conn() as conn:
-            self.assertEqual(db.get_task(conn, task_id)["status"], "done")
+        self.assertNotIn('action="/tasks/done"', panel)  # the next step is the panel itself; tasks stay in /today
+        self.assertNotIn("Tasks <span", panel)
 
     def test_results_cards(self) -> None:
         private = self.tmp / "private"
@@ -1106,7 +1103,6 @@ class ApplicationsPageTest(WebTestCase):
                 db.save_tailored_cv(conn, 3, str(path), f"v{n}")
             db.record_cv_sent(conn, 3, "CV_WayneAnalytics_AIEng_200126_1")
         panel = self.panel(self.get("/?app=3")[2])
-        self.assertIn('data-jump="card-tailor">CV v2 · sent v1</a>', panel)
         card = panel[panel.index('id="card-tailor"'):]
         self.assertLess(card.index("_200126_2.md"), card.index("_200126_1.md"))  # newest first
         self.assertNotIn("older-versions", card)  # the latest and the sent one: nothing to fold
@@ -1155,6 +1151,7 @@ class ApplicationsPageTest(WebTestCase):
         with self.conn() as conn:
             db.finish_requests(conn, [app_id], "research")
             db.finish_requests(conn, [app_id], "cv_fit")
+            db.cancel_brief(conn, db.get_application(conn, app_id)["getjo_job_id"] or "")
         self.assertFalse(json.loads(self.get(f"/applications/thread?app={app_id}")[2])["pending"])
 
     def test_no_response_check_runs_on_a_request(self) -> None:
@@ -1176,10 +1173,10 @@ class ApplicationsPageTest(WebTestCase):
 
 class SharedDatabaseTest(WebTestCase):
     def test_cli_write_visible_to_next_request(self) -> None:
-        self.assertNotIn("Call the recruiter", self.get("/?app=1")[2])
-        code, _, _ = self.run_cli("task", "add", "Call the recruiter", "--kind", "admin", "--app", "1")
+        self.assertNotIn("Called the recruiter", self.get("/?app=1")[2])
+        code, _, _ = self.run_cli("comment", "1", "Called the recruiter")
         self.assertEqual(code, 0)
-        self.assertIn("Call the recruiter", self.get("/?app=1")[2])
+        self.assertIn("Called the recruiter", self.get("/?app=1")[2])
 
         code, _, _ = self.run_cli("applied", "--job-id", "ashby:initech-cloud:x1")
         self.assertEqual(code, 0)

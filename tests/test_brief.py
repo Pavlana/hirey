@@ -105,7 +105,7 @@ class PageTest(WebTestCase):
     def test_opening_a_panel_queues_its_brief_and_polls(self) -> None:
         panel = self.panel(job_url(WONKA))
         self.assertIn("data-busy", panel[:200])
-        self.assertIn("Writing brief…", panel)
+        self.assertIn("Researching…", panel)  # a job offer: no Write brief button, it is queued on opening
         self.assertIn('class="description is-clamped" data-clamp', panel)
         status, _, out = self.get(f"/applications/thread?job={WONKA}")
         self.assertIn('"pending": true', out)
@@ -118,7 +118,10 @@ class PageTest(WebTestCase):
         self.assertIn('<p class="brief-facts" aria-label="Key facts"><span class="fact">hybrid 3 days</span>', panel)
         self.assertIn("<h3>Must-haves</h3><ul><li>5+ years backend or platform work</li>", panel)
         self.assertIn('<details class="original"><summary>Show original</summary>', panel)
-        self.assertIn("Redo brief", panel)
+        self.assertNotIn("Redo brief", panel)  # a job offer's panel: no buttons it does not need
+        self.assertIn("<h4>What the role needs</h4>", panel)
+        self.assertIn("<li>On-call 1 week in 6</li>", panel[:panel.index("decide-more")])  # the brief's red flag
+        self.assertNotIn("How many days a week in the office?", panel)  # the key facts say hybrid 3 days
         self.assertNotIn("data-busy", panel[:200])
 
     def test_brief_is_escaped(self) -> None:
@@ -129,8 +132,14 @@ class PageTest(WebTestCase):
         self.assertIn("&lt;b&gt;x&lt;/b&gt;", panel)
 
     def test_write_and_redo_buttons(self) -> None:
+        with mock.patch.object(assistant, "notify_briefs_in_background") as bg:
+            panel = self.panel(f"/?app={ACME}")  # opening the panel queued the brief of its job, once
+        bg.assert_called_once()
+        self.assertIn("Writing brief…", panel)
+        with self.conn() as conn:
+            db.cancel_brief(conn, ACME_JOB)
         panel = self.panel(f"/?app={ACME}")
-        self.assertIn('action="/offers/brief"', panel)
+        self.assertIn('action="/offers/brief"', panel)  # under More: never queued twice by itself
         self.assertIn("Write brief", panel)
         with mock.patch.object(assistant, "notify_briefs_in_background") as bg:
             status, _, out = self.post("/offers/brief", {"job_id": ACME_JOB}, {**HOST, "Accept": "application/json"})

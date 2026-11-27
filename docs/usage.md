@@ -88,7 +88,7 @@ gitignored.
 | `/stage`   | `python -m prep.cli update ID [--status S [--comment T] [--interview-date D]] [--next-action T [--next-date D]]` | Move an application to a stage (closes the old stage's tasks, adds the new ones); `--next-action` adds a task. Already at that stage: the comment and an interview date are still saved. `/stage` takes a pasted recruiter email, call notes or a one-line message and runs this (plus `comment` / `task add`) itself |
 |            | `python -m prep.cli comment ID "text"`                               | Comment on an application |
 | `/task`    | `python -m prep.cli task add "Title" [--kind K] [--due D]` / `task list` / `task done ID` | Tasks |
-| `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` | Queued company research and CV fit checks: the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` in `private_dir` and saves a summary |
+| `/research` | `python -m prep.cli research next [ID]` / `research queue ID [--kind K] [--redo]` / `research save ID` / `fit save ID` or `fit save --job ID` | Queued company research and CV fit checks (with a recommendation): the agent writes `companies/<slug>.md` and `fit/<id>-<slug>.md` (a job offer: `fit/job-<job>-<slug>.md`) in `private_dir` and saves a summary |
 |            | `python -m prep.cli research block APP [--kind K] --reason R` / `brief block (--job ID \| APP) --reason R` | Mark work the worker cannot do as blocked, with a reason (Workers sidebar, Run history) |
 |            | `python -m prep.cli brief next` / `brief save (--job ID \| APP)` / `brief show (--job ID \| APP)` / `brief queue (--job ID \| APP) [--redo]` | Job briefs: claim the oldest waiting one, store it (text on stdin), print it, or ask for one |
 |            | `python -m prep.cli screen save --job ID` / `company check --job ID` / `research save --job ID` | Top 5: a job's screen, its company's check and profile (TOML or file; [search.md](reference/search.md)) |
@@ -221,7 +221,7 @@ from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
 ![A worker's popover with Stop](screenshots/workers-popover-stop.png)
 ![Run history](screenshots/run-history.png)
 
-### Draft a reply (recruiter messages)
+### Replies to recruiters
 
 Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies.
 
@@ -230,14 +230,11 @@ Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the repl
   shown with its LinkedIn invitation card; otherwise the reply asks for what is missing. The reply is
   editable before Copy.
 
-- **From the form.** Open the application (or the job offer), unfold **Draft a reply**, pick Reply, Follow-up or Thank-you note and LinkedIn or Email,
-  and add a line on what to say ("free Tue/Wed after 2, ask about hybrid"). Paste the recruiter's
-  message, or leave the box empty: a reply then uses the latest message sent about this application,
-  named under the box ("Left empty, a reply uses your message of Nov 26, 14:02: '…'"). With no such
-  message, a reply needs the paste. A follow-up or a thank-you note needs none.
+- **A follow-up or a thank-you note.** Ask in the Applications Assistant box in plain words ("write a
+  thank-you note to Sam"), with the job ticked; the reply is the draft to copy.
 
-A draft about an application appears in that application's panel (the latest draft, under the
-shortcuts), editable, with **Copy** (email: **Copy subject** and **Copy body**); the box shows one line
+A draft about an application appears in that application's panel (the latest draft, under Questions to
+clarify), editable, with **Copy** (email: **Copy subject** and **Copy body**); the box shows one line
 pointing there. A draft about no application (an invitation that names no job yet) shows under
 **Paste recruiter message**, editable too; the box keeps it folded. The Applications Assistant box is
 for conversation only: it has no drafting controls. Edit it, copy it and send
@@ -246,7 +243,6 @@ recorded on the application; a rejection or anything else is only proposed in th
 draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
 /reply in any Claude Code session.
 
-![Draft a reply form](screenshots/draft-reply-form.png)
 ![A LinkedIn draft with Copy](screenshots/draft-linkedin.png)
 ![An email draft with Copy subject and Copy body](screenshots/draft-email.png)
 

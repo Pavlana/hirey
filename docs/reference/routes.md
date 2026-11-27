@@ -63,7 +63,6 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | POST | `/applications/skip` | Skip an Interested application with a reason | [applications.md](applications.md#mark-applied-and-skip) |
 | POST | `/applications/research` | queue research, CV fit or tailored CV (Redo sets `force`) | [research.md](research.md) |
 | POST | `/applications/notes` | save the Notes card (`app_id`, `stamp`, `notes`); stale stamp is a 400 | [applications.md](applications.md#notes) |
-| POST | `/applications/employer` | set `employer_kind`: product, client or empty for unknown | [dashboard.md](dashboard.md#the-application-panel) |
 | POST | `/tasks/done` | tick a panel task done | [applications.md](applications.md#tasks) |
 | POST | `/tasks/reopen` | Undo a ticked task | [applications.md](applications.md#tasks) |
 
@@ -84,7 +83,6 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
 | POST | `/applications/message` | store a message (`about` targets) and ping `/ask` | [assistants.md](assistants.md#sending-a-message) |
-| POST | `/applications/draft` | Draft a reply request, pinged to the comms route | [assistants.md](assistants.md#draft-a-reply-communication-worker) |
 | POST | `/applications/invite` | Paste recruiter message (`pasted`): an invitation request, pinged to the comms route | [assistants.md](assistants.md#invitations) |
 | POST | `/applications/resend` | put a waiting message back to pending and ping again | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/cancel` | cancel one waiting message | [assistants.md](assistants.md#resend-and-cancel) |

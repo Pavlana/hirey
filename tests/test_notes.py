@@ -106,7 +106,7 @@ class NotesWebTest(IsolatedTestCase):
 
     def test_panel_shows_results_with_only_notes(self) -> None:
         body = self.get(f"/?app={self.app}")
-        self.assertIn('<section class="panel-results"><h3>Results</h3>', body)
+        self.assertIn('<div class="panel-quiet"><section class="artifact notes-card"', body)  # quiet, after section 3
         self.assertIn('id="card-notes"', body)
         self.assertIn("<strong>Recruiter</strong> call<br>&lt;script&gt;", body)
         self.assertNotIn("<script>alert", body)
@@ -199,7 +199,6 @@ class NotesCliTest(IsolatedTestCase):
         self.assertTrue(notes.startswith("User line\n\n**Agent · "))
         self.assertIn("Interviewer: a staff engineer", notes)
         self.assertIn("- How is on-call shared?", notes)
-        self.assertTrue(cli.has_questions_section(notes))
 
     def test_append_pay_refused(self) -> None:
         code, _, err = self.run_cli("notes", str(self.app), "--append", "Budget £100")
@@ -215,10 +214,6 @@ class NotesCliTest(IsolatedTestCase):
         self.assertEqual(code, 0)
         self.assertIn("Notes (the panel's Notes card", out)
         self.assertIn("  User line", out)
-
-    def test_questions_section_detection(self) -> None:
-        self.assertTrue(cli.has_questions_section("x\n## Questions to ask\n- a"))
-        self.assertFalse(cli.has_questions_section("I have questions to ask later"))
 
 
 if __name__ == "__main__":

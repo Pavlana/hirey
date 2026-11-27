@@ -12,6 +12,8 @@ private Markdown files and saves a summary into prep.db.
 - [Claiming work and the packet](#claiming-work-and-the-packet)
 - [Company profiles](#company-profiles)
 - [CV fit](#cv-fit)
+  - [The recommendation](#the-recommendation)
+  - [A job offer's CV fit](#a-job-offers-cv-fit)
 - [Tier](#tier)
 - [Blocked work](#blocked-work)
 - [Job briefs](#job-briefs)
@@ -38,10 +40,15 @@ Requests live in `agent_requests`, one row per application and kind.
 
 Requests come from:
 
+- Opening an open application's panel (`web._research_on_open`): research and a CV fit, once each when
+  missing (never when one was ever asked for the application, `db.requested_kinds`; no research when the
+  company has a profile or another application at it has research queued). See
+  [dashboard.md](dashboard.md#the-application-panel).
 - Entering Interested (`db.stage_tasks`): an offer's Interested button, `/applied --status to_apply`
-  and any move to Interested all queue research and a CV fit (the CV fit only when the application
-  has none). See [applications.md](applications.md).
-- The side panel's Research company / CV fit buttons (`POST /applications/research`).
+  and any move to Interested queue research when the company has no profile and a CV fit when the
+  application has none and its job has no offer fit to take over (`db.adopt_job_fit`). See
+  [applications.md](applications.md).
+- The side panel's Redo buttons and Tailor CV (`POST /applications/research`).
 - `python -m prep.cli research queue`.
 
 Each new request pings whoever handles research (the Research worker when set, else the
@@ -67,9 +74,9 @@ The `/research` skill loops on `python -m prep.cli research next`.
   [search.md](search.md#recruiters-invitations).
 - Job brief: a "Job brief" step when a tracked job has no brief, or on Redo
   (see [Job briefs](#job-briefs)).
-- Notes: the application's notes are printed as context. After company research the agent appends
-  "Questions to ask" when the notes have none (`cli.has_questions_section`); see
-  [applications.md](applications.md).
+- Notes: the application's notes are printed as context ([applications.md](applications.md)). The questions
+  for the recruiter call are the panel's, not the notes'
+  ([dashboard.md](dashboard.md#red-flags-and-questions)).
 
 ## Company profiles
 
@@ -79,7 +86,13 @@ The `/research` skill loops on `python -m prep.cli research next`.
 - `python -m prep.cli research save` reads it into `company_profiles` (what it does, sector, size,
   London/remote, recognition, funding, sources, suggested tier and reason). A hand edit followed by a
   save updates the summary.
-- A company save closes the research requests of every application at that company.
+- For the job's panel, all optional and never pay (`db.check_no_pay`): `employer_kind` (product or
+  client), one line each on the `engineering_team` and the `interview_style`, `red_flags` and
+  `call_questions` (lists of at most 6; the questions are recruiter-call level, never technical, and the
+  panel uses at most 2).
+- A company save closes the research requests of every application at that company and sets
+  `applications.employer_kind` where it is unknown (a kind already set is kept). The panel has no
+  employer control; `update ID --employer-kind` still changes it.
 - Something new about the company found while answering in the Applications Assistant box also goes
   into the file, then `research save`.
 
@@ -91,9 +104,50 @@ The `/research` skill loops on `python -m prep.cli research next`.
 - The fit save adds its gaps to `gaps` (session "cv fit", `gaps.application_id`), skipping any gap
   already open with the same text (ignoring case and spacing). These gaps get no drill task until a
   session or `gap add` names them; see [practice.md](practice.md).
-- The CV fit only scores. Nothing is edited there; tailoring is a separate request.
-- When company research and the CV fit are both saved for an application still in Interested,
-  `db.review_task` adds "Review research and apply"; see [applications.md](applications.md).
+- The CV fit only scores and recommends. Nothing is edited there; tailoring is a separate request.
+- No task follows the results (the "Review research and apply" task was retired on 27 Nov 2026): the
+  panel shows the next step itself.
+
+### The recommendation
+
+The fit file's `## Recommendation` section, written by the Research worker with the criteria file open,
+is parsed by `research.read_recommendation` into `cv_fits.recommendation` (JSON) and shown at the top of
+the job's panel ([dashboard.md](dashboard.md#the-application-panel)):
+
+```
+## Recommendation
+Verdict: Stretch: apply only if cheap — one sentence why.
+### Gaps that matter less
+- a gap: why it is soft
+### Gaps that are real
+- a gap: why it matters, how it may show up in the interview
+### In its favour (by the criteria)
+### What would decide it
+### If you apply
+### What the role needs
+- ✓ a must-have, a few plain words   (~ partly, ✗ not yet)
+```
+
+- The verdict is Apply, Stretch (shown "Stretch: apply only if cheap") or Skip (`research.VERDICTS`); a
+  section without one is refused. Parts are matched by their first words, at most 5 bullets each.
+- The skill weighs the gaps against the criteria's ranking; the gap count alone never decides it. Claims
+  trace to cv.md or the facts bank, as in the fit; pay is refused.
+- "What the role needs" bullets start with a mark (`research.read_need`: ✓ have, ~ partly, ✗ not yet; a
+  bullet without one has no mark). The panel shows them as section 1's checklist, not in the recommendation.
+- A fit file without the section saves as before (no recommendation).
+- The panel shows every fit out of 10, as the lists do (`search.fit_on_ten`: the 1-5 doubled); the 1-5 stays
+  in the fit file and `cv_fits`.
+
+### A job offer's CV fit
+
+- A job offer not tracked yet gets its CV fit, recommendation included, when its panel first opens: the
+  brief packet prints "CV fit of this job offer" (`cli._print_job_fit_step`) with
+  `private_dir/fit/job-<job>-<slug>.md` (`research.job_fit_file`) and `fit save --job ID`.
+- `db.save_job_fit` stores it in `job_fits`, keyed by the job id; no application is made and its gaps
+  wait. An offer briefed before job fits gets its brief request queued again once for the fit
+  (`db.queue_job_fit`, `brief_requests.fit_asked`).
+- Interested, or the first opening of the application's panel, copies it to `cv_fits` with its gaps
+  (`db.adopt_job_fit`): no second fit.
 
 ## Tier
 

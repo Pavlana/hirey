@@ -115,30 +115,12 @@ class StorageTest(ResendCancelBase):
 
 
 class DashboardTest(ResendCancelBase):
-    def test_form_in_panels_and_box(self) -> None:
+    def test_no_draft_form_and_no_route(self) -> None:
         body = self.get(f"/?app={ACME}")[2]
-        self.assertEqual(body.count('action="/applications/draft"'), 1)  # the panel only: the box is for conversation
-        self.assertIn(f'<input type="hidden" name="app_id" value="{ACME}">', body.split('action="/applications/draft"')[1])
-        self.assertIn('name="channel" value="linkedin" checked', body)
-
-    def test_post_stores_and_routes_to_comms(self) -> None:
-        self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("comms", 72),)})
-        status, reply = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "reply", "channel": "email",
-                                                               "pasted": PASTED, "notes": "ask about hybrid"})
-        self.assertEqual(status, 200, reply)
-        with self.conn() as conn:
-            msg = db.thread(conn)[-1]
-        self.assertEqual((msg["comms"], msg["channel"], msg["application_id"]), ("reply", "email", ACME))
-        assistant.notify_message_in_background.assert_called_once_with(self.settings, ACME, msg["id"], job=False,
-                                                                        kind="comms", seq=72)
-        self.assertIn("→ Comms worker", reply["html"])
-        self.assertIn('class="msg-channel msg-channel-email">Email</span>', reply["html"])
-
-    def test_post_is_validated(self) -> None:
-        for form in ({"comms": "reply", "channel": "email", "pasted": ""}, {"comms": "x", "channel": "email", "pasted": "a"},
-                     {"comms": "reply", "channel": "sms", "pasted": "a"}):
-            with self.subTest(form=form):
-                self.assertEqual(self.post_json("/applications/draft", form)[0], 400)
+        self.assertNotIn('action="/applications/draft"', body)  # a follow-up is asked in the box in plain words
+        self.assertNotIn("Draft a reply", body)
+        self.assertEqual(self.post("/applications/draft", {"app_id": str(ACME), "comms": "reply",
+                                                           "channel": "email", "pasted": PASTED})[0], 404)
 
     def test_draft_shows_in_the_panel_editable_and_escaped(self) -> None:
         with self.conn() as conn:
@@ -260,20 +242,6 @@ class FromThreadTest(ResendCancelBase):
             with self.assertRaises(ValueError):
                 db.add_draft_request(conn, None, "reply", "email", PASTED, source_id=src)  # one or the other
 
-    def test_draft_source_is_the_latest_plain_message_on_that_subject(self) -> None:
-        with self.conn() as conn:
-            self.assertIsNone(db.draft_source(conn, ACME))
-            first = db.add_message(conn, ACME, "First paste")
-            latest = db.add_message(conn, ACME, "Second paste")
-            db.add_draft_request(conn, ACME, "reply", "email", PASTED)  # a draft request is never the source
-            general = db.add_message(conn, None, "General question")
-            job = db.add_message(conn, None, "About the offer", job_id=GLOBEX_JOB)
-            self.assertEqual(db.draft_source(conn, ACME)["id"], latest)
-            self.assertEqual(db.draft_source(conn)["id"], general)
-            self.assertEqual(db.draft_source(conn, job_id=GLOBEX_JOB)["id"], job)
-            db.cancel_message(conn, latest)
-            self.assertEqual(db.draft_source(conn, ACME)["id"], first)
-
     def test_pay_guard_reads_the_source(self) -> None:
         with self.conn() as conn:
             plain = db.add_draft_request(conn, None, "reply", "email", source_id=db.add_message(conn, ACME, PASTED))
@@ -291,30 +259,6 @@ class FromThreadTest(ResendCancelBase):
         body = self.get("/")[2]
         self.assertNotIn("/applications/draft-from", body)
         self.assertNotIn("Draft reply ·", body)
-
-    def test_empty_form_uses_the_named_message(self) -> None:
-        with self.conn() as conn:
-            src = db.add_message(conn, ACME, "Hi Sam, thanks for applying. A call on Tuesday?")
-        body = self.get(f"/?app={ACME}")[2]
-        form = body.split('action="/applications/draft"')[-1]  # the panel's
-        self.assertIn(f'name="source_id" value="{src}"', form)
-        self.assertIn("Left empty, a reply uses your message of", form)
-        self.assertIn("“Hi Sam, thanks for applying. A call on Tuesday?”", form)
-        with self.conn() as conn:
-            db.add_message(conn, ACME, "A newer question")  # sent after the page showed the hint
-        status, reply = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "reply", "channel": "email",
-                                                               "pasted": "", "source_id": str(src)})
-        self.assertEqual(status, 200, reply)
-        with self.conn() as conn:
-            self.assertEqual(db.get_message(conn, db.thread(conn)[-1]["id"])["source_id"], src)
-
-    def test_empty_form_without_a_message_asks_for_the_paste(self) -> None:
-        body = self.get(f"/?app={ACME}")[2]
-        self.assertNotIn("Left empty, a reply uses", body)
-        status, _ = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "reply", "channel": "email"})
-        self.assertEqual(status, 400)
-        status, _ = self.post_json("/applications/draft", {"app_id": str(ACME), "comms": "chase", "channel": "email"})
-        self.assertEqual(status, 200)  # a follow-up needs no message
 
     def test_reply_show_prints_the_source(self) -> None:
         with self.conn() as conn:

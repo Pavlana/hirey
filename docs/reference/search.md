@@ -49,7 +49,10 @@ flowchart TD
   made-up values. Without the file, New offers is the plain list with a note that Top 5 is off.
 - Plain code reads (`criteria.parse`):
   - the numbered items under the `## Gates` heading, `N. **Name**: text`. Known names: Company,
-    Sector, Interviews, Role family, Level, Team, Location, Pay. A gate left out of the file is off.
+    Sector, Interviews, Role family, Level, Location, Pay. A gate left out of the file is off. **Team**
+    is never a gate, whatever the file says (`criteria.NOT_GATES`, since 27 Nov 2026): a small team can
+    still be interesting; a team of one or an unclear team is a red flag and a question in the job's
+    panel ([dashboard.md](dashboard.md#red-flags-and-questions)).
   - Level's `Out: a, b, c.` list: title words that fail the level gate.
   - Location's `<City> on-site or hybrid` and `remote within the <Region>`.
   - the numbered items under `## Ranking`, best first, matched to signals by their words (evals,
@@ -95,6 +98,9 @@ flowchart TD
 - Written with the brief: a `+++` TOML block before the brief's key facts line in `brief save`, or
   alone with `screen save`. Any other field or value is refused.
 - A missing field is unknown.
+- `team`: `yes` two or more engineers named, `no` a team of one, `unknown` unclear. It is kept for the
+  panel's red flags and questions, never for the gate; a screen written before (where `no` meant under
+  the old minimum) no longer filters a job.
 
 ## The gate
 
@@ -107,7 +113,7 @@ unknown.
 | sector, interviews | company check | company check |
 | level | an Out word in the title: no; "Senior": yes | `level` |
 | location | a named city: yes; remote with a named region: yes; bare remote or empty: unknown; else no | `location` |
-| role family, team | – | `role_family`, `team` |
+| role family | – | `role_family` |
 | pay | – | `pay`: fail is no |
 
 A job's state (`search.evaluate`):

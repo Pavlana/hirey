@@ -95,8 +95,8 @@ class SelTest(WebTestCase):
     def test_panel_and_my_cv_ticks(self) -> None:
         body = self.get(url(app=str(ACME)))[2]
         panel = body[body.index('<aside class="panel"'):]
-        self.assertIn('data-sel="a:1" aria-label="Ask the assistant about Acme Rockets — Platform Engineer"', panel)
-        self.assertIn('<span class="sel-text">Ask about this</span>', panel)
+        self.assertNotIn('data-sel="a:1"', panel)  # the list row's tick does it; the opened panel ticks it
+        self.assertIn("data-ask-agent>Ask the assistant</a>", panel)
         head = body[body.index('class="page-head-actions"'):]
         self.assertIn('data-sel="cv"', head[:400])
 

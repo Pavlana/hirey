@@ -204,9 +204,9 @@ Entering a stage (`db.stage_tasks`, `db.STAGE_TASKS`):
 
 - Interview-stage tasks are due the day before the interview date, today if that has passed, +2 days
   without a date.
-- **Review research and apply** (`db.REVIEW_TASK`, kind apply, +2): `db.review_task` adds it when company
-  research and the CV fit are both saved for an application still in Interested. It is called from
-  both saves, so the order does not matter; a Redo adds no second one while one is open.
+- Interested gets no task: the job's panel shows the next step itself
+  ([dashboard.md](dashboard.md#the-application-panel)). Until 27 Nov 2026 a "Review research and apply"
+  task (`db.REVIEW_TASK`) followed the research and CV fit; open ones are still completed on Applied.
 - Older "Apply" (+3), "Research the company" and "Check CV fit / tailor CV" tasks count as Interested
   auto tasks (`db.RETIRED_STAGE_TASKS`). Open ones stay as they are and close when the application
   moves on.

@@ -3,15 +3,16 @@
     private_dir/cv-tailored/plans/PLAN_<Company>_<app id>.md    one per application (Redo plan rewrites it)
 
 The agent that tailors writes it (`plan path`, `plan save`); the user reads it in the panel, edits it,
-answers its questions, and presses Write the CV (`db.agree_tailor_plan`). Its sections:
+and presses Write the CV (`db.agree_tailor_plan`). Its two sections (27 Nov 2026):
 
-    ## What the role needs     must-haves and the seniority signals the CV must show
-    ## Evidence                which cv.md line or facts-bank fact proves each need, and which leads
-    ## Order                   sections and bullets, and the 2-3 summary lines in outline
-    ## Questions               numbered; each answered on an "Answer:" line under it
+    ## What the role needs          the 3-5 must-haves in the posting's words, each ✓ have / ~ partly / ✗ not
+                                    yet with a few plain words (no evidence references or quotes)
+    ## What will change in the CV   the summary in outline, the order of sections and bullets, what is cut
 
-The questions are about this role (what to lead with, which evidence, how to word the seniority) and
-are few. Their answers stay in the plan, which the CV is then written from. Nothing here writes to the
+The agent still traces every claim to cv.md, the facts bank or _style.md, but that evidence is not shown.
+A plan has no questions by default; one the agent truly needs goes to the Applications Assistant box. Plans
+written before (four sections: What the role needs, Evidence, Order, Questions) still show and save, and
+their numbered questions are still answered on an "Answer:" line (`plan answer`). Nothing here writes to the
 facts bank (cv-facts.md) or stories.md: the agent adds a fact there only when the user says so. Wording
 the user approves goes to cv-tailored/_style.md (add_style), dated and tagged with its application.
 Plan text is never logged; pay is refused.
@@ -26,7 +27,8 @@ from pathlib import Path
 from prep import cvfile, db, research
 
 PLANS_DIR = "plans"
-SECTIONS = ("What the role needs", "Evidence", "Order", "Questions")
+SECTIONS = ("What the role needs", "What will change in the CV")
+OLD_SECTIONS = ("What the role needs", "Evidence", "Order", "Questions")  # plans written before 27 Nov 2026
 STYLE_HEADING = "## Agreed wording"
 MAX_PLAN = 20_000  # characters; a plan is about half a page
 
@@ -126,6 +128,8 @@ def check(text: str) -> str:
     db.check_no_pay(text, "the tailoring plan")
     lines = text.splitlines()
     missing = [s for s in SECTIONS if _section(lines, s) is None]
+    if missing and all(_section(lines, s) is not None for s in OLD_SECTIONS):
+        missing = []  # an older four-section plan, edited in the panel
     if missing:
         raise ValueError("the plan needs these sections: " + ", ".join(f"## {s}" for s in missing))
     return text + "\n"

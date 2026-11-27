@@ -6,8 +6,8 @@ code can use; the agent reads the whole file for the judgement calls (role famil
 team size, pay in the ad):
 
     ## Gates ...                       numbered items "N. **Name**: text"; a job failing one is not shown
-        Company, Sector, Interviews, Role family, Level, Team, Location, Pay (known names; a gate left
-        out of the file is off, an unknown name is for the agent only)
+        Company, Sector, Interviews, Role family, Level, Location, Pay (known names; a gate left
+        out of the file is off, an unknown name is for the agent only; Team is never a gate: NOT_GATES)
         Level's "Out: a, b, c." list   title words that fail the level gate in plain code
         Location's "<City> on-site or hybrid" and "remote within the <Region>"
     ## Ranking ...                     numbered items, best first; each is matched to a signal by its words
@@ -27,6 +27,9 @@ DEFAULT_FILE = Path("notes") / "criteria.md"
 GATE_NAMES = {"company": "company", "sector": "sector", "interviews": "interviews", "interview": "interviews",
               "role family": "role_family", "role": "role_family", "level": "level", "team": "team",
               "location": "location", "pay": "pay"}
+# Criteria that are never gates, whatever the file says: team size (27 Nov 2026: a small team can still be
+# interesting; a team of one or an unclear team is a red flag and a question to clarify in the job's panel).
+NOT_GATES = ("team",)
 # Ranking signals, matched in this order to each ranking item's words (evals before agents: an evals item
 # may mention agents too).
 RANK_WORDS = (("evals", ("eval", "guardrail")), ("verdict", ("verdict",)), ("fit", ("fit score", "cv fit")),
@@ -110,6 +113,8 @@ def parse(text: str, path: Path) -> Criteria:
         found = _BOLD.match(item)
         name, body = (found.group(1), found.group(2)) if found else (item.split(":")[0], item)
         key = GATE_NAMES.get(name.strip().lower())
+        if key in NOT_GATES:  # named in the file, but a red flag and a question in the panel, never a gate
+            continue
         if key and key not in gates:
             gates.append(key)
             if key != "pay":  # the pay figure is never kept: only the agent reads it, from the file

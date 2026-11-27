@@ -72,8 +72,9 @@ class EmployerKindWebTest(WebTestCase):
         row = re.search(rf'<tr id="app-{self.unknown}".*?</tr>', body, re.S).group(0)
         self.assertNotIn("emp-kind", row)
         panel = self.get(f"/?app={self.product}")[2]
-        self.assertRegex(panel, r'<h2 id="panel-title">Product Co Example<span class="emp-kind emp-product"')
-        self.assertIn('<option value="product" selected>Product</option>', panel)
+        self.assertIn('<h2 id="panel-title">Product Co Example</h2>', panel)  # a word in section 1, not a badge
+        self.assertIn("Product company", panel)
+        self.assertNotIn("<select", panel.split('id="panel"')[1])  # no Employer control any more
 
     def test_filter(self) -> None:
         body = self.get("/?employer=product")[2]
@@ -88,13 +89,14 @@ class EmployerKindWebTest(WebTestCase):
         self.assertEqual(web.home_url(f, employer=""), "/?stage=offer")
         self.assertEqual(web.home_url(f, view="offers"), "/?view=offers")  # pipeline filters only
 
-    def test_panel_select_sets_and_clears(self) -> None:
-        status, headers, _ = self.post("/applications/employer", {"app_id": str(self.unknown), "employer_kind": "client"})
-        self.assertEqual(status, 303)
+    def test_no_panel_route_and_research_sets_an_unknown_kind(self) -> None:
+        self.assertEqual(self.post("/applications/employer", {"app_id": str(self.unknown), "employer_kind": "client"})[0], 404)
+        profile = {"company": "Unknown Co Example", "file_path": "x.md", "researched_at": "2026-03-01",
+                   "employer_kind": "client"}
         with self.conn() as conn:
+            db.save_company_profile(conn, db.company_slug("Unknown Co Example"), profile)
             self.assertEqual(db.get_application(conn, self.unknown)["employer_kind"], "client")
-        self.post("/applications/employer", {"app_id": str(self.unknown), "employer_kind": ""})
-        with self.conn() as conn:
-            self.assertIsNone(db.get_application(conn, self.unknown)["employer_kind"])
-        status, _, _ = self.post("/applications/employer", {"app_id": str(self.unknown), "employer_kind": "agency"})
-        self.assertEqual(status, 400)
+            db.save_company_profile(conn, db.company_slug("Product Co Example"),
+                                    {**profile, "company": "Product Co Example"})
+            self.assertEqual(db.get_application(conn, self.product)["employer_kind"], "product")  # a set kind is kept
+        self.assertIn("Client delivery", self.get(f"/?app={self.unknown}")[2])

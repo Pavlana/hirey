@@ -117,7 +117,7 @@ flowchart TD
     held --> offers
     offers -->|"Skip with reason"| skipped["job_decisions: skipped"]
     offers -->|"Interested"| interested["Application: Interested<br/>research and CV fit queued"]
-    interested -->|"Review research and apply"| applied["Applied<br/>Chase task +7"]
+    interested -->|"Tailor CV, Mark applied"| applied["Applied<br/>Chase task +7"]
     interested -->|"Skip"| closedskip["Skipped"]
     applied -->|"14 days, no reply"| noresp["No response<br/>Debrief task"]
     applied -->|"/stage from an email"| stages["Recruiter call, Coding,<br/>System design, Company"]
@@ -179,11 +179,14 @@ flowchart TD
     aa --> next
     next -->|"writes Markdown in private_dir"| save["research save, fit save,<br/>tailor save, brief save"]
     next -->|"cannot do it"| block["research block or brief block<br/>reason shown in Workers"]
-    save --> done["Result cards in the panel<br/>tier, fit score, brief"]
+    save --> done["The job's panel<br/>recommendation, red flags, questions, brief"]
+    open["Opening a job's panel"] -->|"once, when missing"| q
 ```
 
-- Work is queued by Interested, by the panel's buttons (Research company, CV fit, Tailor CV, Write
-  brief, AI check). One open request per application and kind.
+- Work is queued by opening a job's panel (a job offer: brief, screen, company check and research and its
+  CV fit with a recommendation, keyed by the job id; an application: research and CV fit), by Interested
+  (only what the offer did not already have) and by the panel's buttons (Tailor CV, Redo, AI check). One
+  open request per application and kind; nothing is queued twice for the same company or job.
 - The router is plain code: research-route work goes to the Research worker when one is set, else to
   the Applications Assistant.
 - The worker writes the result as a Markdown file with front matter; the save command reads it into
@@ -198,7 +201,7 @@ sequenceDiagram
     participant B as Browser
     participant W as Dashboard
     participant C as Communication worker
-    B->>W: Draft a reply (kind, channel, paste, notes), or Paste recruiter message
+    B->>W: Paste recruiter message
     W->>C: dev3 message "/reply about msg", ids only
     C->>W: reply show msg --claim
     opt Invitation reply
@@ -210,8 +213,8 @@ sequenceDiagram
     Note over B: the user pastes and sends it
 ```
 
-- Kinds: reply, follow-up, thank-you note; channels: LinkedIn (no subject) or email (subject needed).
-  **Paste recruiter message** at the top of Applications is one step: an invitation reply, no choices.
+- **Paste recruiter message** at the top of Applications is one step: an invitation reply, no choices. A
+  follow-up or thank-you note is asked in the Applications Assistant box in plain words.
 - An invitation naming the company and role is recorded at Interested (source "LinkedIn (recruiter)") and
   evaluated like a getjo job: the gate, a LinkedIn invitation card, and the Top 5 marked LinkedIn
   ([search.md](reference/search.md#recruiters-invitations)). One that does not gets a reply asking for what is

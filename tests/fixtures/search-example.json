@@ -1,5 +1,5 @@
 {
- "_comment": "Made-up data for New offers' Top 5 (prep/search.py): fictional companies only, no pay values (pay is pass / fail / unknown). Loaded by python -m prep.seed_example on top of example.json, and by tests/test_search.py. Dates are relative to _anchor_date.",
+ "_comment": "Made-up data for New offers' Top 5 (prep/search.py): fictional companies only, no pay values (pay is pass / fail / unknown). Loaded by python -m prep.seed_example on top of example.json, and by tests/test_search.py. Dates are relative to _anchor_date. profiles, job_fits and app_fits: a company research summary and a job offer's CV fit with its recommendation, for the decision panel.",
  "_anchor_date": "2026-01-20",
  "getjo_jobs": [
   {
@@ -440,6 +440,134 @@
     "interviews"
    ],
    "draft": "Hi Alex,\nThank you for reaching out. The role sounds interesting.\nCould you please share the following before we speak:\n- the company name, or its sector and size if it's confidential\n- whether it's an in-house team or a consultancy\n- the job description\n- the interview process\nI'd be glad to discuss it on a call afterwards.\nBest regards,\nSam"
+  }
+ ],
+ "profiles": [
+  {
+   "company": "Initrode AI",
+   "file_path": "companies/initrode-ai.md",
+   "what_it_does": "Makes made-up agent tools for fictional insurers' claims teams.",
+   "sector": "Enterprise software",
+   "size_band": "51-250",
+   "london_remote": "London office, hybrid 2 days",
+   "researched_at": "2026-01-19",
+   "employer_kind": "product",
+   "engineering_team": "About 30 engineers; an AI team of 4",
+   "interview_style": "Recruiter call, take-home, presentation, values",
+   "red_flags": [
+    "AI team of 4: small, wide scope"
+   ],
+   "call_questions": [
+    "Who uses the agents day to day: staff or customers?"
+   ]
+  },
+  {
+   "company": "Massive Dynamic Example",
+   "file_path": "companies/massive-dynamic-example.md",
+   "what_it_does": "Builds made-up AI assistants for fictional field engineers.",
+   "sector": "Energy software",
+   "size_band": "251-1000",
+   "london_remote": "London office, hybrid 3 days",
+   "researched_at": "2026-01-19",
+   "employer_kind": "client",
+   "engineering_team": "Solutions team of 6, unclear how many build AI",
+   "interview_style": "Recruiter call, technical call, case study",
+   "red_flags": [
+    "Client-facing delivery, travel to client sites"
+   ],
+   "call_questions": [
+    "How much of the week is on client sites?"
+   ]
+  }
+ ],
+ "job_fits": [
+  {
+   "job": "ashby:initrode-ai:a1",
+   "score": 4,
+   "gaps": [
+    "Multi-agent systems in production",
+    "Insurance domain"
+   ],
+   "recommendation": {
+    "verdict": "apply",
+    "why": "Builds agents with evals in the role; the real gap is narrow.",
+    "soft": [
+     "Insurance domain: learnable on the job"
+    ],
+    "real": [
+     "Multi-agent systems in production: one personal project; likely asked in the take-home review"
+    ],
+    "favour": [
+     "Builds agents",
+     "Evals in the role",
+     "Presentation interview, no puzzle rounds",
+     "Product company, London 2 days"
+    ],
+    "decide": [
+     "Whether the take-home needs a multi-agent design"
+    ],
+    "effort": [
+     "One tailored version; lead with the evals work; do not claim multi-agent production"
+    ],
+    "needs": [
+     {
+      "mark": "have",
+      "text": "Python in production"
+     },
+     {
+      "mark": "have",
+      "text": "LLM APIs and agent frameworks"
+     },
+     {
+      "mark": "partly",
+      "text": "Evals for LLM features (offline evals; no online monitoring)"
+     }
+    ]
+   }
+  }
+ ],
+ "app_fits": [
+  {
+   "company": "Massive Dynamic Example",
+   "score": 3,
+   "gaps": [
+    "Client-facing delivery",
+    "Azure AI services"
+   ],
+   "recommendation": {
+    "verdict": "stretch",
+    "why": "The role builds assistants, but most of the week is client delivery.",
+    "soft": [
+     "Azure AI services: the same patterns as the CV's cloud work"
+    ],
+    "real": [
+     "Client-facing delivery: the CV shows in-house work only; likely the case study's focus"
+    ],
+    "favour": [
+     "Builds LLM products",
+     "No puzzle rounds reported"
+    ],
+    "decide": [
+     "How much of the week is on client sites"
+    ],
+    "effort": [
+     "One tailored version only if the call confirms mostly build work"
+    ],
+    "needs": [
+     {
+      "mark": "have",
+      "text": "Building LLM assistants"
+     },
+     {
+      "mark": "partly",
+      "text": "Azure AI services"
+     },
+     {
+      "mark": "not",
+      "text": "Client-facing delivery"
+     }
+    ]
+   }
   }
  ]
 }

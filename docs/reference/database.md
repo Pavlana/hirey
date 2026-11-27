@@ -69,8 +69,9 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 | Table | One row per | Key columns |
 | --- | --- | --- |
 | `agent_requests` | queued research, cv_fit, plan, tailor or cv_eval | `application_id`, `kind`, `status`, `force`, `worker`, `reason`, times |
-| `company_profiles` | company (`slug`) | `company`, `file_path`, size, recognition, funding, `sources`, `suggested_tier`, `tier_reason`, `researched_at` |
-| `cv_fits` | application (latest fit) | `score` 1-5, `top_gaps` (JSON, at most 3), `file_path`, `checked_at` |
+| `company_profiles` | company (`slug`) | `company`, `file_path`, size, recognition, funding, `sources`, `suggested_tier`, `tier_reason`, `researched_at`; for the panel: `employer_kind`, `engineering_team`, `interview_style`, `red_flags`, `call_questions` (JSON lists) |
+| `cv_fits` | application (latest fit) | `score` 1-5, `top_gaps` (JSON, at most 3), `file_path`, `checked_at`, `recommendation` (JSON) |
+| `job_fits` | job offer not tracked yet (getjo or `linkedin:<id>` job id) | `score`, `top_gaps` (JSON, all), `file_path`, `checked_at`, `recommendation` (JSON); copied to `cv_fits` on Interested |
 | `tailored_cvs` | application (latest version) | `file_path`, `version`, `updated_at` |
 | `tailored_cv_versions` | tailored CV version | `application_id`, `version`, `file_path`, `created_at` |
 | `tailored_cv_checks` | tailored CV version | `verdict`, `findings` (JSON), `changes` (JSON), `summary` (JSON, AI check; `stale` after an edit), `checked_at` |
@@ -79,7 +80,7 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 | `cv_comments` | open comment for the agent on a CV line | `application_id` (NULL: the master CV), `anchor`, `body`, `position`, `created_at` |
 | `cv_versions` | master CV version (vN) | `file_name`, `note`, `sha256`, `created_at` |
 | `job_briefs` | getjo job | `brief` (Markdown), `updated_at` |
-| `brief_requests` | getjo job waiting for a brief | `status`, `force`, `worker`, `reason`, `screen_asked`, times |
+| `brief_requests` | getjo job waiting for a brief | `status`, `force`, `worker`, `reason`, `screen_asked`, `fit_asked`, times |
 | `company_checks` | company (`slug`) for the search gate | `verdict`, `sector_ok`, `interviews`, `kind`, `note`, `source`, `agent_checked_at` |
 | `company_aliases` | other name of a company | `alias` (slug), `slug` |
 | `job_screens` | getjo job screened for the gate | role family, level, team, location, `pay` (pass / fail / unknown), agents, evals, contract |
@@ -181,7 +182,9 @@ Columns added by `MIGRATIONS`:
 | `applications` | `cv_sent`, `cv_sent_version`, `cv_sent_at`, `role_short`, `notes_updated_at`, `employer_kind` |
 | `agent_messages` | `getjo_job_id`, `topic`, `card_id`, `comms`, `channel`, `draft_subject`, `draft_body`, `worker`, `source_id` |
 | `agent_requests`, `brief_requests` | `worker`, `reason` |
-| `brief_requests` | `screen_asked` |
+| `brief_requests` | `screen_asked`, `fit_asked` |
+| `cv_fits` | `recommendation` |
+| `company_profiles` | `employer_kind`, `engineering_team`, `interview_style`, `red_flags`, `call_questions` |
 | `tailored_cv_checks` | `summary` |
 | `cards` | `prompt` |
 

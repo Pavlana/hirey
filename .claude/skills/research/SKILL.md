@@ -5,8 +5,8 @@ description: Do the queued company research, CV fit checks, tailored CVs and job
 
 # /research
 
-Interested applications, and the Research company / CV fit / Tailor CV buttons in the dashboard's
-Applications panel, queue requests. This skill does the work and saves it. Nothing here applies to a job
+Opening a job's panel in the dashboard (a job offer or an application) queues its company research, job brief
+and CV fit once when they are missing; Interested and the panel's Tailor CV and Redo buttons queue requests too. This skill does the work and saves it. Nothing here applies to a job
 or contacts anyone, and nothing leaves the machine except web searches about the company.
 Run every command from the repo root.
 
@@ -29,12 +29,10 @@ place; the answers there are handled by `/ask`.
    read them as context, for example what a recruiter already said about the process.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
    - company: one line on what it does and the tier set
-   - CV fit: the score and the top gaps
-   - tailoring plan: saved, and how many questions it asks
+   - CV fit: the score, the top gaps and the recommendation's verdict
+   - tailoring plan: saved
    - tailored CV: the version saved and how many questions went to the thread
    - AI check: the verdict and how many lines are flagged (editorial ones included)
-   - when a save printed "both results in": the Interested application now has a "Review
-     research and apply" task; say it is ready to review (its panel has Mark applied and Skip)
 
 If another session has already claimed the work, leave it alone. With several Research workers
 (`research = [71, 72]`), each `research next` takes the work sent to this worker or to no worker
@@ -86,7 +84,8 @@ a job not yet tracked is also its **screen** for New offers' Top 5. The packet t
 - **The screen**: a `+++` TOML block put before the brief's key facts line in the same `brief save`
   (or saved alone with `python -m prep.cli screen save --job JOB_ID`). Read the criteria file first and
   answer each field `yes`, `no` or `unknown` from the ad: role family, level (from the scope and years
-  asked, not only the title), team (at least the criteria's number of engineers), location, builds
+  asked, not only the title), team (not a gate: `yes` two or more engineers named, `no` a team of one,
+  `unknown` unclear; the panel shows the last two as a red flag and a question), location, builds
   agents or LLM products, evals in the role, and contract (`permanent` / `contract` / `unknown`).
   **Pay is only `pass`, `fail` or `unknown`**: compare a stated figure with the floor in the file;
   unknown when the ad does not state it. Never write a figure, in the screen or anywhere else.
@@ -156,6 +155,12 @@ sources = ["https://...", "https://..."]
 suggested_tier = "B"
 tier_reason = "One line."
 researched_at = 2026-01-20
+# For the job's panel (section 1 and 2); all optional, never pay, plain words:
+employer_kind = "product"       # product (in-house product work) or client (consultancy, agency)
+engineering_team = "About 40 engineers; an AI team of 4"   # one line
+interview_style = "Recruiter call, take-home, pairing, values (2026 reports)"   # one line
+red_flags = ["Lead title, IC scope unclear"]   # from the research, at most 6; the ad's go in the brief
+call_questions = ["Who are the agents built for: staff or customers?"]   # at most 2, recruiter-call level
 +++
 
 ## What it does
@@ -164,29 +169,22 @@ researched_at = 2026-01-20
 ## Culture
 ## Interview process
 ## Recent news
-## Questions worth asking
 ```
 
 Then run `python -m prep.cli research save <app id>`. It saves the summary, closes the
-research request of every application at that company and **sets the tier** of that application
-to `suggested_tier`. The panel shows it with `tier_reason`, so write the reason for this role.
+research request of every application at that company, sets the employer kind (`employer_kind`) of those
+whose kind is unknown, and **sets the tier** of that application to `suggested_tier`. The panel shows it with `tier_reason`, so write the reason for this role.
 No confirm step: the user changes it through the agent if needed.
 
-**Questions to ask.** When the packet says the notes have no "Questions to ask" yet, append 3-5
-questions specific to this company and role (from the research: the stack, the team, the
-interview process, recent news), never generic ones and never about pay:
+**Questions for the recruiter call** (`call_questions`). The panel's "Questions to clarify" list is for the
+recruiter call only: it is built from a fixed template (interview stages and what to prepare, AI team size,
+office days, the product, the level, and pay as "ask on the call") where the gates say unknown. Add at most
+two of the same level, specific to this role: plain English, about the product, the team, the way of working
+or the interview process. **Nothing technical** (how their agents, evals or safety work: that goes to the
+Applications Assistant chat) and **never pay**. None is fine.
 
-```bash
-python -m prep.cli notes <app id> --append <<'NOTES'
-**Questions to ask**
-
-- How does the platform team split work with the product teams after the 2026 reorganisation?
-- …
-NOTES
-```
-
-When the notes already have such a section, add nothing. The command adds a dated "Agent" block at
-the end and never rewrites the user's text.
+**Red flags** (`red_flags`): only what the research shows (a team of one, a lead title with unclear IC scope,
+consultancy work, LeetCode-style interviews, an unclear location, layoffs). A few words each.
 
 ### Tier rubric (the research sets it; one tier per application)
 
@@ -219,60 +217,110 @@ checked_at = 2026-01-20
 ## How to adapt the CV
 ```
 
+## Recommendation
+Verdict: Stretch: apply only if cheap — two real gaps, but it builds agents and the interview is a presentation.
+
+### Gaps that matter less
+- ERP integration: learnable on the job
+- Product-company preference: a preference in the ad, not a requirement
+
+### Gaps that are real
+- Multi-agent systems in production: the CV shows one personal project; likely probed in the technical round
+
+### In its favour (by the criteria)
+- Builds agents and benchmarks them
+- Presentation interview, no LeetCode
+- Product company, London 3 days
+
+### What would decide it
+- Whether the interview probes model internals
+
+### If you apply
+- One tailored version; lead with the evals work; do not claim multi-agent production
+
+### What the role needs
+- ✓ Shipping LLM features to production
+- ~ Benchmarking LLMs (evals on a labelled set; no safety monitoring)
+- ✗ Multi-agent systems in production (personal project only)
+```
+
+(The example is made up.) **The recommendation** is what the user reads first in the job's panel to decide.
+Write it with the criteria file open (path in the packet; never copy its pay figure):
+
+- **Verdict**: `Apply`, `Stretch: apply only if cheap` or `Skip`, then one sentence why. Weigh the gaps
+  against the criteria's ranking (builds agents, evals in the role, interview style, product company,
+  location...): the number of gaps alone never decides it.
+- **Gaps that matter less**: each with a few words on why it is soft (learnable on the job, a preference not
+  a requirement, a wording gap the CV can close).
+- **Gaps that are real**: each with why it matters for this role and how it may show up in the interview.
+- **In its favour**: the ranking signals it meets, by the criteria.
+- **What would decide it**: the one or two things to check on the recruiter call or in the first interview.
+- **If you apply**: how much effort it is worth (one tailored version, what to lead with, what not to claim).
+- **What the role needs**: the 3-5 must-haves in the posting's words, each starting with `✓` have, `~` partly
+  or `✗` not yet, then a few plain words (no cv.md quotes). The panel shows it as the checklist in section 1,
+  the same marks as the tailoring plan; a need without a mark shows as a plain item.
+
+Honest and plain: no flattery, no invented strengths; every claim traces to `cv.md` or the facts bank, as the
+fit itself. At most 5 bullets per part. Never pay.
+
 Then run `python -m prep.cli fit save <app id>`. Its gaps also go into the gaps list (session
 "cv fit"); a gap already open with the same text is not added twice. Name each gap as a short
 skill or topic, for example "Kubernetes operators", not a sentence.
 
+**A job offer not tracked yet** gets the same fit, recommendation included, when its panel first opens: the
+brief packet prints "CV fit of this job offer" with the file (`fit/job-<job>-<slug>.md`) and
+`python -m prep.cli fit save --job JOB_ID`. When the user marks it Interested, the application takes that fit
+over: no second fit.
+
 ## Tailoring plan → `cv-tailored/plans/PLAN_<Company>_<app id>.md`
 
 The panel's **Tailor CV** queues a plan first: no CV is written until the user agrees the plan
-(**Write the CV**). **Just write it** skips the plan for a role that needs only small changes and queues
-the CV straight away (the next section, "no plan"). The point of the plan is that the discussion is
-about the role and the evidence, not about whole drafts.
+(**Write the CV**). The plan is short and plain: it keeps only what preparing to apply needs.
 
 Read what the packet lists: `cv.md`, the CV fit, the company research, the job brief and description,
-the facts bank (read only) and `_style.md`. Then write about half a page, in plain Markdown, with these
-four sections (an easy role gets a short plan):
+the facts bank (read only) and `_style.md`. Then write the plan in plain Markdown with these two sections:
 
 ```
 ## What the role needs
-- Must-haves: the 3-5 that decide this role, in the posting's words.
-- Seniority signals: what a senior individual contributor CV must show for this role (scope, scale,
-  ownership, production use), so the CV does not read as junior.
+- ✓ Shipping LLM solutions to production
+- ✗ Agentic workflows in production (personal project only)
+- ~ Benchmarking LLMs (evals on a labelled set; no safety monitoring)
 
-## Evidence
-- Each need: the cv.md line or facts-bank fact that proves it, and which one to lead with.
-
-## Order
-1. Summary: the 2-3 lines in outline.
-2. The sections and bullets in order, older or unrelated roles cut to one line.
-
-## Questions
-1. Only where the evidence is unclear: "Have you done X, or something like it with another tool?"
-   Answer:
+## What will change in the CV
+- Summary: sole engineer who owned production LLM work; evals first.
+- Order: the current role's evals bullets first, then the pipeline; skills with the must-haves first.
+- Cut: the older support role to one line.
 ```
 
-- Questions are about **this role** (what to lead with, which evidence, how to word the seniority) and
-  stay few; none is fine. Each is numbered, with an empty `Answer:` line under it.
-- Never invent experience in the plan either: evidence is a line of `cv.md` or a fact in the facts
-  bank, named so the user can check it.
-- No pay anywhere. `plan save` refuses a plan without the four sections or with pay.
+(The example is made up.)
+
+- **What the role needs**: the 3-5 must-haves in the posting's words, each `✓` have, `~` partly or `✗` not
+  yet, with at most a few plain words. No evidence references, no quotes of `cv.md` lines, no facts-bank
+  citations: trace every claim to `cv.md`, the facts bank or `_style.md` yourself (the rules and the AI check
+  guarantee it), but do not show that in the plan.
+- **What will change in the CV**: the summary in one or two lines of outline, the order of sections and
+  bullets, what is cut or shortened. Seniority goes here (e.g. "summary says sole engineer, owned
+  production"), not in a separate list.
+- **No questions** in the plan. Only when the CV truly cannot be written without one answer (which of two
+  roles to lead with, say), ask one short, non-technical question in the Applications Assistant box (the
+  `plan save` note). Never "have you done X / is it multi-agent" questions.
+- No pay anywhere. `plan save` refuses a plan without the two sections or with pay.
 
 ```bash
 python -m prep.cli plan path APP        # prints the file
 python -m prep.cli plan save APP </dev/null   # or a one-line note on stdin; posts it in the thread
 ```
 
-The user reads the plan in the panel, edits it, answers under each question (or in the Applications
-Assistant box, which `/ask` writes into the plan with `plan answer`), and presses Write the CV. The
-answers stay in the plan; nothing goes to the facts bank (cv-facts.md) or `stories.md` unless the user
-says so in words ("add this to my facts").
+The user reads the plan in the panel, edits it if needed and presses Write the CV. Plans written before
+(four sections with Evidence and Questions) still show, and their questions are still answered with
+`plan answer`. Nothing goes to the facts bank (cv-facts.md) or `stories.md` unless the user says so in words
+("add this to my facts").
 
 ## Tailored CV → `cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`
 
 A copy of `cv.md` for this one job, written **once**, from the agreed plan when the packet names one
-("agreed plan: …": follow its order, lead with its evidence, use the answers under its questions);
-"no plan" means Just write it was pressed: tailor straight from cv.md, the fit and the job. The user
+("agreed plan: …": follow "What will change in the CV"; an older plan's answers under its questions too);
+"no plan" (an older request): tailor straight from cv.md, the fit and the job. The user
 then edits the CV in the panel (saved in place, as often as needed, each save undoable) and
 leaves `%%` comments for revisions (`/ask`), so aim for a version that needs only a touch-up.
 The master `cv.md` is never edited here: it changes only when

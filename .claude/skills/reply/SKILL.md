@@ -5,9 +5,10 @@ description: Draft a message to a recruiter or interviewer in Hirey from a "Draf
 
 # /reply
 
-The user pastes a recruiter's message (LinkedIn or email) into **Draft a reply**, or clicks **Draft
-reply** under a message already sent in the Applications Assistant box, optionally with a line on
-what to say, and gets back a draft to copy and send from LinkedIn or the mail app. This skill writes that draft.
+The user pastes a recruiter's message (LinkedIn or email) into **Paste recruiter message** at the top of
+Applications and gets back a draft to copy and send from LinkedIn or the mail app. This skill writes that draft.
+(The panel's Draft a reply form was removed on 27 Nov 2026; requests stored before it still come here. A
+follow-up or thank-you note is now asked in the Applications Assistant box in plain words: /ask writes it.)
 
 **Nothing is ever sent.** No email, no LinkedIn, no forms, no links opened. Gmail and other mail
 tools are never used here. The only outputs are the draft in the box and, for a factual interview
