@@ -179,9 +179,11 @@ sits under the list, and the side panel on the right.
   and applied as the `--split-l`/`--split-r` grid fractions; shown only with the script, from 801px and
   while a panel is open.
 - From 801px the page is exactly the viewport's height and does not scroll: the list card takes at
-  most 45% of the left column and scrolls its rows inside while the switch, the stage strip or offer
-  filters and the column headings stay; the box fills the rest with its messages scrolling and its
-  input always in view; the panel scrolls inside.
+  most 40% of the left column (48% for Top 5) and scrolls its rows inside while the switch, the stage
+  strip or offer filters and the column headings stay; the box fills the rest (at least 360px) with its
+  messages scrolling (at least 180px, so several stay readable) and its input always in view. The
+  input starts at one line and grows with the text up to 180px (`textarea[data-grow]`); the panel
+  scrolls inside.
 - Up to 800px everything stacks, and the panel is a full-screen sheet.
 
 **Query string.** The page state is in the query string, so every view renders without the script.
