@@ -1001,11 +1001,18 @@ class ApplicationsPageTest(WebTestCase):
     def test_layout_a_fits_the_viewport_on_laptops(self) -> None:
         css = self.get("/static/style.css")[2]
         laptop = css[css.index("/* Layout A (laptop and up)"):]
-        for rule in ("main:has(.apps) { height: 100vh;", ".card-pipeline { flex: 0 1 auto; max-height: 45%; }", ".card-pipeline .stage-strip, .card-pipeline .offer-filters { flex: none; }",
+        for rule in ("main:has(.apps) { height: 100vh;", ".card-pipeline { flex: 0 1 auto; max-height: 40%; }", ".card-pipeline .stage-strip, .card-pipeline .offer-filters { flex: none; }",
                      ".card-agent { flex: 1 1 0;", ".card-agent form.ask { flex: none; }"):
             self.assertIn(rule, laptop)
         self.assertLess(css.index("@media (min-width: 801px) {", css.index("/* Layout A")),
                         css.index("main:has(.apps) { height: 100vh;"), "laptop and up only; phones stay stacked")
+        self.assertIn(".card-agent .msgs { flex: 1; min-height: 180px;", laptop)  # messages stay readable
+
+    def test_chat_input_starts_at_one_line_and_grows(self) -> None:
+        body = self.get("/")[2]
+        self.assertIn('<textarea name="body" rows="1" maxlength=', body)
+        self.assertIn("required data-grow", body)
+        self.assertIn('textarea[data-grow]', self.get("/static/app.js")[2])
 
     def test_unknown_focus_is_ignored(self) -> None:
         for bad in ("abc", "99999", ""):

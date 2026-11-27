@@ -734,6 +734,18 @@
     paintPos = attachVim(editor, area, save);
   }
 
+  // The Applications Assistant input starts at one line and grows with the text (up to its CSS max-height),
+  // so the messages keep the room; it shrinks back after Send (the form resets it).
+  function growArea(area) {
+    area.style.height = "auto"; // CSSOM, not an inline style attribute: allowed by the CSP
+    area.style.height = `${area.scrollHeight + 2}px`;
+  }
+  document.addEventListener("input", (e) => { if (e.target.matches?.("textarea[data-grow]")) growArea(e.target); });
+  document.addEventListener("reset", (e) => {
+    const area = e.target.querySelector?.("textarea[data-grow]");
+    if (area) setTimeout(() => growArea(area), 0);
+  }, true);
+
   // Your answer: a plain textarea (no vim keys) that grows with the text, from its six rows.
   // Check my answer saves it first (saveAnswer).
   const answer = document.querySelector("form[data-learn-answer]");
@@ -1704,6 +1716,7 @@
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
         if (form.elements.body) form.elements.body.value = ""; // Resend, Cancel and Stop have no text
+        if (form.elements.body?.matches?.("[data-grow]")) growArea(form.elements.body); // back to one line
         if (form.querySelector(".ask-mode")) setAskMode(form, ""); // after a send: back to Message
         applyChatFilter();
         watchThread();

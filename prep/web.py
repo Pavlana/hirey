@@ -3670,10 +3670,10 @@ def _agent_box(conn: sqlite3.Connection, settings: Settings, f: dict, targets: l
         f'<div class="card-body">{_thread(conn, settings, f["app"], f["job"])}'
         '<form method="post" action="/applications/message" class="ask" data-ajax="thread">'
         f'<input type="hidden" name="return" value="{h(home_url(f))}">{_agent_about(f, targets)}'
-        f'<textarea name="body" rows="3" maxlength="{db.MAX_MESSAGE}" required '
+        f'<textarea name="body" rows="1" maxlength="{db.MAX_MESSAGE}" required data-grow '
         f'placeholder="{h(ASK_PLACEHOLDER)}" data-placeholder-invite="{h(INVITE_PLACEHOLDER)}" '
         'aria-label="Message to the Applications Assistant"></textarea>'
-        f'<div class="ask-foot">{_ask_mode()}<span class="muted ask-hint">The assistant does the edits and replies here.</span>'
+        f'<div class="ask-foot">{_ask_mode()}'
         + _button("Send", size="sm") + "</div></form>"
         + "</div></section>"
     )

@@ -530,17 +530,17 @@ main:has(.apps) { max-width: 1880px; }
   .apps-main { min-height: 0; display: flex; flex-direction: column; gap: var(--space-3); }
   .apps-main > .card { display: flex; flex-direction: column; min-height: 0; }
   .apps-main > .card > .card-head { flex: none; }
-  .card-pipeline { flex: 0 1 auto; max-height: 45%; }
-  .card-pipeline:has(.top-view) { max-height: 68%; }  /* Top 5: the week's list is the main thing */
+  .card-pipeline { flex: 0 1 auto; max-height: 40%; }
+  .card-pipeline:has(.top-view) { max-height: 48%; }  /* Top 5: a little more, the chat still readable */
   .card-pipeline > .card-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; padding-top: var(--space-3); }
   .card-pipeline .stage-strip, .card-pipeline .offer-filters { flex: none; }
   .card-pipeline .app-list.table-wrap { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; }
-  .card-agent { flex: 1 1 0; min-height: 220px; }
+  .card-agent { flex: 1 1 0; min-height: 360px; }
   .card-agent > .card-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
   .card-agent .thread { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-  .card-agent .msgs { flex: 1; min-height: 0; max-height: none; }
+  .card-agent .msgs { flex: 1; min-height: 180px; max-height: none; }  /* always several messages readable */
   .card-agent form.ask { flex: none; }
-  .card-agent form.ask textarea { min-height: 56px; }
+  .card-agent form.ask textarea { min-height: 40px; max-height: 180px; resize: none; }  /* one line, grows as typed */
 }
 
 .stage-strip { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); }
