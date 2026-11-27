@@ -1,14 +1,15 @@
 ---
 name: reply
-description: Draft a message to a recruiter or interviewer in Hirey from a "Draft a reply" request — a reply to a recruiter's invitation (the job evaluated against the criteria and recorded, or the missing details asked for), a LinkedIn reply (short, no subject), an email reply (subject line, 4-5 lines, sign-off), a follow-up / chase when an answer is overdue, or a thank-you note after an interview (using the debrief when there is one). Reads the application's context, writes the draft into the Applications Assistant box with Copy, and records a factual interview booking the way /stage does. Never sends anything. Use when the Comms worker or the Applications Assistant receives "/reply <application id | job | general> <message id>", when the user types /reply MSG, or when /today or the session-start note says draft replies are waiting.
+description: Draft a message to a recruiter or interviewer in Hirey from a "Draft a reply" request — a reply to a recruiter's invitation (the job evaluated against the criteria and recorded, or the missing details asked for), a LinkedIn reply (short, no subject), an email reply (subject line, 4-5 lines, sign-off), a follow-up / chase when an answer is overdue, or a thank-you note after an interview (using the debrief when there is one). Reads the application's context, writes the draft as the reply in the Applications Assistant box, with Copy, and records a factual interview booking the way /stage does. Never sends anything. Use when the Comms worker or the Applications Assistant receives "/reply <application id | job | general> <message id>", when the user types /reply MSG, or when /today or the session-start note says draft replies are waiting.
 ---
 
 # /reply
 
-The user pastes a recruiter's message (LinkedIn or email) into **Paste recruiter message** at the top of
-Applications and gets back a draft to copy and send from LinkedIn or the mail app. This skill writes that draft.
-(The panel's Draft a reply form was removed on 27 Nov 2026; requests stored before it still come here. A
-follow-up or thank-you note is now asked in the Applications Assistant box in plain words: /ask writes it.)
+The user pastes a recruiter's message (LinkedIn or email) into the Applications Assistant box with
+**Recruiter message** switched on, and gets back a draft, shown as the reply in the box with Copy, to send
+from LinkedIn or the mail app. This skill writes that draft. (The panel's Draft a reply form was removed on
+27 Nov 2026; requests stored before it still come here. A follow-up or thank-you note is asked in the box in
+plain words: /ask writes it with `thread reply --draft`.)
 
 **Nothing is ever sent.** No email, no LinkedIn, no forms, no links opened. Gmail and other mail
 tools are never used here. The only outputs are the draft in the box and, for a factual interview
@@ -45,7 +46,7 @@ notes for anything the user asked to remember.
 
 ## 1b. An invitation: evaluate it first
 
-When the first line says **Invitation reply** (the user pasted it into Paste recruiter message), the pasted
+When the first line says **Invitation reply** (the user pasted it with Recruiter message on), the pasted
 message is a recruiter's invitation to a job not tracked yet. `reply show` prints the steps and the criteria file's path; read the criteria file (its pay floor
 is only for comparing: never copy it anywhere). Decide from the message:
 
@@ -122,14 +123,13 @@ Never put pay in a comment, task or note.
 ## 4. Save it
 
 ```bash
-python -m prep.cli reply save --to MSG [--app ID] [--subject "Re: …"] --note "ONE LINE" <<'EOF'
+python -m prep.cli reply save --to MSG [--subject "Re: …"] --note "ONE LINE" <<'EOF'
 the draft text, exactly as it should be pasted
 EOF
 ```
 
-- `--app ID`: a request made from the whole search (`/reply general MSG`) whose message is clearly about
-  one tracked application (the company and role match an application in the context): link it, so the
-  draft shows in that application's panel. Leave it out when unsure or when no application matches.
+- The draft shows only in the box, as the reply, with Copy (Copy subject / Copy body for an email). An
+  invitation recorded with `invite save` is already linked to its application, so the thread tags it.
 - Email: `--subject` is required, and the body has no "Subject:" line. LinkedIn: no `--subject`.
 - `--note`: one line above the draft — the stage change made or proposed, placeholders to fill,
   anything to check. Leave it out when there is nothing to say.

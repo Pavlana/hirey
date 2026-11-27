@@ -157,7 +157,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   the Workers sidebar and Run history, `/runs`)
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`
   (no APP: the whole search; `--job`: a job offer not yet tracked),
-  `thread reply --to MSG`, `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)
+  `thread reply --to MSG [--draft reply|chase|thanks --channel C --subject S --note N]` (a draft asked for in
+  plain words: shown with Copy), `thread close MSG` (a waiting message left without a reply), `thread pending`, `review [--all]` (top 3 open tasks in review order)
 - Tailoring plan (used by /research and /ask): `python -m prep.cli plan path|save|show APP`, `plan answer APP N [--to MSG]`
   (answer on stdin), `plan write APP` (agreed: queue the CV); `style add [--app APP]` (approved wording to `_style.md`)
 - Tailored CV (used by /research and /ask): `python -m prep.cli tailor path APP [--role-short X] [--copy]`, then
@@ -183,7 +184,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Draft a reply (used by /reply; recruiter messages pasted in, nothing sent): `python -m prep.cli reply show MSG [--claim]`,
   `reply save --to MSG [--subject S] [--note N]` (the draft on stdin; email needs a subject); routed to
   `[workers] comms`, else `assistant_task`
-- Recruiters' invitations (used by /reply; Paste recruiter message at the top of Applications):
+- Recruiters' invitations (used by /reply; the Applications Assistant box with Recruiter message on):
   `python -m prep.cli invite save --to MSG --company C --role R [--location L]` (the job named: recorded at
   Interested, source "LinkedIn (recruiter)"; screen TOML on stdin) or `--missing company,description,…`
   (the reply asks for it), `--invite N` for the recruiter's answer to an earlier one; `invite list`

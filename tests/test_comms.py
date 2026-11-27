@@ -97,8 +97,28 @@ class StorageTest(ResendCancelBase):
             linkedin = db.add_draft_request(conn, ACME, "reply", "linkedin", PASTED)
             with self.assertRaises(ValueError):
                 db.save_draft(conn, linkedin, "Hi Jo!", "Re: x")  # no subject on LinkedIn
-            with self.assertRaises(LookupError):
-                db.save_draft(conn, db.add_message(conn, ACME, "Is this remote?"), "Hi")  # not a draft request
+            with self.assertRaises(ValueError):  # a plain message: say what the draft is
+                db.save_draft(conn, db.add_message(conn, ACME, "Is this remote?"), "Hi")
+            with self.assertRaises(ValueError):  # a request keeps its own kind and channel
+                db.save_draft(conn, db.add_draft_request(conn, ACME, "reply", "linkedin", PASTED), "Hi",
+                              kind="thanks")
+
+    def test_plain_words_draft(self) -> None:
+        with self.conn() as conn:
+            ask = db.add_message(conn, ACME, "Write a thank-you note to Jo for today's call.")
+            reply = db.save_draft(conn, ask, "Thanks for your time today, Jo.", kind="thanks", channel="linkedin")
+            r = db.get_message(conn, reply)
+            self.assertEqual((r["application_id"], r["comms"], r["channel"], r["draft_body"]),
+                             (ACME, "thanks", "linkedin", "Thanks for your time today, Jo."))
+            self.assertEqual(db.get_message(conn, ask)["status"], "answered")
+            for draft in ("My salary expectation is flexible.", "I am looking for £100k."):
+                with self.subTest(draft=draft), self.assertRaises(ValueError):
+                    db.save_draft(conn, db.add_message(conn, ACME, "Chase Acme."), draft, kind="chase",
+                                  channel="linkedin")
+            given = db.add_message(conn, ACME, "Reply to Jo: I am looking for £100k base.")
+            db.save_draft(conn, given, "I am looking for £100k base.", kind="reply", channel="linkedin")
+            with self.assertRaises(ValueError):
+                db.save_draft(conn, db.add_message(conn, ACME, "x"), "Hi", kind="invite", channel="linkedin")
 
     def test_pay_guard(self) -> None:
         with self.conn() as conn:
@@ -122,50 +142,30 @@ class DashboardTest(ResendCancelBase):
         self.assertEqual(self.post("/applications/draft", {"app_id": str(ACME), "comms": "reply",
                                                            "channel": "email", "pasted": PASTED})[0], 404)
 
-    def test_draft_shows_in_the_panel_editable_and_escaped(self) -> None:
+    def test_draft_is_the_reply_in_the_box_read_only_and_escaped(self) -> None:
         with self.conn() as conn:
             li = db.add_draft_request(conn, ACME, "thanks", "linkedin", notes="thank them")
             li_reply = db.save_draft(conn, li, "Thanks for your time today, Jo.")
             email = db.add_draft_request(conn, ACME, "reply", "email", "<script>alert(1)</script>")
             email_reply = db.save_draft(conn, email, "Hi <b>Jo</b>,\nThanks & see you.", "Re: <i>call</i>")
-        body = self.get("/")[2]  # the box: one line pointing at the panel, no draft text
+            whole = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
+            whole_reply = db.save_draft(conn, whole, "Thanks, happy to talk.")
+        body = self.get("/")[2]
         self.assertNotIn("<script>alert(1)", body)
-        self.assertIn('class="muted draft-moved">Draft ready in', body)
-        self.assertNotIn(f'id="draft-body-{li_reply}"', body)
+        self.assertNotIn("<b>Jo</b>", body)
         self.assertIn('msg-channel-linkedin">LinkedIn · Thank-you note</span>', body)
-        panel = self.get(f"/?app={ACME}")[2]  # the panel: the latest draft, editable, with Copy
-        self.assertNotIn("<b>Jo</b>", panel)
-        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-panel-{email_reply}"', panel)
-        self.assertIn("Hi &lt;b&gt;Jo&lt;/b&gt;,\nThanks &amp; see you.</textarea>", panel)
-        self.assertIn("Re: &lt;i&gt;call&lt;/i&gt;", panel)
-        self.assertIn('data-copy="draft-subject-panel-', panel)
-        self.assertIn(">Copy subject</button>", panel)
-        self.assertIn(f'data-copy="draft-body-panel-{email_reply}">Copy body</button>', panel)
-
-    def test_whole_search_draft_shows_under_the_paste_box(self) -> None:
-        with self.conn() as conn:
-            msg = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
-            reply = db.save_draft(conn, msg, "Thanks, happy to talk.")
-        body = self.get("/")[2]
-        top = body.index('class="card paste-box"')
-        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body[top:])
-        self.assertIn(f'data-copy="draft-body-{reply}">Copy</button>', body)
-        self.assertIn('<details class="draft-moved">', body)  # folded in the box
-        self.assertIn(f'id="draft-body-thread-{reply}"', body)
-
-    def test_reply_save_app_links_a_whole_search_request(self) -> None:
-        with self.conn() as conn:
-            msg = db.add_draft_request(conn, None, "reply", "linkedin", PASTED)
-            db.attach_draft_request(conn, msg, ACME)
-            reply = db.save_draft(conn, msg, "Thanks, happy to talk.")
-            self.assertEqual(db.get_message(conn, msg)["application_id"], ACME)
-            self.assertEqual(db.get_message(conn, reply)["application_id"], ACME)
-            with self.assertRaises(LookupError):
-                db.attach_draft_request(conn, msg, 99999)
-        body = self.get("/")[2]
-        self.assertIn('class="muted draft-moved">Draft ready in', body)
-        panel = self.get(f"/?app={ACME}")[2]
-        self.assertIn(f'id="draft-body-panel-{reply}"', panel)
+        self.assertIn(f'<pre class="draft-body" id="draft-body-{li_reply}">Thanks for your time today, Jo.</pre>', body)
+        self.assertIn(f'<pre class="draft-body" id="draft-body-{email_reply}">Hi &lt;b&gt;Jo&lt;/b&gt;,\nThanks &amp; '
+                      "see you.</pre>", body)
+        self.assertIn("Re: &lt;i&gt;call&lt;/i&gt;", body)
+        self.assertIn(f'data-copy="draft-subject-{email_reply}">Copy subject</button>', body)
+        self.assertIn(f'data-copy="draft-body-{email_reply}">Copy body</button>', body)
+        self.assertIn(f'data-copy="draft-body-{whole_reply}">Copy</button>', body)
+        for gone in ("draft-moved", "draft-edit", "panel-draft", "paste-box", "Latest draft"):
+            self.assertNotIn(gone, body)
+        panel = self.get(f"/?app={ACME}")[2]  # the panel shows no draft: it is in the box only
+        self.assertEqual(panel.count(f'id="draft-body-{email_reply}"'), 1)
+        self.assertNotIn("panel-draft", panel)
 
     def test_resend_routes_to_comms(self) -> None:
         self.settings = self.settings.__class__(**{**self.settings.__dict__, "workers": (("comms", 72),)})

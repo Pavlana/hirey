@@ -59,6 +59,8 @@
     python -m prep.cli thread show [APP_ID | --job ID | --cv | --message MSG] [--claim]
                                                        (messages and context; no id: the whole search)
     python -m prep.cli thread reply [APP_ID] --to MSG_ID [--file PATH]   (reply text from the file or stdin)
+    python -m prep.cli thread reply --to MSG_ID --draft reply|chase|thanks [--channel email --subject S] [--note N]
+                                                      (a draft asked for in plain words, on stdin: shown with Copy)
     python -m prep.cli review [--all]                  (read-only: the top 3 open tasks in review order)
     python -m prep.cli thread pending
     python -m prep.cli thread close MSG_ID             (a waiting message left without a reply: marked cancelled, kept)
@@ -2093,7 +2095,15 @@ def _thread_reply(args: argparse.Namespace, conn: sqlite3.Connection) -> int:
     app_id = db.message_application(conn, args.to)
     if args.app_id is not None and args.app_id != app_id:
         raise LookupError(f"message {args.to} is not about application {args.app_id}")
+    if not getattr(args, "draft", None) and any(getattr(args, k, None) for k in ("subject", "note", "channel")):
+        raise ValueError("--subject, --note and --channel go with --draft")
     text = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
+    if getattr(args, "draft", None):  # a draft asked for in plain words: shown in the box with Copy
+        reply_id = db.save_draft(conn, args.to, text, args.subject, args.note or "", kind=args.draft,
+                                 channel=args.channel or "linkedin")
+        print(f"Draft {reply_id} saved; message {args.to} answered. The Applications Assistant box shows it with "
+              "Copy. Nothing was sent.")
+        return 0
     reply_id = db.reply_message(conn, app_id, args.to, text)
     job = db.message_subject(conn, args.to)[1]
     topic = db.message_topic(conn, args.to)
@@ -2116,13 +2126,13 @@ def cmd_reply(args: argparse.Namespace, settings: Settings, conn: sqlite3.Connec
     then how to save the draft. `reply save --to MSG`: stores the draft (stdin or --file) as the reply."""
     if args.reply_cmd == "save":
         draft = Path(args.file).read_text(encoding="utf-8") if args.file else sys.stdin.read()
-        if args.app is not None:
-            db.attach_draft_request(conn, args.to, args.app)
+        msg = db.get_message(conn, args.to)
+        if msg is None or msg["author"] != "user" or not msg["comms"]:
+            raise LookupError(f"no draft request {args.to} (a draft asked for in plain words: thread reply --draft)")
         reply_id = db.save_draft(conn, args.to, draft, args.subject, args.note or "")
         late = db.get_message(conn, args.to)["status"] == "cancelled"
         print(f"Draft {reply_id} saved; request {args.to} {'was cancelled; shown as after cancel' if late else 'answered'}. "
-              + ("The application's panel" if args.app is not None else "Paste recruiter message (top of Applications)")
-              + " shows it to edit and copy. Nothing was sent.")
+              "The Applications Assistant box shows it with Copy. Nothing was sent.")
         return 0
     msg = db.get_message(conn, args.message)
     if msg is None or msg["author"] != "user" or not msg["comms"]:
@@ -2919,6 +2929,11 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("app_id", type=int, nargs="?", help="optional: checked against the message's application")
     t.add_argument("--to", type=int, required=True, help="the user message id being answered")
     t.add_argument("--file", help="a file holding the reply (default: stdin)")
+    t.add_argument("--draft", choices=[k for k in db.COMMS_KINDS if k != "invite"],
+                   help="the text is a draft to copy (a reply, follow-up or thank-you asked for in plain words)")
+    t.add_argument("--channel", choices=db.CHANNELS, help="with --draft: linkedin (default) or email")
+    t.add_argument("--subject", help="with --draft: the email's subject line (email only, required there)")
+    t.add_argument("--note", help="with --draft: one line shown above the draft (what to check, a stage change)")
     hsub.add_parser("pending", help="user messages waiting for the agent")
     t = hsub.add_parser("close", help="close a waiting message without a reply (marked cancelled, kept)")
     t.add_argument("message", type=int, help="the user message id")
@@ -2931,7 +2946,6 @@ def build_parser() -> argparse.ArgumentParser:
     t.add_argument("--claim", action="store_true", help="take this request for this session first")
     t = rsub.add_parser("save", help="store the draft (stdin or --file) as the reply to a request")
     t.add_argument("--to", type=int, required=True, help="the request's message id")
-    t.add_argument("--app", type=int, help="a whole-search request about this tracked application: link it (the draft shows in its panel)")
     t.add_argument("--subject", help="the email's subject line (email only, required there)")
     t.add_argument("--note", help="one line shown above the draft: the stage change proposed or made, what to check")
     t.add_argument("--file", help="a file holding the draft (default: stdin)")

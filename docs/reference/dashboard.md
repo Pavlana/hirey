@@ -235,9 +235,9 @@ recruiter call, then Tailor CV and apply. Top to bottom (`web._panel`):
    the brief is being written. **More** holds the full brief (with Write brief / Redo brief and Show
    original), the company research card and the CV fit card, each with Open and Redo.
 4. **2. Questions to clarify**: the questions for the recruiter call, each with Copy, and Copy all; the pay
-   question is marked "ask on the call" and is never copied. Under them the latest reply draft (editable,
-   with Copy) and, for an application from a recruiter's invitation, the **LinkedIn invitation** card: its
-   gate line, Top 5 rank and reply draft ([search.md](search.md#recruiters-invitations)).
+   question is marked "ask on the call" and is never copied. Under them, for an application from a
+   recruiter's invitation, the **LinkedIn invitation** card: its gate line and Top 5 rank
+   ([search.md](search.md#recruiters-invitations)). Reply drafts are only in the Applications Assistant box.
 5. **3. Tailor CV and apply**: Tailor CV (always a plan first; "Planning…" / "Tailoring…" while open), Mark
    applied and Skip while Interested, afterwards a disabled "Applied · 3 Nov" or "Skipped"
    ([applications.md](applications.md#mark-applied-and-skip)); then the Tailoring plan and Tailored CV

@@ -316,6 +316,19 @@ class CliTest(IsolatedTestCase):
         with closing(db.connect(self.prep_db)) as conn:
             self.assertEqual([m["author"] for m in db.thread(conn, self.app)], ["user", "agent"])
 
+    def test_reply_as_a_draft(self) -> None:
+        with mock.patch("sys.stdin", io.StringIO("Hi Jo,\nAny update?\nSam")):
+            code, out, err = self.run_cli("thread", "reply", "--to", str(self.msg), "--draft", "chase", "--channel",
+                                          "email", "--subject", "Platform role", "--note", "Check the date")
+        self.assertEqual(code, 0, err)
+        self.assertIn("shows it with Copy", out)
+        with closing(db.connect(self.prep_db)) as conn:
+            r = db.thread(conn, self.app)[-1]
+        self.assertEqual((r["comms"], r["channel"], r["draft_subject"], r["draft_body"], r["body"]),
+                         ("chase", "email", "Platform role", "Hi Jo,\nAny update?\nSam", "Check the date"))
+        code, _, err = self.run_cli("thread", "reply", "--to", str(self.msg), "--note", "x")
+        self.assertEqual(code, 2)
+
     def test_pending_queue_and_today(self) -> None:
         out = self.run_cli("thread", "pending")[1]
         self.assertIn(f"message {self.msg} on #{self.app} Globex Example — Platform Engineer", out)

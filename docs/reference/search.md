@@ -183,14 +183,14 @@ check its company gate is unknown until the company is checked.
 
 ## Recruiters' invitations
 
-A recruiter's message pasted into **Paste recruiter message** at the top of Applications
+A recruiter's message sent from the Applications Assistant box with **Recruiter message** on
 ([assistants.md](assistants.md#invitations)) is evaluated like a getjo job.
 
 ![An application from a recruiter's invitation: the LinkedIn invitation card, on example data](../screenshots/linkedin-invitation.png)
 
 ```mermaid
 flowchart TD
-    paste["Paste recruiter message<br/>top of Applications"] --> read{"Comms worker: invite save"}
+    paste["Applications Assistant box<br/>Recruiter message on"] --> read{"Comms worker: invite save"}
     read -->|"company and role named"| app["Application at Interested<br/>source LinkedIn (recruiter)"]
     read -->|"company or role missing"| wait["invitations row, missing set<br/>the draft asks for it"]
     wait -->|"the recruiter's answer pasted, --invite N"| read
@@ -228,5 +228,5 @@ flowchart TD
   - the week's rank when picked;
   - "Named in the recruiter's answer of …" when a second paste named the job: it then goes through the
     gate, company research and the CV fit like any invitation;
-  - the reply, editable with Copy, or "Drafting the reply…".
+  - not the draft: it is the reply in the Applications Assistant box, with Copy.
 - Tailoring starts with the panel's Tailor CV (the plan) or Just write it, as for any application.

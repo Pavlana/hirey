@@ -675,11 +675,6 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .artifact .gate-list li { display: inline-flex; align-items: center; gap: 4px; }
 .artifact .why { margin: 0; font-size: 13px; color: var(--text-muted); }
 #card-invite { margin-bottom: var(--space-3); }
-.paste-box { padding: var(--space-3); margin-bottom: var(--space-3); }
-.paste-form { display: grid; grid-template-columns: 1fr auto; gap: 6px var(--space-2); align-items: end; }
-.paste-form label { grid-column: 1 / -1; font-weight: 600; }
-.paste-form textarea { width: 100%; resize: vertical; }
-.draft-edit { width: 100%; resize: vertical; font: inherit; }
 /* Notes: the user's and the agent's notes on one application; Edit opens the form under them */
 .notes-body p, .notes-body ul { margin: 0 0 4px; }
 .notes-body ul { padding-left: 1.2em; }
@@ -817,6 +812,13 @@ form.ask textarea {
 form.ask textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 form.ask textarea::placeholder { color: var(--text-faint); }
 .ask-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); font-size: 12px; }
+/* Message | Recruiter message: two radios drawn as a segmented switch, left of the hint and Send. */
+.ask-mode { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.ask-mode .view-btn { height: 24px; font-size: 12px; padding: 0 10px; cursor: pointer; }
+.ask-mode .view-btn:has(input:checked) { background: var(--surface-2); color: var(--text); font-weight: 600; }
+.ask-mode .view-btn:has(input:focus-visible) { box-shadow: var(--ring); }
+.ask-mode input { position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.ask-hint { flex: 1; }
 
 /* --- learn ----------------------------------------------------------------------
    /learn: a grid of tracks (a cover gradient with a progress ring, then title, counts and done / all).
@@ -1015,7 +1017,7 @@ main:has(.learn-view) { max-width: 1880px; }
   padding-bottom: var(--space-2); border-bottom: 1px solid var(--border); }
 .draft-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); }
 .draft-subject .draft-text { flex: 1; font-weight: 600; }
-.draft-body { white-space: pre-wrap; overflow-wrap: anywhere; }
+.draft-body { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .draft-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); font-size: 12.5px; }
 .answer-check { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2);
   margin: calc(-1 * var(--space-4)) 0 0; font-size: 12.5px; }  /* close under Your answer */
