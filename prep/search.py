@@ -13,7 +13,10 @@ Plain code where the answer is plain, the agent where it needs judgement:
 
 A job dict needs id, company, title, location, score, posted_at, first_seen; `origin` says where it came
 from ("getjo", the default: getjo polls the watch list, so its companies pass the company gate unless a
-check says drop). Another source (LinkedIn invitations) builds the same dict and calls evaluate().
+check says drop). A recruiter's invitation (origin "linkedin", invite_jobs) builds the same dict: its id is
+"linkedin:<invitation id>", its score is the CV fit (1-5) doubled onto getjo's 0-10 scale (shown only out of
+10), and it joins the
+candidates while its application is still Interested.
 Every criterion is yes / no / unknown; pay is pass / fail / unknown and its figure is never seen here.
 """
 
@@ -134,7 +137,10 @@ def why_line(job: dict, check: dict | None, screen: dict | None, today: str) -> 
     "8/10 fit · strong company · builds agents · evals in role · posted 3 days ago"."""
     screen, check = screen or {}, check or {}
     parts = []
-    if job.get("score") is not None:
+    if job.get("origin") == "linkedin":  # its row is marked LinkedIn; the fit is shown once, out of 10
+        if job.get("score") is not None:
+            parts.append(f"{job['score']}/10 CV fit")
+    elif job.get("score") is not None:
         parts.append(f"{job['score']}/10 fit")
     if check.get("verdict") in ("strong", "possible"):
         parts.append(f"{check['verdict']} company")
@@ -217,12 +223,12 @@ def pick_outcome(decision: dict | None) -> str:
 def pick_stats(conn: sqlite3.Connection) -> dict:
     """Pipeline stats' search result: every job ever picked (once, however many weeks), how many were applied
     to, are Interested, were skipped (by reason) or are not acted on yet."""
-    decisions = db.job_decisions(conn)
+    found = decisions(conn)
     jobs = list(dict.fromkeys(p["getjo_job_id"] for p in db.all_picks(conn)))
     counts = {"picked": len(jobs), "applied": 0, "interested": 0, "skipped": 0, "open": 0}
     reasons: dict[str, int] = {}
     for job_id in jobs:
-        d = decisions.get(job_id)
+        d = found.get(job_id)
         outcome = pick_outcome(d)
         counts[outcome] += 1
         if outcome == "skipped":
@@ -232,18 +238,72 @@ def pick_stats(conn: sqlite3.Connection) -> dict:
     return counts
 
 
+def fit_on_ten(fit: int | None) -> int | None:
+    """A CV fit (1-5) on getjo's 0-10 scale, so a LinkedIn job and a getjo job compare at a glance."""
+    return fit * 2 if fit is not None else None
+
+
+def invite_job(conn: sqlite3.Connection, inv: dict) -> dict:
+    """The job dict of a named invitation (db.invitations), as evaluate() takes it."""
+    fit = db.cv_fit(conn, inv["application_id"])
+    return {"id": inv["job_id"], "company": inv["company"], "title": inv["role"], "location": inv["location"],
+            "score": fit_on_ten(fit["score"] if fit else None), "fit": fit["score"] if fit else None,
+            "posted_at": inv["created_at"], "first_seen": None, "origin": "linkedin", "app_id": inv["application_id"]}
+
+
+def invite_jobs(conn: sqlite3.Connection) -> list[dict]:
+    """The candidates from recruiters' invitations: each named one whose application is still Interested."""
+    out = []
+    for inv in db.invitations(conn, named=True):
+        app = db.get_application(conn, inv["application_id"])
+        if app and app["status"] == "to_apply":
+            out.append(invite_job(conn, inv))
+    return out
+
+
+def invite_eval(conn: sqlite3.Connection, inv: dict, crit: Criteria, today: str) -> dict:
+    """The evaluation card of a named invitation: evaluate() of its job, whatever its application's stage."""
+    job = invite_job(conn, inv)
+    return evaluate(job, db.company_check(conn, job["company"] or ""), db.job_screens(conn).get(job["id"]),
+                    crit, today)
+
+
+STATE_LINES = {"passed": "Passes all gates", "held": "Held: interview style unknown", "screening": "Screening"}
+
+
+def gate_line(row: dict) -> str:
+    """The evaluation in one line: the state first ("Passes all gates", "Fails: level, team size"), then the why
+    line, e.g. "Passes all gates · 8/10 CV fit · strong company · builds agents · posted today"."""
+    state = f"Fails: {failed_text(row)}" if row["failed"] else STATE_LINES[row["state"]]
+    return " · ".join(x for x in (state, row["why"]) if x)
+
+
+def attention(row: dict) -> list[tuple[str, str]]:
+    """The gates that need a look: (label, value) for each one that is no or unknown, in the criteria's order.
+    The ones that say yes are covered by gate_line."""
+    return [(GATE_LABELS.get(k, k), v) for k, v in row["gates"].items() if v != "yes"]
+
+
+def decisions(conn: sqlite3.Connection) -> dict[str, dict]:
+    """getjo jobs' decisions and named invitations' (db.invite_decisions), by job id."""
+    return {**db.job_decisions(conn), **db.invite_decisions(conn)}
+
+
 def board(conn: sqlite3.Connection, jobs: list[dict], crit: Criteria, today: str, n: int) -> dict:
-    """Everything the Top 5 view shows, from the candidate jobs: `picks` (the week's, by rank, each with its
-    evaluated `row` while the job is still a candidate, else None), `more` (passed, not picked), `held`,
-    `screening` and `failed` rows, and `rows` (all of them)."""
-    rows = evaluate_all(conn, jobs, crit, today)
-    decisions = db.job_decisions(conn)
-    picks = pick_week(conn, rows, decisions, today, n)
+    """Everything the Top 5 view shows, from the candidate jobs (getjo's, plus invite_jobs): `picks` (the
+    week's, by rank, each with its evaluated `row` while the job is still a candidate, else None), `more`
+    (passed, not picked), `held`, `screening` and `failed` rows, and `rows` (all of them)."""
+    rows = evaluate_all(conn, list(jobs) + invite_jobs(conn), crit, today)
+    decided = decisions(conn)
+    picks = pick_week(conn, rows, decided, today, n)
     by_id = {r["job"]["id"]: r for r in rows}
     picked = {p["getjo_job_id"] for p in picks}
     for p in picks:
         p["row"] = by_id.get(p["getjo_job_id"])
-        p["outcome"] = pick_outcome(decisions.get(p["getjo_job_id"]))
+        p["outcome"] = pick_outcome(decided.get(p["getjo_job_id"]))
+        invite = db.invite_id_of(p["getjo_job_id"])
+        inv = db.get_invitation(conn, invite) if invite is not None and p["row"] is None else None
+        p["job"] = invite_job(conn, inv) if inv and inv["application_id"] else None  # acted on: still links to it
     return {"picks": picks, "rows": rows,
             "more": [r for r in rows if r["state"] == "passed" and r["job"]["id"] not in picked],
             **{state: [r for r in rows if r["state"] == state] for state in ("held", "screening", "failed")}}

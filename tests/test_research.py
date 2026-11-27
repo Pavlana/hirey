@@ -311,7 +311,7 @@ class DashboardTest(WebTestCase):
             db.save_company_profile(conn, "massive-dynamic-example", research.read_profile(
                 self.private / "companies" / "massive-dynamic-example.md"))
         panel = self.panel(self.MDE)
-        self.assertIn('data-jump="card-research">Research ✓ 18 Jan</a>', self.shortcuts(panel))
+        self.assertNotIn("Research", self.shortcuts(panel))  # the result is its card, with Redo: not a button
         card = panel[panel.index('id="card-research"'):]
         self.assertIn("Makes &lt;b&gt;example&lt;/b&gt; widgets.", card)
         self.assertIn(f"/research/file?app={self.MDE}&amp;kind=research", card)
@@ -333,7 +333,8 @@ class DashboardTest(WebTestCase):
         self.assertIn("Researching…", self.shortcuts(self.panel(self.MDE)))
         self.save_both()
         panel = self.panel(self.MDE)
-        self.assertIn('data-jump="card-fit">CV fit 4/5</a>', self.shortcuts(panel))
+        self.assertNotIn("CV fit", self.shortcuts(panel))  # primary actions only: the result is its card
+        self.assertIn(">Tailor CV</button>", self.shortcuts(panel))
         company = panel[panel.index('id="card-research"'):panel.index('id="card-fit"')]
         self.assertIn(">Tier A</span></p>", company)  # the fixture's tier A, not the research's B: no B reason
         self.assertNotIn("Suggested", company)

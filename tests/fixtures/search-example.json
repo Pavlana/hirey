@@ -378,7 +378,7 @@
  "briefs": [
   {
    "job": "ashby:initrode-ai:a1",
-   "brief": "hybrid 2 days \u00b7 Python \u00b7 LLM agents \u00b7 Senior \u00b7 London\n## Summary\nSenior AI engineer on a fictional team building internal agents.\n## Must-haves\n- Python in production\n- LLM APIs and agent frameworks\n- Evals for LLM features\n## Where & terms\n- London, hybrid 2 days\n- Permanent, senior\n## Team & product\n- Team of 8 engineers building made-up agents"
+   "brief": "hybrid 2 days · Python · LLM agents · Senior · London\n## Summary\nSenior AI engineer on a fictional team building internal agents.\n## Must-haves\n- Python in production\n- LLM APIs and agent frameworks\n- Evals for LLM features\n## Where & terms\n- London, hybrid 2 days\n- Permanent, senior\n## Team & product\n- Team of 8 engineers building made-up agents"
   }
  ],
  "decisions": [
@@ -395,7 +395,7 @@
    "company": "Acme Rockets",
    "title": "Platform Engineer",
    "score": 9,
-   "why": "9/10 fit \u00b7 possible company \u00b7 posted 1 day ago"
+   "why": "9/10 fit · possible company · posted 1 day ago"
   },
   {
    "days_before": 7,
@@ -403,7 +403,43 @@
    "company": "Globex Labs",
    "title": "Cloud Security Engineer",
    "score": 8,
-   "why": "8/10 fit \u00b7 posted 0 days ago"
+   "why": "8/10 fit · posted 0 days ago"
+  }
+ ],
+ "invitations": [
+  {
+   "pasted": "Hi Sam, I'm hiring for Northwind Robotics: a Senior AI Engineer to build LLM agents for field engineers. London, hybrid, a team of eight engineers. Would you be open to a quick chat this week?",
+   "company": "Northwind Robotics",
+   "role": "Senior AI Engineer",
+   "location": "London (hybrid)",
+   "check": {
+    "verdict": "strong",
+    "sector_ok": "yes",
+    "interviews": "yes",
+    "kind": "product",
+    "note": "Take-home and a pairing session (made-up report)"
+   },
+   "screen": {
+    "role_family": "yes",
+    "level": "yes",
+    "team": "yes",
+    "location": "yes",
+    "pay": "unknown",
+    "builds_agents": "yes",
+    "evals": "unknown",
+    "contract": "permanent"
+   },
+   "fit": 4,
+   "draft": "Hi Jo,\nThank you for reaching out. The role sounds interesting.\nI'm available for a call on Tuesday or Wednesday after 2pm.\nBest regards,\nSam"
+  },
+  {
+   "pasted": "Hi Sam, I'm working on an exciting AI engineering role with a fast-growing client. Would you be interested in a chat?",
+   "missing": [
+    "company",
+    "description",
+    "interviews"
+   ],
+   "draft": "Hi Alex,\nThank you for reaching out. The role sounds interesting.\nCould you please share the following before we speak:\n- the company name, or its sector and size if it's confidential\n- whether it's an in-house team or a consultancy\n- the job description\n- the interview process\nI'd be glad to discuss it on a call afterwards.\nBest regards,\nSam"
   }
  ]
 }

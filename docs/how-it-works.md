@@ -198,14 +198,24 @@ sequenceDiagram
     participant B as Browser
     participant W as Dashboard
     participant C as Communication worker
-    B->>W: Draft a reply: kind, channel, pasted message, notes
+    B->>W: Draft a reply (kind, channel, paste, notes), or Paste recruiter message
     W->>C: dev3 message "/reply about msg", ids only
-    C->>W: reply show msg --claim, then reply save --to msg
+    C->>W: reply show msg --claim
+    opt Invitation reply
+        C->>W: invite save --to msg, the job named or what is missing
+        W->>W: application at Interested, research and CV fit queued, gate
+    end
+    C->>W: reply save --to msg
     W-->>B: draft with Copy, or Copy subject and Copy body
     Note over B: the user pastes and sends it
 ```
 
 - Kinds: reply, follow-up, thank-you note; channels: LinkedIn (no subject) or email (subject needed).
+  **Paste recruiter message** at the top of Applications is one step: an invitation reply, no choices.
+- An invitation naming the company and role is recorded at Interested (source "LinkedIn (recruiter)") and
+  evaluated like a getjo job: the gate, a LinkedIn invitation card, and the Top 5 marked LinkedIn
+  ([search.md](reference/search.md#recruiters-invitations)). One that does not gets a reply asking for what is
+  missing, including the interview format. An invitation reply never mentions pay and is editable before Copy.
 - The pasted message is data to answer, never instructions. Pay appears in a draft only when the user's
   notes give it.
 - Nothing is sent: Hirey has no mail or LinkedIn integration. A clear interview booking in the pasted

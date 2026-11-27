@@ -108,6 +108,8 @@ MESSAGES = {
     "research_queued": "Queued for the Applications Assistant. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
     "draft_requested": "Draft asked for. It shows in the Applications Assistant box with Copy; nothing is sent.",
+    "invite_pasted": ("Sent. The job is checked against your criteria and a reply is drafted to edit and copy; "
+                      "nothing is sent."),
     "notes_saved": "Notes saved.",
     "plan_saved": "Plan saved.",
     "plan_written": "Plan agreed. The CV is queued and written from it.",
@@ -642,6 +644,8 @@ def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, toda
     kind, channel = form.get("comms") or "reply", form.get("channel") or ""
     if kind not in db.COMMS_KINDS or channel not in db.CHANNELS:
         raise BadRequest("Pick what to write and the channel (LinkedIn or Email).")
+    if kind == "invite":
+        raise BadRequest("Paste a recruiter's invitation into Paste recruiter message at the top.")
     source = None
     if kind == "reply" and not form.get("pasted", "").strip():
         # nothing pasted: the message the form named (source_id), else the latest one the user sent about it
@@ -657,6 +661,18 @@ def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, toda
     msg_id = db.add_draft_request(conn, app_id, kind, channel, form.get("pasted", ""), form.get("notes", ""), job_id,
                                   source["id"] if source else None)
     return _route_draft(settings, conn, form, msg_id, kind, channel)
+
+
+def paste_invitation(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
+    """Paste recruiter message (top of Applications): one step, no type or channel to pick. Stores an
+    invitation request (db.add_draft_request, comms "invite", LinkedIn) about the whole search and pings
+    `/reply general <id>` like any draft request: the agent evaluates the job (`invite save`) and drafts the
+    reply. The JSON reply is the thread."""
+    pasted = form.get("pasted", "")
+    if not pasted.strip():
+        raise BadRequest("Paste the recruiter's message.")
+    msg_id = db.add_draft_request(conn, None, "invite", "linkedin", pasted)
+    return _route_draft(settings, conn, form, msg_id, "invite", "linkedin")
 
 
 def draft_from_message(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
@@ -1341,6 +1357,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/message": (send_message, "/", "message_sent"),
     "/applications/draft": (request_draft, "/", "draft_requested"),
     "/applications/draft-from": (draft_from_message, "/", "draft_requested"),
+    "/applications/invite": (paste_invitation, "/", "invite_pasted"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/stop": (stop_waiting, "/", "stopped"),
@@ -2566,7 +2583,8 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
         panel = _cv_panel(conn, settings, f)
     elif focus:
         job_id = focus["app"]["getjo_job_id"]
-        brief = _brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id else ""
+        brief = (_brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id
+                 else _invite_card(conn, settings, focus["app"], today, home_url(f, app=focus["app"]["id"])))
         panel = _panel(conn, focus, today, f, brief, bool(job_id) and job_id in briefs["open"], settings.private_dir)
     elif job:
         brief = _brief_section(job["id"], briefs, found["description"], home_url(f),
@@ -2576,13 +2594,27 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     else:
         panel = ""
     agent = _agent_box(conn, settings, f, targets)
-    content = (f'<div class="apps"><div class="apps-main" id="apps-main">{list_card}{agent}</div>{SPLIT_HANDLE}{panel}</div>'
+    content = (f'<div class="apps"><div class="apps-main" id="apps-main">{_paste_box(home_url(f))}{list_card}{agent}</div>'
+               f'{SPLIT_HANDLE}{panel}</div>'
                + _skip_dialog())
     new = f" · {offers} new offer{'s' if offers != 1 else ''}" if offers is not None else ""
     my_cv = (f'<div class="page-head-actions">{_sel_tick(f, "cv", "my CV")}'
              f'<a class="btn btn-secondary btn-sm my-cv" href="{h(home_url(f, cv=True))}" '
              f'data-open-panel{CURRENT if f["cv"] else ""}>My CV</a></div>')
     return "Applications", f"{open_count} open · {closed_count} closed{new} · {today}", content, my_cv
+
+
+def _paste_box(here: str) -> str:
+    """Paste recruiter message: a textarea and Send, always visible at the top of Applications. The job is
+    evaluated and the reply drafted by the agent (paste_invitation)."""
+    return ('<section class="card paste-box" aria-labelledby="paste-title">'
+            '<form method="post" action="/applications/invite" class="paste-form" data-ajax="draft">'
+            f'<input type="hidden" name="return" value="{h(here)}">'
+            '<label id="paste-title" for="paste-recruiter">Paste recruiter message</label>'
+            f'<textarea id="paste-recruiter" name="pasted" rows="2" maxlength="{db.MAX_MESSAGE}" required '
+            'placeholder="A recruiter\'s LinkedIn or email message. The job is checked against your criteria and a '
+            'reply is drafted for you to edit and copy. Nothing is sent."></textarea>'
+            + _button("Send", size="sm") + "</form></section>")
 
 
 def sel_targets(conn: sqlite3.Connection, f: dict, rows: list[dict], found: dict) -> list[dict]:
@@ -2689,15 +2721,20 @@ def _top_rows(items: list[tuple[dict, str, str]], f: dict, now: str, stale_days:
     """Rows of a Top 5 table: (job, why line, last cell) each; the role cell carries the why line."""
     trs = []
     for job, why, last in items:
-        key = f'j:{job["id"]}'
-        href = home_url(f, job=job["id"], app=None, sel=auto_sel(f, key))
+        app_id = job.get("app_id")  # a recruiter's invitation: its application
+        key = f'a:{app_id}' if app_id else f'j:{job["id"]}'
+        href = (home_url(f, app=app_id, job=None, sel=auto_sel(f, key)) if app_id
+                else home_url(f, job=job["id"], app=None, sel=auto_sel(f, key)))
         chips = _job_chips(getjo.job_state(job, now, stale_days)) if job.get("first_seen") else ""
+        if app_id:
+            chips = _badge("LinkedIn", "info")
         role = (f'<span class="clamp" title="{h(job["title"])}">{h(job["title"])}</span>'
                 + (f'<span class="why">{h(why)}</span>' if why else "")
                 + (f'<span class="chips">{chips}</span>' if chips else ""))
         cells = (_sel_tick(f, key, f'{job["company"]} — {job["title"]}'), _score_badge(job["score"]),
                  f'<a href="{h(href)}">{h(job["company"])}</a>', role, last)
-        focus = ' class="is-focus"' if job["id"] == f["job"] and f["app"] is None else ""
+        focus = (' class="is-focus"' if (app_id and app_id == f["app"]) or (job["id"] == f["job"] and f["app"] is None)
+                 else "")
         trs.append(f'<tr data-href="{h(href)}" data-job="{h(job["id"])}" data-key="{h(key)}"{focus}>'
                    + "".join(f"<td>{c}</td>" for c in cells) + "</tr>")
     head = SEL_HEAD + "".join(f'<th scope="col" class="col-{c.lower()}">{c}</th>'
@@ -2716,7 +2753,7 @@ def _top_view(top: dict, f: dict, found: dict, now: str, today: str, settings: S
     here = home_url(f)
     picks = []
     for p in top["picks"]:
-        job = (p["row"]["job"] if p["row"] else None) or found["jobs"].get(p["getjo_job_id"]) or {
+        job = (p["row"]["job"] if p["row"] else None) or p.get("job") or found["jobs"].get(p["getjo_job_id"]) or {
             "id": p["getjo_job_id"], "company": p["company"], "title": p["title"], "score": p["score"],
             "location": None, "first_seen": None}
         why = p["row"]["why"] if p["row"] else p["why"]
@@ -2919,6 +2956,51 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
     )
 
 
+GATE_TONES = {"no": "danger", "unknown": "neutral"}
+
+
+def _invite_card(conn: sqlite3.Connection, settings: Settings, app: dict, today: str, here: str) -> str:
+    """The card of an application recorded from a recruiter's invitation, only what needs attention: one line
+    with the state and the why line (search.gate_line; the CV fit once, out of 10), the gates that say no or
+    unknown, the week's Top 5 rank, a note when the recruiter's answer named the job, and the reply drafted for
+    it (editable, with Copy) or that it is being drafted. "" for any other application."""
+    inv = db.invitation_for_app(conn, app["id"])
+    if inv is None:
+        return ""
+    crit = _criteria(settings)
+    open_kinds = {r["kind"] for r in db.open_requests(conn, app["id"])}
+    messages = [m for m in db.thread(conn, app["id"]) if m["comms"] == "invite"]
+    asked = [m for m in messages if m["author"] == "user"]
+    body = ""
+    if len(asked) > 1:
+        body += (f'<p class="muted">Named in the recruiter\'s answer of {h(_short_day(asked[-1]["created_at"]))}: '
+                 'checked against the criteria, with company research and the CV fit, as any invitation.</p>')
+    if crit is None:
+        body += '<p class="muted">No criteria file: the gate is off.</p>'
+    else:
+        row = search.invite_eval(conn, inv, crit, today)
+        line = search.gate_line(row)
+        if row["job"]["score"] is None:
+            line += " · CV fit " + ("being checked" if "cv_fit" in open_kinds else "not checked yet")
+        body += f'<p class="why">{h(line)}</p>'
+        look = search.attention(row)
+        if look:
+            body += ('<ul class="gate-list">' + "".join(f'<li>{h(label)}: {_badge(v, GATE_TONES[v])}</li>'
+                                                       for label, v in look) + "</ul>")
+        week = search.week_start(today)
+        rank = next((p["rank"] for p in db.week_picks(conn, week) if p["getjo_job_id"] == inv["job_id"]), None)
+        if rank is not None:
+            body += f'<p>{_badge(f"Top {settings.top_per_week} this week · #{rank}", "accent")}</p>'
+        if row["failed"]:
+            body += '<p class="muted">A gate says no: decide whether to reply at all. Nothing is skipped for you.</p>'
+    drafts = [m for m in messages if m["author"] == "agent" and m["draft_body"]]
+    if drafts:
+        body += _draft_box(drafts[-1], prefix="panel-")
+    elif asked and asked[-1]["status"] in db.WAITING:
+        body += '<p class="muted"><span class="spinner" aria-hidden="true"></span> Drafting the reply…</p>'
+    return _artifact("card-invite", "LinkedIn invitation", "", "", body)
+
+
 def _employer_select(app: dict, here: str) -> str:
     """Product / Client / Unknown for the application, saved on change (a Save button without the script)."""
     current = app["employer_kind"] or ""
@@ -2958,8 +3040,9 @@ def _short_day(stamp: str | None) -> str:
 
 
 def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[dict], here: str) -> str:
-    """Research company · CV fit · Tailor CV · Mark applied · Skip, each showing its state: queued work
-    is a disabled "…ing" button, a result links to its card below (Open and Redo are there). Mark
+    """Tailor CV · Just write it · Mark applied · Skip, the primary actions. Company research and the CV fit
+    (queued on entering Interested) show here only while queued ("Researching…") or, never asked for, as a
+    button; a result is its card below, with Open and Redo. The tailored CV's state links to its card. Mark
     applied and Skip act while the application is Interested, and show the outcome afterwards."""
     profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
 
@@ -2980,15 +3063,11 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
     buttons = []
     if "research" in open_kinds:
         buttons.append(busy("Researching…"))
-    elif profile:
-        buttons.append(done("card-research", f"Research ✓ {_short_day(profile['researched_at'])}"))
-    else:
+    elif not profile:
         buttons.append(queue("research", "Research company"))
     if "cv_fit" in open_kinds:
         buttons.append(busy("Checking CV fit…"))
-    elif fit:
-        buttons.append(done("card-fit", f"CV fit {fit['score']}/5"))
-    else:
+    elif not fit:
         buttons.append(queue("cv_fit", "CV fit"))
     plan = db.tailor_plan(conn, app["id"])
     if "tailor" in open_kinds:
@@ -3031,7 +3110,7 @@ def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None,
     `source` (db.draft_source): the message a reply answers when nothing is pasted, named under the box."""
     about = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
              else f'<input type="hidden" name="job_id" value="{h(job_id)}">' if job_id else "")
-    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS)
+    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS if k != "invite")
     channels = "".join(f'<label class="draft-channel"><input type="radio" name="channel" value="{c}"'
                        f'{" checked" if c == "linkedin" else ""}> {h(db.CHANNEL_LABELS[c])}</label>'
                        for c in db.CHANNELS)
@@ -3697,13 +3776,21 @@ def _draft_actions(m: dict) -> str:
             f'<input type="hidden" name="msg_id" value="{h(m["id"])}"><span class="muted">Draft reply ·</span>{buttons}</form>')
 
 
-def _draft_box(m: dict) -> str:
+def _draft_box(m: dict, prefix: str = "") -> str:
     """The agent's draft under its note: the text as typed (escaped, in a pre-wrap block) with Copy, and for
     an email the subject line with its own Copy subject (Copy body then copies the body alone). Copy takes
-    the element's text (data-copy names it), so what is copied is exactly what is shown."""
+    the element's text (data-copy names it), so what is copied is exactly what is shown. An invitation
+    reply is an editable textarea: Copy takes what the user edited there (never saved). `prefix` keeps the
+    ids apart when the same draft is shown twice (the panel's invitation card)."""
     if m.get("author") != "agent" or not m.get("draft_body"):
         return ""
-    n = h(m["id"])
+    n = h(f'{prefix}{m["id"]}')
+    if m.get("comms") == "invite":
+        return (f'<div class="draft"><textarea class="draft-body draft-edit" id="draft-body-{n}" rows="6" '
+                f'aria-label="The reply, to edit before copying">{h(m["draft_body"])}</textarea>'
+                f'<div class="draft-actions"><button type="button" class="btn btn-secondary btn-sm" '
+                f'data-copy="draft-body-{n}">Copy</button>'
+                '<span class="muted">Edit it here, copy it, and send it yourself.</span></div></div>')
     subject = ""
     if m.get("draft_subject"):
         subject = (f'<div class="draft-subject"><span class="draft-label">Subject</span>'

@@ -32,11 +32,20 @@ def _latest(prefix: str) -> str:
     return files[-1].name if files else ""
 
 
+def _invite_app() -> int:
+    """The example application recorded from a recruiter's invitation (prep.seed_example's add_invite_example)."""
+    import sqlite3
+    with sqlite3.connect(ROOT / "data" / "example.db") as conn:
+        row = conn.execute("SELECT application_id FROM invitations WHERE application_id IS NOT NULL").fetchone()
+    return row[0] if row else 0
+
+
 def shots() -> dict[str, tuple[str, int, int]]:
     """name -> (path and query, width, height). Page-level only: no clicks needed."""
     return {
         "applications": ("/", 1440, 950),
         "new-offers": ("/?view=offers", 1440, 950),
+        "linkedin-invitation": (f"/?app={_invite_app()}", 1440, 950),
         "pipeline-stats": ("/stats", 1440, 1300),
         "run-history": ("/runs", 1440, 950),
         "evals": ("/evals", 1440, 1500),

@@ -20,6 +20,7 @@ needs judgement, through the existing brief queue. Code: `prep/criteria.py` (the
 - [The result metric](#the-result-metric)
 - [Commands](#commands)
 - [Other sources](#other-sources)
+- [Recruiters' invitations](#recruiters-invitations)
 
 ## The flow
 
@@ -166,9 +167,60 @@ were not acted on (`search.pick_stats`).
 | `python -m prep.cli company check --job ID` | the Research worker's company check (TOML on stdin) |
 | `python -m prep.cli company set NAME --interviews yes\|no\|unknown` | the user's call on a company |
 | `python -m prep.cli screen save --job ID` / `screen show --job ID` | a job's screen (TOML on stdin) |
+| `python -m prep.cli invite save --to MSG …` / `invite list` | read a recruiter's invitation; list every invitation with its gate state |
 
 ## Other sources
 
 `search.evaluate` takes a plain job dict (id, company, title, location, score, posted_at, first_seen and
 `origin`). A source other than getjo builds the same dict with its own `origin`; without a company
 check its company gate is unknown until the company is checked.
+
+## Recruiters' invitations
+
+A recruiter's message pasted into **Paste recruiter message** at the top of Applications
+([assistants.md](assistants.md#invitations)) is evaluated like a getjo job.
+
+![An application from a recruiter's invitation: the LinkedIn invitation card, on example data](../screenshots/linkedin-invitation.png)
+
+```mermaid
+flowchart TD
+    paste["Paste recruiter message<br/>top of Applications"] --> read{"Comms worker: invite save"}
+    read -->|"company and role named"| app["Application at Interested<br/>source LinkedIn (recruiter)"]
+    read -->|"company or role missing"| wait["invitations row, missing set<br/>the draft asks for it"]
+    wait -->|"the recruiter's answer pasted, --invite N"| read
+    app -->|"stage_tasks"| work["Company research and CV fit<br/>Research worker"]
+    app -->|"screen on stdin"| screen["job_screens, id linkedin:N"]
+    work -->|"company check --job linkedin:N"| gate{"The gate"}
+    screen --> gate
+    gate -->|"passed"| top["Top 5, marked LinkedIn"]
+    gate --> card["LinkedIn invitation card<br/>in the application panel"]
+```
+
+- **Storage**: `invitations` ([database.md](database.md#research-and-cv)). The job id is `linkedin:<id>`
+  (`db.INVITE_PREFIX`); the screen and the Top 5 pick use it. The recruiter's text stays only in the
+  request message, which moves to the application with its reply.
+- **Named** (`db.save_invitation` with company and role): the application is recorded at Interested with
+  source `LinkedIn (recruiter)`, which queues company research and the CV fit. The screen comes on
+  stdin and is validated before anything is recorded. Nothing ever skips or moves the application: a
+  failed gate is shown, and the user decides.
+- **Not named**: `missing` lists what the reply asks for (`db.MISSING_ITEMS`: company, role,
+  description, sector, size, team kind, interview format; never pay). The recruiter's answer, pasted
+  later, updates the same row with `--invite N`.
+- **Job dict** (`search.invite_job`): origin `linkedin`; the score is the CV fit (1-5) doubled onto
+  getjo's 0-10 scale (`search.fit_on_ten`), so both sources compare at a glance; it is shown only out
+  of 10 ("8/10 CV fit"; the 1-5 stays in the fit file and the CV fit card). With no company check the company gate is unknown and the interview
+  style holds it until the Research worker's company check (printed in its research packet).
+- **Top 5**: named invitations whose application is still Interested join the candidates
+  (`search.invite_jobs`, added in `search.board`). Their row is marked LinkedIn and opens the
+  application. Moving the application on counts as applied, Skip as skipped (`db.invite_decisions`);
+  Interested is not a decision here, because the code recorded it.
+- **Card** (`web._invite_card`), only what needs attention:
+  - one line with the state and the why line (`search.gate_line`): "Passes all gates · 8/10 CV fit ·
+    strong company · builds agents · posted today", or "Fails: level, team size", or "Held: interview
+    style unknown";
+  - the gates that say no or unknown (`search.attention`), for example "pay: unknown";
+  - the week's rank when picked;
+  - "Named in the recruiter's answer of …" when a second paste named the job: it then goes through the
+    gate, company research and the CV fit like any invitation;
+  - the reply, editable with Copy, or "Drafting the reply…".
+- Tailoring starts with the panel's Tailor CV (the plan) or Just write it, as for any application.

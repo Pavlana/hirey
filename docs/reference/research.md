@@ -60,6 +60,11 @@ The `/research` skill loops on `python -m prep.cli research next`.
 - Research: a verdict, either reuse a profile younger than `research_max_age_days` (90) or research
   again when the profile is stale, missing or forced.
 - CV fit: the cv.md path and the job description, read from getjo with `getjo.job_description`.
+- An application recorded from a recruiter's invitation (source "LinkedIn (recruiter)") has no getjo job:
+  the packet prints the recruiter's pasted message instead, marked as data (`cli._print_invitation_text`).
+  With a criteria file, its research step also asks for the company check with `--job linkedin:<id>`
+  when the company has none (`cli._print_invite_check`); see
+  [search.md](search.md#recruiters-invitations).
 - Job brief: a "Job brief" step when a tracked job has no brief, or on Redo
   (see [Job briefs](#job-briefs)).
 - Notes: the application's notes are printed as context. After company research the agent appends

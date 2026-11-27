@@ -40,7 +40,7 @@
     if (!btn) return;
     const el = document.getElementById(btn.dataset.copy);
     if (!el) return;
-    const text = el.textContent;
+    const text = el.matches("textarea") ? el.value : el.textContent; // an editable draft: as edited
     try {
       await navigator.clipboard.writeText(text);
     } catch {

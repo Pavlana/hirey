@@ -382,7 +382,8 @@ sequenceDiagram
 
 - **Draft a reply** is a folded form in the application panel, the job offer panel and under the
   Applications Assistant box (whole search). It posts `/applications/draft`:
-  - what to write (`db.COMMS_KINDS`: reply, chase = follow-up, thanks = thank-you note);
+  - what to write (`db.COMMS_KINDS`: reply, chase = follow-up, thanks = thank-you note, invite =
+    invitation reply, see [Invitations](#invitations));
   - the channel (`db.CHANNELS`: linkedin, email);
   - the recruiter's message pasted in (optional, see below), and the user's notes.
 - **Draft reply · LinkedIn | Email** is an action row under each of the user's own messages in the box
@@ -418,6 +419,24 @@ sequenceDiagram
   **Copy subject** and **Copy body** for email (`web._draft_box`; app.js copies the element's text).
 - A factual interview booking in the pasted message is recorded the way /stage does. Anything else
   (rejection, offer, withdrawal, skip) is only proposed in the note.
+
+### Invitations
+
+- **Paste recruiter message** is a textarea and Send, always visible at the top of Applications. It
+  posts `/applications/invite` (`web.paste_invitation`): a draft request with comms `invite`, channel
+  LinkedIn, about the whole search; no kind or channel to pick. Draft a reply's forms never offer it.
+- The invitation draft is an editable textarea, in the box and, once the job is recorded, in the
+  application's LinkedIn invitation card. Copy takes the edited text (`app.js`); edits are never saved.
+- `reply show` adds the steps: the criteria file's path, the invitations still waiting for the job to
+  be named, and the two cases.
+  - **Named**: `invite save --to MSG --company C --role R [--location L]` with the screen on stdin
+    records and evaluates the job ([search.md](search.md#recruiters-invitations)); the draft shows interest
+    and proposes call times, and a failed gate goes in the note.
+  - **Missing**: `invite save --to MSG --missing company,description,…`; the draft asks for the company
+    and the job description (or the sector, size and in-house or consultancy when the client is
+    confidential) and the interview format, then offers a short call.
+- Pay guard: an invitation reply never mentions pay, even when the recruiter raises it, unless the
+  user's notes do (`db.check_draft_pay(invite=True)`). The skill keeps it dry and professional: no flattery or enthusiasm, a neutral line of interest, questions as a short list.
 
 ## Workers sidebar and run history
 

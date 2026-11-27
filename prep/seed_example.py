@@ -161,6 +161,25 @@ def add_search_example(path: Path, data: dict, today: str) -> None:
         conn.close()
 
 
+def add_invite_example(path: Path, data: dict) -> None:
+    """Recruiters' invitations on made-up data (the "invitations" list of search-example.json): one with the job
+    named (recorded, checked, screened, a CV fit and a draft) and one waiting for the job to be named."""
+    conn = db.connect(path)
+    try:
+        for item in data.get("invitations", []):
+            msg = db.add_draft_request(conn, None, "invite", "linkedin", item["pasted"])
+            if item.get("company"):
+                db.save_company_check(conn, item["company"], item["check"], "agent")
+                inv, _ = db.save_invitation(conn, msg, item["company"], item["role"], item.get("location"))
+                db.save_screen(conn, inv["job_id"], item["screen"])
+                db.save_cv_fit(conn, inv["application_id"], item["fit"], [], "cv-fit-example.md")
+            else:
+                db.save_invitation(conn, msg, missing=tuple(item["missing"]))
+            db.save_draft(conn, msg, item["draft"], note="Example draft: copy it and send it yourself.")
+    finally:
+        conn.close()
+
+
 def build_evals_example(repo: Path) -> None:
     """A stand-in for getjo's checkout with only evals/catalog.json and evals/results/ (made-up runs),
     for the Evals page: PREP_GETJO_REPO=$PWD/data/example-getjo-repo."""
@@ -181,6 +200,7 @@ def main() -> int:
     build_getjo_db(EXAMPLE_GETJO_DB, data["getjo_jobs"] + extra["getjo_jobs"])
     build_prep_db(EXAMPLE_PREP_DB, data)
     add_search_example(EXAMPLE_PREP_DB, extra, date.today().isoformat())
+    add_invite_example(EXAMPLE_PREP_DB, extra)
     build_evals_example(EXAMPLE_GETJO_REPO)
     log.info("wrote %s and %s", EXAMPLE_PREP_DB.relative_to(REPO_ROOT), EXAMPLE_GETJO_DB.relative_to(REPO_ROOT))
     log.info("try: PREP_ASSISTANT_TASK= PREP_PREP_ASSISTANT_TASK= PREP_WORKER_RESEARCH= PREP_WORKER_COMMS= PREP_DB=data/example.db PREP_GETJO_DB=$PWD/data/example-getjo.db python -m prep.cli today")

@@ -120,6 +120,7 @@ gitignored.
 |            | `python -m prep.cli cards import FILE [--dry-run]`                   | Add or update tracks and cards from Markdown ([format](learn-format.md)); the same track and front is updated, its done status kept |
 |            | `python -m prep.cli cards gaps [--gap ID ...] [--app ID] [--limit N]` | Read-only: card drafts (JSON) for open gaps without a card; /debrief fills and save them with `cards add` after a yes |
 | `/reply`   | `python -m prep.cli reply show MSG [--claim]` / `reply save --to MSG [--subject S] [--note N]` | Draft a reply: the request with its context; save the draft (on stdin; email needs a subject) |
+| `/reply`   | `python -m prep.cli invite save --to MSG (--company C --role R [--location L] \| --missing a,b) [--invite N]` / `invite list` | A recruiter's invitation: the job named (screen on stdin) or what to ask for |
 |            | `python -m prep.cli feedback export [--out PATH]`                    | Write interested/applied/skipped labels as JSONL to `private_dir/feedback/job_decisions.jsonl` for getjo |
 
 Dates accept `YYYY-MM-DD`, `today`, `tomorrow` or `+N` (days from today).
@@ -222,6 +223,11 @@ from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
 ### Draft a reply (recruiter messages)
 
 Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies.
+
+- **A new recruiter message about a job.** Paste it into **Paste recruiter message** at the top of
+  Applications and press Send. A named job is recorded at Interested, checked against the criteria and
+  shown with its LinkedIn invitation card; otherwise the reply asks for what is missing. The reply is
+  editable before Copy.
 
 - **From a message already in the box.** A recruiter's message pasted into the Applications
   Assistant box (for example to ask for feedback on it) gets an action row: **Draft reply ·
