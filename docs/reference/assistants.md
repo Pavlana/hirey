@@ -362,7 +362,7 @@ The Learn box has its own Stop ([learn.md](learn.md)); each Stop touches only it
 ## Draft a reply (Communication worker)
 
 Hirey drafts, the user sends. There is no LinkedIn or mail integration. The recruiter's text comes
-from **Paste recruiter message** at the top of Applications ([Invitations](#invitations)).
+from the Applications Assistant box with **Recruiter message** on ([Invitations](#invitations)).
 
 ```mermaid
 sequenceDiagram
@@ -370,19 +370,21 @@ sequenceDiagram
     participant W as Dashboard
     participant DB as prep.db
     participant C as Comms worker
-    U->>W: POST /applications/invite, the pasted message
+    U->>W: POST /applications/message kind=invite, the pasted message
     W->>DB: add_draft_request, pending, comms and channel set
     W->>C: dev3 message /reply about msg, ids only
     C->>DB: reply show MSG --claim
     C->>DB: reply save --to MSG, draft and note
-    U->>W: poll, then Copy
+    U->>W: poll: the draft is the reply in the box, then Copy
     Note over U: the user pastes and sends it
 ```
 
 - The panel's **Draft a reply** form and its route `/applications/draft` were removed on 27 Nov 2026 (no
   draft request about an application or a job offer had ever been made with it). A follow-up, chase or
-  thank-you note is asked in the Applications Assistant box in plain words; /ask writes it as a draft to
-  copy, by /reply's rules. Draft requests stored before stay readable and are answered by /reply.
+  thank-you note is asked in the Applications Assistant box in plain words; /ask saves it with
+  `thread reply --to MSG --draft reply|chase|thanks [--channel email --subject S] [--note N]`
+  (`db.save_draft` with `kind` and `channel`; the user's message is the notes the pay guard reads), by
+  /reply's rules. Draft requests stored before stay readable and are answered by /reply.
 - The kinds (`db.COMMS_KINDS`: reply, chase = follow-up, thanks = thank-you note, invite = invitation reply)
   and channels (`db.CHANNELS`: linkedin, email) stay, for those requests and invitations.
 - A source message is one `db.is_draft_source` accepts: written by the user, in the Applications box
@@ -405,24 +407,24 @@ sequenceDiagram
   change made or proposed) as its body.
 - Pay guard (`db.check_draft_pay`): a pay figure only when the user's notes give one; pay wording only
   when the notes, the pasted message or the source message raise it.
-- The box shows a channel tag on both messages. A draft about an application is shown in its panel
-  (`web._panel_draft`: the latest draft, not an invitation's, which its card shows) and the box shows one
-  line linking there (`web._thread_draft`). A draft about no application shows under Paste recruiter
-  message (`web._search_draft`, the latest) and folded in the box. `reply save --app ID` links a
-  whole-search request to the application it is about (`db.attach_draft_request`), so its draft goes to
-  that panel. Either way the
-  draft is an escaped, editable textarea with **Copy**, or **Copy subject** and **Copy body** for email
-  (`web._draft_box`; app.js copies the textarea's edited value; edits are never saved).
+- The box shows a channel tag on both messages. The draft is the agent's message in the box, and only
+  there (no panel or page copy): its note as the body, then the escaped draft, read-only, with **Copy**, or
+  **Copy subject** and **Copy body** for email (`web._draft_box`; app.js copies the text). The thread's
+  About tag follows the message: `invite save` moves an invitation request and its draft to the recorded
+  application.
 - A factual interview booking in the pasted message is recorded the way /stage does. Anything else
   (rejection, offer, withdrawal, skip) is only proposed in the note.
 
 ### Invitations
 
-- **Paste recruiter message** is a textarea and Send, always visible at the top of Applications. It
-  posts `/applications/invite` (`web.paste_invitation`): a draft request with comms `invite`, channel
-  LinkedIn, about the whole search; no kind or channel to pick.
-- The invitation draft is an editable textarea, in the box and, once the job is recorded, in the
-  application's LinkedIn invitation card. Copy takes the edited text (`app.js`); edits are never saved.
+- The Applications Assistant box's input has a **Message | Recruiter message** switch (`web._ask_mode`:
+  two radios, `kind` = "" or `invite`), Message by default. With Recruiter message on, Send posts
+  `/applications/message` with `kind=invite` (`web.send_invitation`): a draft request with comms `invite`,
+  channel LinkedIn, about the whole search whatever is ticked; no kind or channel to pick. app.js swaps the
+  placeholder and sets the switch back to Message after a send; without the script the page comes back on
+  Message. One textarea, one Send.
+- The invitation draft is the reply in the box with Copy. Once the job is recorded, the application's
+  LinkedIn invitation card (`web._invite_card`) shows the gate and why line, not the draft.
 - `reply show` adds the steps: the criteria file's path, the invitations still waiting for the job to
   be named, and the two cases.
   - **Named**: `invite save --to MSG --company C --role R [--location L]` with the screen on stdin

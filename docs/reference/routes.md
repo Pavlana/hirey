@@ -82,8 +82,7 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
-| POST | `/applications/message` | store a message (`about` targets) and ping `/ask` | [assistants.md](assistants.md#sending-a-message) |
-| POST | `/applications/invite` | Paste recruiter message (`pasted`): an invitation request, pinged to the comms route | [assistants.md](assistants.md#invitations) |
+| POST | `/applications/message` | store a message (`about` targets) and ping `/ask`; `kind=invite`: an invitation request, pinged to the comms route | [assistants.md](assistants.md#sending-a-message) |
 | POST | `/applications/resend` | put a waiting message back to pending and ping again | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/cancel` | cancel one waiting message | [assistants.md](assistants.md#resend-and-cancel) |
 | POST | `/applications/stop` | cancel every waiting message and the open panel's work | [assistants.md](assistants.md#stop-and-no-reply) |

@@ -225,20 +225,17 @@ from dev3's `DEV3_TASK_SEQ`, so nothing else needs setting.
 
 Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the replies.
 
-- **A new recruiter message about a job.** Paste it into **Paste recruiter message** at the top of
-  Applications and press Send. A named job is recorded at Interested, checked against the criteria and
-  shown with its LinkedIn invitation card; otherwise the reply asks for what is missing. The reply is
-  editable before Copy.
+- **A new recruiter message about a job.** In the Applications Assistant box, switch **Message |
+  Recruiter message** to Recruiter message, paste it and press Send (the switch goes back to Message). A
+  named job is recorded at Interested, checked against the criteria and shown with its LinkedIn
+  invitation card; otherwise the reply asks for what is missing.
 
-- **A follow-up or a thank-you note.** Ask in the Applications Assistant box in plain words ("write a
-  thank-you note to Sam"), with the job ticked; the reply is the draft to copy.
+- **A follow-up or a thank-you note.** Ask as a Message in plain words ("write a thank-you note to
+  Sam"), with the job ticked.
 
-A draft about an application appears in that application's panel (the latest draft, under Questions to
-clarify), editable, with **Copy** (email: **Copy subject** and **Copy body**); the box shows one line
-pointing there. A draft about no application (an invitation that names no job yet) shows under
-**Paste recruiter message**, editable too; the box keeps it folded. The Applications Assistant box is
-for conversation only: it has no drafting controls. Edit it, copy it and send
-it yourself. Nothing is sent from Hirey. An interview the message books is
+Either way the draft comes back as the assistant's reply in the box, with **Copy** (email: **Copy
+subject** and **Copy body**). It is shown only there. Copy it and send it yourself. Nothing is sent from
+Hirey. An interview the message books is
 recorded on the application; a rejection or anything else is only proposed in the note above the
 draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
 /reply in any Claude Code session.

@@ -56,6 +56,21 @@
     setTimeout(() => { btn.textContent = label; }, 1500);
   });
 
+  // --- Message | Recruiter message (the Applications Assistant box) ------------------
+  // The switch only changes what Send posts (kind=invite) and the placeholder; one textarea, one Send.
+  function setAskMode(form, kind) {
+    const radio = form.querySelector(`.ask-mode input[value="${kind}"]`);
+    if (radio) radio.checked = true;
+    const area = form.elements.body;
+    if (!area) return;
+    if (!area.dataset.placeholderAsk) area.dataset.placeholderAsk = area.placeholder;
+    area.placeholder = kind === "invite" ? area.dataset.placeholderInvite : area.dataset.placeholderAsk;
+  }
+  document.addEventListener("change", (e) => {
+    const radio = e.target.closest?.(".ask-mode input[name='kind']");
+    if (radio) setAskMode(radio.form, radio.value);
+  });
+
   // --- toasts -------------------------------------------------------------------
   // Text is always set with textContent: server messages can echo form input.
   function toast(message, { error = false, action = null, ms = 5000 } = {}) {
@@ -1654,15 +1669,6 @@
           .catch((err) => toast(err.message, { error: true }));
         toast(`v${form.elements.version.value} restored as v${reply.version}. The CV it replaced is kept as v${reply.previous}.`,
           reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
-      } else if (mode === "draft") {
-        // Paste recruiter message: the request joins the Applications Assistant box, which waits for the draft.
-        const thread = document.querySelector(".agent [data-thread]");
-        if (thread && reply.html) thread.outerHTML = reply.html;
-        form.reset();
-        form.closest("details")?.removeAttribute("open");
-        applyChatFilter();
-        watchThread();
-        toast(reply.message);
       } else if (mode === "workers") {
         // Stop in a worker's popover: the rows come back from the server; the popover closes.
         swapWorkers(reply.html, { keepOpen: false });
@@ -1698,6 +1704,7 @@
         const thread = form.closest(".agent")?.querySelector("[data-thread]");
         if (thread && reply.html) thread.outerHTML = reply.html;
         if (form.elements.body) form.elements.body.value = ""; // Resend, Cancel and Stop have no text
+        if (form.querySelector(".ask-mode")) setAskMode(form, ""); // after a send: back to Message
         applyChatFilter();
         watchThread();
         if (form.action.endsWith("/applications/stop")) await refreshApps(); // the panel's spinners clear too

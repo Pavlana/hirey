@@ -195,8 +195,13 @@ NOTES
 - Say in the reply what was added ("Added to Notes: format, AI tools not allowed, two names.").
 
 **A follow-up, chase or thank-you note asked in plain words** ("write a thank-you note to Sam", "chase
-Globex"): write the draft in the reply, ready to copy, following /reply's rules for that kind (short, dry
-and professional, the debrief for a thank-you, never pay; `.claude/skills/reply/SKILL.md`). Nothing is sent.
+Globex", "draft a reply to this email"): save the draft as the reply, so the box shows it with Copy,
+following /reply's rules for that kind (short, dry and professional, the debrief for a thank-you, never pay;
+`.claude/skills/reply/SKILL.md`). Nothing is sent:
+`python -m prep.cli thread reply --to MSG --draft reply|chase|thanks [--channel email --subject "Re: …"]
+[--note "ONE LINE"]` with only the text to paste on stdin (LinkedIn is the default channel, no subject; an
+email needs `--subject`; `--note` is the line above the draft: placeholders to fill, what to check). The pay
+guard reads the user's message as their notes.
 When the job's panel lists questions to clarify (`thread show` prints them), a reply to a recruiter may ask
 them, never the pay one in writing.
 

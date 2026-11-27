@@ -78,7 +78,7 @@ class StorageTest(InviteBase):
         self.assertIn("Named in the recruiter's answer", panel)
         self.assertIn("Held: interview style unknown", panel)
         self.assertIn("CV fit being checked", panel)
-        self.assertIn("Drafting the reply…", panel)
+        self.assertNotIn("Drafting the reply", panel)  # the box shows the request waiting, not the card
         self.assertIn("Researching…", panel)
 
     def test_missing_then_answered(self) -> None:
@@ -180,7 +180,8 @@ class GateTest(InviteBase):
         self.assertNotIn("sector:", card)
         self.assertNotIn("tailoring plan", card)  # Tailor CV is the one way to start it
         self.assertIn("Top 5 this week · #1", card)
-        self.assertIn(f'id="draft-body-panel-{reply}"', card)  # the reply lands in the panel, editable
+        self.assertNotIn("draft-body", card)  # the draft is the reply in the box, not on the card
+        self.assertEqual(panel.count(f'id="draft-body-{reply}"'), 1)
 
     def test_acted_on_pick_stays_with_its_outcome(self) -> None:
         inv = self.named()
@@ -197,29 +198,39 @@ class GateTest(InviteBase):
 
 
 class FormTest(InviteBase):
-    def test_paste_box_is_one_step_and_draft_forms_offer_no_invitation(self) -> None:
+    def test_the_box_has_the_toggle_and_no_paste_card(self) -> None:
         body = self.get("/?app=1")[2]
-        self.assertIn('action="/applications/invite"', body)
-        self.assertIn(">Paste recruiter message</label>", body)
-        self.assertNotIn('value="invite"', body)  # no type choice anywhere
+        self.assertNotIn('action="/applications/invite"', body)
+        self.assertNotIn("Paste recruiter message", body)
+        box = body[body.index('id="agent"'):]
+        self.assertEqual(box.count('<form method="post" action="/applications/message" class="ask"'), 1)
+        self.assertIn('<input type="radio" name="kind" value="" checked>Message</label>', box)
+        self.assertIn('<input type="radio" name="kind" value="invite">Recruiter message</label>', box)
+        self.assertEqual(body.count('value="invite"'), 1)  # the toggle only
+        self.assertEqual(self.post("/applications/invite", {"pasted": INVITE})[0], 404)  # the old route is gone
 
-    def test_paste_stores_an_invitation(self) -> None:
-        status, reply = self.post_json("/applications/invite", {"pasted": INVITE})
+    def test_recruiter_message_stores_an_invitation(self) -> None:
+        status, reply = self.post_json("/applications/message", {"kind": "invite", "about_set": "1",
+                                                                 "about": "a:1", "body": INVITE})
         self.assertEqual(status, 200, reply)
+        self.assertIn("drafted in the thread", reply["message"])
         with self.conn() as conn:
             msg = db.thread(conn)[-1]
         self.assertEqual((msg["comms"], msg["channel"], msg["application_id"]), ("invite", "linkedin", None))
-        self.assertEqual(self.post_json("/applications/invite", {"pasted": " "})[0], 400)
+        self.assertEqual(self.post_json("/applications/message", {"kind": "invite", "body": " "})[0], 400)
+        status, reply = self.post_json("/applications/message", {"kind": "", "about_set": "1", "body": "Hello"})
+        with self.conn() as conn:
+            self.assertIsNone(db.thread(conn)[-1]["comms"])  # Message: a plain question
         self.assertEqual(self.post("/applications/draft", {"comms": "invite", "channel": "linkedin",
                                                            "pasted": INVITE})[0], 404)  # no such route any more
 
-    def test_invitation_draft_is_editable_in_the_box(self) -> None:
+    def test_invitation_draft_is_the_reply_in_the_box(self) -> None:
         msg = self.request(VAGUE)
         with self.conn() as conn:
             db.save_invitation(conn, msg, missing=("company", "interviews"))
             reply = db.save_draft(conn, msg, "Hi Alex,\nWhich company is it, and what is the interview format?\nSam")
         body = self.get("/")[2]
-        self.assertIn(f'<textarea class="draft-body draft-edit" id="draft-body-{reply}"', body)
+        self.assertIn(f'<pre class="draft-body" id="draft-body-{reply}">Hi Alex,', body)
         self.assertIn(f'data-copy="draft-body-{reply}">Copy</button>', body)
 
     def test_reply_show_prints_both_cases_and_waiting_invitations(self) -> None:

@@ -2547,14 +2547,30 @@ def check_draft_pay(request_body: str, draft: str, source: str = "", invite: boo
 
 
 def save_draft(conn: sqlite3.Connection, to_id: int, draft: str, subject: str | None = None,
-               note: str = "") -> int:
-    """The agent's draft answering draft request `to_id`: one agent message carrying the request's comms and
-    channel, the draft in draft_body (and draft_subject, required for email, refused for LinkedIn), and
-    `note` (or a fixed line) as its body: the proposed stage change, what to check. Marks the request
-    answered, as reply_message. Pay is guarded (check_draft_pay). Returns the reply's id."""
+               note: str = "", kind: str | None = None, channel: str | None = None) -> int:
+    """The agent's draft answering `to_id`: one agent message carrying the comms and channel, the draft in
+    draft_body (and draft_subject, required for email, refused for LinkedIn), and `note` (or a fixed line)
+    as its body: the proposed stage change, what to check. The Applications Assistant box shows it with Copy.
+    `to_id` is a draft request (its comms and channel are used), or a plain message asking for a draft in
+    plain words, which needs `kind` (reply, chase, thanks) and `channel`; the user's message is then the
+    notes the pay guard reads. Marks the message answered, as reply_message. Pay is guarded
+    (check_draft_pay). Returns the reply's id."""
     msg = get_message(conn, to_id)
-    if msg is None or msg["author"] != "user" or not msg["comms"]:
-        raise LookupError(f"no draft request {to_id}")
+    if msg is None or msg["author"] != "user":
+        raise LookupError(f"no user message {to_id}")
+    if msg["comms"]:
+        if (kind and kind != msg["comms"]) or (channel and channel != msg["channel"]):
+            raise ValueError(f"request {to_id} is a {msg['comms']} · {msg['channel']} request")
+        guard = msg["body"]
+    else:
+        if kind not in COMMS_KINDS or kind == "invite":
+            raise ValueError("say what the draft is: --draft reply, chase or thanks")
+        if channel not in CHANNELS:
+            raise ValueError(f"channel must be one of {', '.join(CHANNELS)}")
+        if msg["topic"] in (COMPARE, LEARN):
+            raise ValueError(f"message {to_id} is not one a draft can answer")
+        guard = f"{NOTES_HEADING}\n{msg['body']}"  # the user's own words
+        msg = {**msg, "comms": kind, "channel": channel}
     draft = draft.replace("\r\n", "\n").strip()
     if not draft:
         raise ValueError("the draft is empty")
@@ -2567,7 +2583,7 @@ def save_draft(conn: sqlite3.Connection, to_id: int, draft: str, subject: str | 
         raise ValueError("a LinkedIn message has no subject line")
     if len(subject) > MAX_SUBJECT:
         raise ValueError(f"a subject can be at most {MAX_SUBJECT} characters")
-    check_draft_pay(msg["body"], f"{subject}\n{draft}", (request_source(conn, msg) or {}).get("body", ""),
+    check_draft_pay(guard, f"{subject}\n{draft}", (request_source(conn, msg) or {}).get("body", ""),
                     invite=msg["comms"] == "invite")
     body = _message_body(note or "Draft ready: copy it and send it yourself.")
     stamp = now_iso()
@@ -3515,22 +3531,6 @@ def _move_message(conn: sqlite3.Connection, msg_id: int, app_id: int) -> None:
                      (app_id, mid))
         if not conn.execute("SELECT 1 FROM agent_message_targets WHERE message_id = ?", (mid,)).fetchone():
             conn.execute("INSERT INTO agent_message_targets (message_id, application_id) VALUES (?, ?)", (mid, app_id))
-
-
-def attach_draft_request(conn: sqlite3.Connection, msg_id: int, app_id: int) -> None:
-    """A whole-search draft request is about application `app_id`: it (and any reply) moves there, so the
-    draft shows in that application's panel. Refused for a request already about something else."""
-    msg = get_message(conn, msg_id)
-    if msg is None or msg["author"] != "user" or not msg["comms"]:
-        raise LookupError(f"no draft request {msg_id}")
-    if conn.execute("SELECT 1 FROM applications WHERE id = ?", (app_id,)).fetchone() is None:
-        raise LookupError(f"no application {app_id}")
-    if msg["application_id"] == app_id:
-        return
-    if msg["application_id"] is not None or msg["getjo_job_id"] or msg["topic"]:
-        raise ValueError(f"request {msg_id} is not a whole-search request")
-    with conn:
-        _move_message(conn, msg_id, app_id)
 
 
 def save_invitation(conn: sqlite3.Connection, msg_id: int, company: str | None = None, role: str | None = None,

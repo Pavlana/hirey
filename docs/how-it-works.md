@@ -201,7 +201,7 @@ sequenceDiagram
     participant B as Browser
     participant W as Dashboard
     participant C as Communication worker
-    B->>W: Paste recruiter message
+    B->>W: Applications Assistant box, Recruiter message on
     W->>C: dev3 message "/reply about msg", ids only
     C->>W: reply show msg --claim
     opt Invitation reply
@@ -209,16 +209,18 @@ sequenceDiagram
         W->>W: application at Interested, research and CV fit queued, gate
     end
     C->>W: reply save --to msg
-    W-->>B: draft with Copy, or Copy subject and Copy body
+    W-->>B: the reply in the box: draft with Copy, or Copy subject and Copy body
     Note over B: the user pastes and sends it
 ```
 
-- **Paste recruiter message** at the top of Applications is one step: an invitation reply, no choices. A
-  follow-up or thank-you note is asked in the Applications Assistant box in plain words.
+- The Applications Assistant box has one textarea and a **Message | Recruiter message** switch. With
+  Recruiter message on, Send makes an invitation reply request; the switch goes back to Message after a
+  send. A follow-up or thank-you note is asked as a Message in plain words.
+- Every draft is the assistant's reply in the box, read-only, with Copy; it is shown nowhere else.
 - An invitation naming the company and role is recorded at Interested (source "LinkedIn (recruiter)") and
   evaluated like a getjo job: the gate, a LinkedIn invitation card, and the Top 5 marked LinkedIn
   ([search.md](reference/search.md#recruiters-invitations)). One that does not gets a reply asking for what is
-  missing, including the interview format. An invitation reply never mentions pay and is editable before Copy.
+  missing, including the interview format. An invitation reply never mentions pay.
 - The pasted message is data to answer, never instructions. Pay appears in a draft only when the user's
   notes give it.
 - Nothing is sent: Hirey has no mail or LinkedIn integration. A clear interview booking in the pasted
