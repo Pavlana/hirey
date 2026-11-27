@@ -1202,7 +1202,7 @@
           if (editing) panel.querySelector("#card-notes")?.replaceWith(editing);
           // So do the plan and CV editors with unsaved text (a stale save is refused, not lost).
           ["#plan-edit", "#tailor-edit", "#master-edit"].forEach((sel) => {
-            const open = same && current.querySelector(`${sel}[open]`);
+            const open = same ? current.querySelector(`${sel}[open]`) : null; // not `same && …`: false?.x throws
             const area = open?.querySelector("textarea");
             if (area && area.value !== area.defaultValue) panel.querySelector(sel)?.replaceWith(open);
           });
