@@ -834,6 +834,28 @@ main:has(.learn-view) { max-width: 1880px; }
 .explainer-frame { display: block; width: 100%; height: 640px; border: 0; border-radius: var(--radius-md); background: var(--surface); }
 .explainer-make { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin: 0; }
 .explainer-make p { margin: 0; }
+/* While the Learn Assistant writes or refreshes it: a status line in the card (app.js polls and swaps it). */
+.explainer-making { display: flex; align-items: baseline; gap: var(--space-2); margin: 0 0 var(--space-2); padding: var(--space-2) var(--space-3); color: var(--accent-text); }
+.explainer-making .spinner { align-self: center; }
+.explainer-worker { display: block; margin-top: 2px; font-size: 12.5px; }
+
+/* Your questions: each "Ask about this" quote with its answer, kept on the card (newest first). */
+.lq-list { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); }
+.lq { border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.lq > summary { display: flex; align-items: baseline; gap: var(--space-2); padding: 6px 10px; cursor: pointer; min-width: 0; }
+.lq-src { flex: none; font-size: 11.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .04em; }
+.lq-quote { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lq > summary time { flex: none; color: var(--text-muted); font-size: 12px; }
+.lq.is-pending .lq-quote::after { content: " · thinking…"; color: var(--accent-text); }
+.lq.is-cancelled .lq-quote { color: var(--text-muted); }
+.lq[open] .lq-quote { white-space: normal; overflow-wrap: anywhere; color: var(--accent-text); }
+.lq-body { display: grid; gap: var(--space-2); padding: 0 10px 10px; }
+.lq-words { margin: 0; font-size: 13.5px; }
+.lq-words .msg-who { color: var(--text-muted); font-size: 12px; margin-right: 4px; }
+.lq-thinking { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--accent-text); font-weight: 500; }
+.lq-answer-doc { font-size: 13.5px; }
+.lq-answer-doc > :first-child { margin-top: 0; }
+.lq-answer-doc > :last-child { margin-bottom: 0; }
 
 /* The floating window: without the script, a plain section at the end of the page (both tabs shown);
    with it, fixed bottom-right over the page, one tab at a time, minimised to its head or closed to the pill. */
@@ -890,6 +912,13 @@ main:has(.learn-view) { max-width: 1880px; }
   color: var(--text); background: var(--bg); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); }
 .hl-box textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .hl-actions { display: flex; justify-content: flex-end; gap: var(--space-2); }
+/* After Ask the box stays (✕ closes it): the words sent, Thinking…, then the answer inside the box. */
+.hl-box { padding-top: calc(var(--space-3) + 4px); }
+.hl-close { position: absolute; top: 4px; right: 4px; }
+.hl-box .hl-quote { margin-right: 22px; }
+.hl-answer { max-height: min(50vh, 420px); overflow: auto; padding: var(--space-2) var(--space-3); background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.hl-box textarea { min-height: 44px; }
 /* Notes editor: tabs in the head; a line-number gutter beside a monospace textarea that soft-wraps to
    the panel (one number per logical line, as tall as its wrapped rows: app.js measures them in .ed-mirror); a status line (vim mode, file, autosave time, line,col, the vim keys toggle). */
 .ed-tabs { display: inline-flex; gap: 4px; }

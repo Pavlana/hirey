@@ -28,6 +28,11 @@ class LearnTestCase(WebTestCase):
         self.assertIn("application/json", headers["Content-Type"])
         return status, json.loads(body)
 
+    def get_json(self, path: str) -> dict:
+        status, headers, body = self.get(path)
+        self.assertEqual(status, 200)
+        return json.loads(body)
+
     def ask(self, card: int | None, body: str) -> int:
         with self.conn() as conn:
             return db.add_learn_message(conn, card, body)

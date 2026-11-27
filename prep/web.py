@@ -138,8 +138,8 @@ MESSAGES = {
     "learn_stopped": "Stopped. Waiting Learn Assistant messages are cancelled; ask again any time.",
     "learn_cancelled": "Cancelled. The assistant skips it; a reply already on its way shows as after cancel.",
     "learn_quote_noted": "Added to this card's notes.",
-    "learn_explain_asked": "Asked the Learn Assistant for an explainer. It shows under the card when it is written.",
-    "learn_refresh_asked": "Asked the Learn Assistant to refresh the explainer.",
+    "learn_explain_asked": "Asked the Learn Assistant for an explainer. It shows here when it is written, and stays saved.",
+    "learn_refresh_asked": "Asked the Learn Assistant to refresh the explainer. The new one shows here when it is saved.",
     "worker_stopped": "Stopped. That worker's item is cancelled; queue it again any time.",
     "worker_requeued": "Stopped. The item is back in the queue for the next free worker.",
     "worker_idle": "That worker was not holding anything (it finished meanwhile).",
@@ -263,6 +263,8 @@ def _get(settings: Settings, path: str, query: dict, today: str) -> Response:
         return learn_notes_json(settings, query, today)
     if path == "/learn/thread":
         return learn_thread_json(settings, query, today)
+    if path == "/learn/answer":
+        return learn_answer_json(settings, query, today)
     if path == "/learn/explainer":
         return explainer_page(settings, query)
     if path == "/workers.json":
@@ -1075,23 +1077,43 @@ def _learn_ask(settings: Settings, conn: sqlite3.Connection, card_id: int | None
     msg_id = db.add_learn_message(conn, card_id, body)
     log.info("Learn Assistant message %s added on card %s", msg_id, card_id)  # never the text
     assistant.notify_learn_in_background(settings, card_id, msg_id)
-    return {"redirect": back, "html": _learn_thread(conn, settings, card_id)}
+    return {"redirect": back, "html": _learn_thread(conn, settings, card_id), "msg_id": msg_id}
 
 
 def send_learn_message(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The Learn Assistant box's Send: the user's message, with the open card's id."""
+    """The Learn Assistant box's Send, and Ask in the highlight box: the user's message, with the open
+    card's id. A highlighted passage (quote) goes first; with no words it asks EXPLAIN_THIS. The reply
+    also carries the card's "Your questions" list, so the highlight box can show it in place."""
     card_id, back = _learn_back(conn, form)
     body = form.get("body", "")
-    if not body.strip():
-        raise BadRequest("Type a question first.")
     quote = _quote(form)
+    if not body.strip() and not (quote and card_id is not None):
+        raise BadRequest("Type a question first.")
     if quote:
-        body = f"About this passage ({quote[1]}):\n> {quote[0]}\n\n{body}"
-    return _learn_ask(settings, conn, card_id, body, back)
+        body = PASSAGE_HEAD.format(src=quote[1]) + f"\n> {quote[0]}\n\n{body.strip() or EXPLAIN_THIS}"
+    reply = _learn_ask(settings, conn, card_id, body, back)
+    if card_id is not None:
+        reply["questions"] = _learn_questions(conn, card_id)
+    return reply
 
 
 MAX_QUOTE = 1000  # characters of highlighted text sent with a message or added to the notes
 QUOTE_SOURCES = {"card": "Card", "explainer": "Explainer"}
+# A message about a highlighted passage: this line, "> quote" (one line) and the user's words, or
+# EXPLAIN_THIS when Ask was pressed with the box empty. The /learn-ask skill reads the same shape, and
+# _passage() reads it back for the card's "Your questions" list.
+PASSAGE_HEAD = "About this passage ({src}):"
+EXPLAIN_THIS = "Explain this."
+_PASSAGE = re.compile(r"About this passage \((Card|Explainer)\):\n> (.+)\n\n(.*)\Z", re.S)
+
+
+def _passage(body: str) -> tuple[str, str, str] | None:
+    """(source, quote, words) of a highlighted-passage message; words is "" for EXPLAIN_THIS."""
+    m = _PASSAGE.match(body)
+    if m is None:
+        return None
+    words = m.group(3).strip()
+    return m.group(1), m.group(2), "" if words == EXPLAIN_THIS else words
 
 
 def _quote(form: dict[str, str]) -> tuple[str, str] | None:
@@ -1125,7 +1147,10 @@ def make_explainer(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     _, back = _learn_back(conn, form)
     if settings.private_dir is None:
         raise BadRequest("Explainers need a private folder (private_dir).")
-    return _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN, back)
+    if _explainer_job(conn, card_id) is not None:
+        raise BadRequest("The Learn Assistant is already writing this explainer.")
+    reply = _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN, back)
+    return {**reply, "explainer": _explainer_section(settings, conn, card_id)}
 
 
 def refresh_explainer(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -1135,8 +1160,11 @@ def refresh_explainer(settings: Settings, conn: sqlite3.Connection, form: dict[s
     state = explainers.check(settings, card_id)
     if state["state"] == "none":
         raise BadRequest("This card has no explainer yet: Make an explainer.")
+    if _explainer_job(conn, card_id) is not None:
+        raise BadRequest("The Learn Assistant is already writing this explainer.")
     what = "; ".join(state["missing"] + state["changed"]) or "asked by the user"
-    return _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN_REFRESH.format(what=what), back)
+    reply = _learn_ask(settings, conn, card_id, db.LEARN_EXPLAIN_REFRESH.format(what=what), back)
+    return {**reply, "explainer": _explainer_section(settings, conn, card_id)}
 
 
 # The explainer page runs its own small scripts and styles, so it gets its own policy: inline allowed,
@@ -1263,9 +1291,37 @@ def learn_thread_json(settings: Settings, query: dict[str, list[str]], today: st
         return _json(400, {"ok": False, "message": "card must be a card id."})
     with closing(_connect(settings, today)) as conn:
         waiting = db.pending_messages(conn, topic=db.LEARN)
+        card_id = int(raw) if raw else None
         payload = {"ok": True, "pending": bool(waiting), "failed": _failed_pings(waiting),
                    "messages": db.message_count(conn, learn=True),
-                   "html": _learn_thread(conn, settings, int(raw) if raw else None)}
+                   "html": _learn_thread(conn, settings, card_id)}
+        if card_id is not None:
+            payload["questions"] = _learn_questions(conn, card_id)
+            job = _explainer_job(conn, card_id)
+            payload["making"] = job is not None
+            payload["making_html"] = _explainer_making(settings, conn, job) if job else ""
+            payload["explainer"] = _explainer_section(settings, conn, card_id) if job is None else ""
+    return _json(200, payload)
+
+
+def learn_answer_json(settings: Settings, query: dict[str, list[str]], today: str) -> Response:
+    """GET /learn/answer?msg=ID, polled by the highlight box after Ask: the state of that Learn message
+    (waiting, answered, cancelled), the reply as safe Markdown HTML and its id (for Add to notes), and
+    the card's "Your questions" list. Only a user's Learn message is answered."""
+    raw = (query.get("msg") or [""])[0]
+    if not raw.isdigit() or len(raw) > 10:
+        return _json(400, {"ok": False, "message": "msg must be a message id."})
+    with closing(_connect(settings, today)) as conn:
+        msg = db.get_message(conn, int(raw))
+        if msg is None or msg["topic"] != db.LEARN or msg["author"] != "user":
+            return _json(404, {"ok": False, "message": "No such Learn Assistant message."})
+        reply = _learn_reply_to(conn, msg)
+        state = "answered" if reply else "cancelled" if msg["status"] == "cancelled" else "waiting"
+        payload = {"ok": True, "state": state, "reply_id": reply["id"] if reply else None,
+                   "html": _answer_html(reply["body"]) if reply else "",
+                   "failed": _failed_pings([m for m in db.pending_messages(conn, topic=db.LEARN)
+                                            if m["id"] == msg["id"]]),
+                   "questions": _learn_questions(conn, msg["card_id"]) if msg["card_id"] is not None else ""}
     return _json(200, payload)
 
 
@@ -1500,8 +1556,8 @@ def _learn_view(settings: Settings, conn: sqlite3.Connection, card: dict, key: s
         akey = learnnotes.answer_key(card["id"])
         answer = _answer_box(card["id"], akey, learnnotes.read(settings.private_dir, akey)) + _check_form(card["id"])
     return (f'<div class="learn-view" id="learn-view" data-card="{h(card["id"])}">'
-            f'{_learn_card(conn, card, answer)}{_explainer_section(settings, card["id"])}'
-            f'{_learn_float(settings, conn, card, key)}</div>')
+            f'{_learn_card(conn, card, answer)}{_explainer_section(settings, conn, card["id"])}'
+            f'{_learn_questions(conn, card["id"])}{_learn_float(settings, conn, card, key)}</div>')
 
 
 def _explainer_stamp(state: dict) -> str:
@@ -1521,34 +1577,138 @@ def _explainer_stamp(state: dict) -> str:
     return " · ".join(p for p in parts if p)
 
 
-def _explainer_section(settings: Settings, card_id: int) -> str:
+def _explainer_job(conn: sqlite3.Connection, card_id: int) -> dict | None:
+    """The Make or Refresh explainer message for this card still waiting for the Learn Assistant, if any."""
+    for m in db.pending_messages(conn, topic=db.LEARN):
+        if m["card_id"] != card_id:
+            continue
+        body = (db.get_message(conn, m["id"]) or {}).get("body", "")
+        if body == db.LEARN_EXPLAIN or body.startswith(EXPLAIN_REFRESH_HEAD):
+            return {**m, "refresh": body != db.LEARN_EXPLAIN}
+    return None
+
+
+EXPLAIN_REFRESH_HEAD = db.LEARN_EXPLAIN_REFRESH.split("(/explainer)")[0]
+
+
+def _learn_worker_line(settings: Settings, conn: sqlite3.Connection) -> str:
+    """The Learn Assistant's state, as the Workers sidebar shows it (prep/workers.py: database only)."""
+    if not settings.prep_assistant_task:
+        return "No Learn Assistant task is set: run /learn-ask in a Claude Code session."
+    for w in workers.state(settings, conn)["workers"]:
+        if w["role"] == "learn":
+            since = f" · {w['since']}" if w["since"] else ""
+            return f"Learn Assistant: {w['state']} · {w['line']}{since}"
+    return ""
+
+
+def _explainer_making(settings: Settings, conn: sqlite3.Connection, job: dict) -> str:
+    """The "being written" line of the Explainer card (data-explainer-state), swapped by the poll."""
+    what = "refreshed" if job["refresh"] else "written"
+    line = _learn_worker_line(settings, conn)
+    return (f'<div class="explainer-making" role="status" data-explainer-state>'
+            '<span class="spinner" aria-hidden="true"></span>'
+            f'<span><strong>Being {what} by the Learn Assistant…</strong> It shows here when it is saved, '
+            'and stays saved for the next visit.'
+            + (f' <span class="muted explainer-worker">{h(line)}</span>' if line else "") + "</span></div>")
+
+
+def _explainer_section(settings: Settings, conn: sqlite3.Connection, card_id: int) -> str:
     """The Explainer card: its stamp (getjo commit, files, up to date or changed) and Refresh, the amber
     notice when getjo changed, and the page itself in a sandboxed iframe (scripts only, no same origin:
-    it cannot reach the dashboard). None yet: Make an explainer."""
+    it cannot reach the dashboard). None yet: Make an explainer. While a Make or Refresh waits for the
+    Learn Assistant the card says so (data-making; app.js polls and swaps it in when it is saved); the
+    floating Learn Assistant window never opens for it. A saved explainer is shown, never re-made."""
     if settings.private_dir is None:
         return ""
     state = explainers.check(settings, card_id)
+    job = _explainer_job(conn, card_id)
+    making = f' data-making="{h(card_id)}"' if job else ""
     hidden = f'<input type="hidden" name="card_id" value="{h(card_id)}">'
     if state["state"] == "none":
-        make = (f'<form method="post" action="/learn/explainer/make" class="explainer-make" data-ajax="learn" '
-                f'data-open-chat>{hidden}<p class="muted">No explainer for this card yet. The Learn Assistant can '
-                'write one: a diagram, the getjo code it is about with notes, and a worked example.</p>'
-                + _button("Make an explainer", "secondary", "sm") + "</form>")
-        return _card("Explainer", make, cls="learn-explainer")
-    refresh = (f'<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn" data-open-chat>'
+        body = (_explainer_making(settings, conn, job) if job else
+                f'<form method="post" action="/learn/explainer/make" class="explainer-make" data-ajax="learn">'
+                f'{hidden}<p class="muted">No explainer for this card yet. The Learn Assistant can write one: a '
+                'diagram, the getjo code it is about with notes, and a worked example. It is written once and '
+                'saved for later visits.</p>' + _button("Make an explainer", "secondary", "sm") + "</form>")
+        return (f'<section class="card learn-explainer" id="learn-explainer"{making}><header class="card-head">'
+                f'<h2>Explainer</h2></header><div class="card-body">{body}</div></section>')
+    refresh = ("" if job else
+               f'<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn">'
                f'{hidden}<button class="btn btn-ghost btn-sm">Refresh</button></form>')
     stamp = f'<span class="explainer-stamp">{h(_explainer_stamp(state))}</span>'
-    notice = ""
-    if state["state"] in ("changed", "missing"):
+    notice = _explainer_making(settings, conn, job) if job else ""
+    if not job and state["state"] in ("changed", "missing"):
         what = "; ".join(state["missing"] + state["changed"])
         notice = (f'<div class="warning explainer-stale" role="status">getjo has changed since this explainer: '
-                  f'{h(what)}<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn" '
-                  f'data-open-chat>{hidden}<button class="btn btn-secondary btn-sm">Refresh explainer</button></form></div>')
+                  f'{h(what)}<form method="post" action="/learn/explainer/refresh" class="inline" data-ajax="learn">'
+                  f'{hidden}<button class="btn btn-secondary btn-sm">Refresh explainer</button></form></div>')
     frame = (f'<iframe class="explainer-frame" src="/learn/explainer?card={h(card_id)}" sandbox="allow-scripts" '
              'referrerpolicy="no-referrer" title="Explainer" data-explainer></iframe>')
-    return (f'<section class="card learn-explainer" id="learn-explainer"><header class="card-head"><h2>Explainer</h2>'
-            f'<div class="explainer-head">{stamp}{refresh}</div></header>'
+    return (f'<section class="card learn-explainer" id="learn-explainer"{making}><header class="card-head">'
+            f'<h2>Explainer</h2><div class="explainer-head">{stamp}{refresh}</div></header>'
             f'<div class="card-body">{notice}{frame}</div></section>')
+
+
+LEARN_QUESTIONS = 20  # the latest "Ask about this" questions listed on a card
+
+
+def _learn_reply_to(conn: sqlite3.Connection, msg: dict) -> dict | None:
+    """The Learn Assistant's latest reply to user message `msg`, if any."""
+    replies = [m for m in db.thread(conn, topic=db.LEARN, card_id=msg["card_id"])
+               if m["author"] == "agent" and m["reply_to"] == msg["id"]] if msg["card_id"] is not None else []
+    return replies[-1] if replies else None
+
+
+def _answer_html(body: str) -> str:
+    """An agent reply shown in place (highlight box, Your questions): the safe Markdown subset."""
+    return f'<div class="doc lq-answer-doc">{render_markdown(body, empty="", links=True)}</div>'
+
+
+def _learn_questions(conn: sqlite3.Connection, card_id: int) -> str:
+    """Your questions: the card's highlighted-passage messages (newest first, LEARN_QUESTIONS of them),
+    each a fold with the quote (one line, whole when open), the user's words and the Learn Assistant's answer in place (or Thinking…).
+    Built from the card's thread messages, so nothing new is stored. Always a container (#learn-questions),
+    empty when there are none, so app.js can swap it after the first Ask."""
+    messages = db.thread(conn, topic=db.LEARN, card_id=card_id)
+    replies: dict[int, dict] = {}
+    for m in messages:
+        if m["author"] == "agent" and m["reply_to"] is not None:
+            replies[m["reply_to"]] = m  # the latest reply wins
+    back = f'<input type="hidden" name="card_id" value="{h(card_id)}">'
+    items = []
+    for m in reversed(messages):
+        passage = _passage(m["body"]) if m["author"] == "user" else None
+        if passage is None:
+            continue
+        src, quote, words = passage
+        reply = replies.get(m["id"])
+        if reply is not None:
+            answer = _answer_html(reply["body"]) + (
+                '<div class="msg-actions"><form method="post" action="/learn/add-note" data-ajax="learn">'
+                f'<input type="hidden" name="reply_id" value="{h(reply["id"])}">{back}'
+                '<button class="btn btn-ghost btn-sm">Add answer to notes</button></form></div>')
+            state = ""
+        elif m["status"] == "cancelled":
+            answer, state = '<p class="muted">Cancelled.</p>', " is-cancelled"
+        else:
+            answer = '<p class="lq-thinking" role="status"><span class="spinner" aria-hidden="true"></span>Thinking…</p>'
+            state = " is-pending"
+        items.append(
+            f'<li><details class="lq{state}" data-msg="{h(m["id"])}"><summary>'
+            f'<span class="lq-src">{h(src)}</span><span class="lq-quote">“{h(quote)}”</span>'
+            f'<time datetime="{h(m["created_at"])}">{h(_local_time(m["created_at"]))}</time></summary>'
+            '<div class="lq-body">'
+            + (f'<p class="lq-words"><span class="msg-who">you</span> {h(words)}</p>' if words else "")
+            + f'<div class="lq-answer">{answer}</div></div></details></li>')
+        if len(items) >= LEARN_QUESTIONS:
+            break
+    if not items:
+        return '<section class="card learn-questions" id="learn-questions" data-learn-questions hidden></section>'
+    return ('<section class="card learn-questions" id="learn-questions" data-learn-questions>'
+            '<header class="card-head"><h2>Your questions</h2><span class="muted">Asked about a highlighted line '
+            '(“✦ Ask about this”); the answers stay here.</span></header>'
+            f'<div class="card-body"><ul class="lq-list">{"".join(items)}</ul></div></section>')
 
 
 def _learn_float(settings: Settings, conn: sqlite3.Connection, card: dict, key: str) -> str:

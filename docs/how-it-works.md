@@ -223,8 +223,9 @@ flowchart TD
     card -->|"highlight text, Ask about this"| box
     box -->|"dev3 message, ids only"| la["Learn Assistant<br/>/learn-ask"]
     la -->|"learn-thread reply"| box
+    box -->|"answer shown in the highlight box"| yq["Your questions<br/>kept on the card"]
     box -->|"Add to notes"| notes["Card notes file"]
-    card -->|"Make explainer"| la
+    card -->|"Make explainer, card shows it being written"| la
     la -->|"/explainer writes page and sidecar"| exp["Explainer page<br/>sandboxed iframe"]
     exp -->|"every card view: hash quoted getjo code"| check{"Up to date?"}
     check -->|"changed"| refresh["Refresh explainer button"]
@@ -233,7 +234,9 @@ flowchart TD
 - Cards sit in tracks and chapters; progress is cards done out of all, with no schedule.
 - The Learn Assistant is a second standing agent with its own conversation; Applications readers never
   see Learn messages.
-- An explainer records the getjo commit and a hash of each function it quotes. Each card view hashes
+- Ask about this answers in place: the reply shows in the box under the highlighted text and stays in
+  the card's Your questions. The floating Learn Assistant window opens only from its pill.
+- An explainer is written once and saved; the card shows "Being written…" meanwhile. It records the getjo commit and a hash of each function it quotes. Each card view hashes
   that code again, so a page explaining code that has since changed is flagged.
 
 Reference: [learn.md](reference/learn.md).

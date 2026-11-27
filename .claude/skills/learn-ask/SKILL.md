@@ -175,7 +175,10 @@ default list does").
 - **A highlighted passage** (the message starts "About this passage (Card):" or "(Explainer):" and a
   `> quote` line): the user selected that text on the card or in its explainer. Answer the question
   about that passage first, as above; for an Explainer passage, the explainer page is
-  `python -m prep.cli explainers path CARD` (read it when the passage needs its context).
+  `python -m prep.cli explainers path CARD` (read it when the passage needs its context). "Explain
+  this." means no question was typed: explain what that passage says and why it matters for this
+  card. The answer is shown in a small box under the highlighted text (and kept in the card's "Your
+  questions"), so keep it short: a few lines, then the closing block.
 - **Make an explainer** (the message is "Make an explainer for this card (/explainer).") or **Refresh
   the explainer** (it starts "Refresh the explainer for this card (/explainer): getjo has changed …"):
   follow `.claude/skills/explainer/SKILL.md` to write the page and record it, then reply in two or

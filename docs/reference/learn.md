@@ -17,6 +17,7 @@ card, a second assistant conversation (the Learn Assistant) and optional explain
 - [Add to notes: the essence of a reply](#add-to-notes-the-essence-of-a-reply)
 - [Explainers](#explainers)
 - [Floating window and highlight to ask](#floating-window-and-highlight-to-ask)
+- [Your questions](#your-questions)
 - [Endpoints](#endpoints)
 
 ```mermaid
@@ -31,6 +32,7 @@ flowchart LR
   X --> M
   M -- "dev3 message, ids only" --> L["Learn Assistant<br/>/learn-ask"]
   L -- "learn-thread reply" --> M
+  M -- "answer in the box, Your questions" --> H
   L -- "writes" --> E["Explainer HTML<br/>+ sidecar"]
   E -- "explainers.check<br/>hash getjo code" --> S["up to date / changed / missing"]
 ```
@@ -392,7 +394,24 @@ sequenceDiagram
 
 - `POST /learn/explainer/make` stores `db.LEARN_EXPLAIN`; `POST /learn/explainer/refresh` stores
   `db.LEARN_EXPLAIN_REFRESH`, naming what changed.
-- Both are fixed messages built from ids and the check, pinged like Check my answer.
+- Both are fixed messages built from ids and the check, pinged like Check my answer. A second Make or
+  Refresh while one still waits is refused.
+- An explainer is written once and saved; a card view shows the saved page and never asks again. Only
+  Refresh (or the amber notice) asks for a new one.
+
+### While it is being written
+
+The floating window does not open. The Explainer card itself shows the state
+(`web._explainer_section`, `web._explainer_job`):
+
+- while a Make or Refresh message for the card waits, the card carries `data-making` and a status line
+  (`web._explainer_making`): "Being written by the Learn Assistant…" (or "refreshed"), with the Learn
+  worker's state from [workers.state](assistants.md#workers-sidebar-and-run-history) (working, idle, stuck), or a hint when no Learn
+  Assistant task is set;
+- during a refresh the old page stays in its iframe, and Refresh is hidden;
+- `app.js` polls `GET /learn/thread?card=ID` (`making`, `making_html`, `explainer`) every 4 s, then
+  every 30 s after 5 minutes, for up to 30 minutes. While it is still being written only the status
+  line is swapped (the iframe is not reloaded); then the whole card, with the new page, without a reload.
 
 ### The page
 
@@ -463,10 +482,30 @@ is built with DOM calls, text only, and has the quote, a plain textarea and Add 
 
 - **Ask** posts `/learn/message` with `quote` and `quote_src` (card or explainer).
   `web.send_learn_message` folds them into the body as
-  "About this passage (Explainer):\n> quote\n\nquestion" (up to `web.MAX_QUOTE`, 1000 characters).
-  With nothing typed, the quote is attached to the chat form instead.
-- **Add to notes** posts `/learn/quote-note`: `learnnotes.append` with author "Highlight" and
-  `by_user=True` (the user's own words, so no pay check). No assistant is involved.
+  "About this passage (Explainer):\n> quote\n\nquestion" (`web.PASSAGE_HEAD`, up to `web.MAX_QUOTE`,
+  1000 characters). With nothing typed the question is `web.EXPLAIN_THIS` ("Explain this."), so one click
+  asks. Same queue and skill as the chat (`/learn-ask`).
+- **The answer in the box.** After Ask the box stays where it is and is pinned (only ✕ or Escape
+  closes it). It shows the words sent, "Thinking…", then the reply inside the box. `app.js` polls
+  `GET /learn/answer?msg=ID` every 4 s for up to 5 minutes: `state` (waiting, answered, cancelled), the
+  reply as the safe Markdown subset (`prep/md.py`), its `reply_id` and the card's Your questions HTML.
+  The floating chat's conversation is updated too, but the window never opens by itself.
+- **Add to notes** posts `/learn/quote-note` (the quote and typed words): `learnnotes.append` with author
+  "Highlight" and `by_user=True` (the user's own words, so no pay check). With an answer in the box and
+  nothing typed it reads "Add answer to notes" and posts `/learn/add-note` with the reply
+  ([the essence](#add-to-notes-the-essence-of-a-reply)).
+
+## Your questions
+
+`web._learn_questions`, under the Explainer card: the card's highlighted-passage messages, newest first
+(up to 20), each a fold with the source (Card or Explainer), the quote, the user's words and the answer
+(or "Thinking…", or "Cancelled."), with Add answer to notes. It is built from the card's existing
+Learn messages (`web._passage` reads the body back; the reply is the agent message whose `reply_to`
+names it), so nothing new is stored.
+
+A list was chosen over markers on the highlighted text: the explainer is a sandboxed iframe, so a
+marker there would need the selection bridge to write into the page and find the text again, and a
+refreshed explainer may no longer hold it. The list works the same for card and explainer passages.
 
 ## Endpoints
 
@@ -477,7 +516,8 @@ All posts go through `ACTIONS` (loopback, same-origin; [dashboard.md](dashboard.
 | --- | --- | --- |
 | GET | `/learn` | Overview, track or card view (`track`, `card`, `notes=all`). |
 | GET | `/learn/notes?card=ID[&note=all]` | Current note text and stamp, as JSON. |
-| GET | `/learn/thread?card=ID` | Poll: pending, count and the conversation HTML. |
+| GET | `/learn/thread?card=ID` | Poll: pending, count, the conversation HTML; with a card also Your questions and the explainer state. |
+| GET | `/learn/answer?msg=ID` | Poll for one highlight question: state, the reply as safe HTML, its id, Your questions. |
 | GET | `/learn/explainer?card=ID` | The card's explainer page, sandboxed. |
 | POST | `/learn/done` | Marks a card done; goes to the next card to do. |
 | POST | `/learn/undo` | Puts a card back to do. |

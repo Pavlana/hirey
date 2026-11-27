@@ -771,6 +771,7 @@
         if (reply.ok && !reply.pending) {
           learnPoll = null;
           swapLearn(reply.html);
+          swapQuestions(reply.questions);
           refreshNotes();
           toast("The Learn Assistant replied.");
           return;
@@ -788,6 +789,61 @@
   }
   scrollLearn();
   watchLearn();
+
+  // "Your questions" under the explainer: server-built, escaped; the folds the user opened stay open.
+  function swapQuestions(html) {
+    const box = document.getElementById("learn-questions");
+    if (!box || typeof html !== "string" || !html) return;
+    const open = [...box.querySelectorAll("details[open]")].map((d) => d.dataset.msg);
+    const tpl = document.createElement("template");
+    tpl.innerHTML = html;
+    const fresh = tpl.content.firstElementChild;
+    if (!fresh) return;
+    open.forEach((id) => { const d = fresh.querySelector(`details[data-msg="${CSS.escape(id || "")}"]`); if (d) d.open = true; });
+    box.replaceWith(fresh);
+  }
+
+  // --- Learn: the Explainer card while the Learn Assistant writes it -------------------------------
+  // Make an explainer / Refresh stay on the page: the card says "Being written…" with the Learn
+  // Assistant's state (data-making). Poll /learn/thread: while it is still being written only the
+  // state line is swapped (the old page in the iframe is not reloaded); then the whole card.
+  let explainerPoll = null;
+  function watchExplainer() {
+    if (explainerPoll) clearTimeout(explainerPoll.timer);
+    explainerPoll = null;
+    const section = document.getElementById("learn-explainer");
+    if (!section?.hasAttribute("data-making") || !window.fetch) return;
+    const card = section.dataset.making;
+    const me = { timer: null, started: Date.now() };
+    explainerPoll = me;
+    const tick = async () => {
+      if (explainerPoll !== me) return;
+      try {
+        const res = await fetch(`/learn/thread?card=${encodeURIComponent(card)}`, {
+          headers: { Accept: "application/json" }, credentials: "same-origin",
+        });
+        const reply = await res.json();
+        if (explainerPoll !== me) return;
+        const now = document.getElementById("learn-explainer");
+        if (reply.ok && reply.making) {
+          const line = now?.querySelector("[data-explainer-state]");
+          if (line && reply.making_html) line.outerHTML = reply.making_html;
+        } else if (reply.ok && now && reply.explainer) {
+          explainerPoll = null;
+          const tpl = document.createElement("template");
+          tpl.innerHTML = reply.explainer;
+          if (tpl.content.firstElementChild) now.replaceWith(tpl.content.firstElementChild);
+          swapLearn(reply.html);
+          toast(document.querySelector("iframe[data-explainer]") ? "The explainer is ready." : "The Learn Assistant replied.");
+          return;
+        }
+      } catch { /* the server restarted or is busy: try again */ }
+      if (Date.now() - me.started > 30 * 60 * 1000) { explainerPoll = null; return; } // reload to check later
+      me.timer = setTimeout(tick, Date.now() - me.started > POLL_FOR_MS ? SLOW_POLL_MS : POLL_MS);
+    };
+    me.timer = setTimeout(tick, POLL_MS);
+  }
+  watchExplainer();
 
   // --- Learn: the floating "Ask about this card" window ------------------------------------------
   // The pill opens it; – minimises it to its head, ✕ closes it back to the pill. Its state (open, min,
@@ -845,21 +901,27 @@
   // --- Learn: highlight to ask ---------------------------------------------------------------------
   // Selecting text on the card or in its explainer shows "✦ Ask about this" above it; that opens a box
   // under the text: the quote, a plain textarea (typing or macOS dictation) and Add to notes / Ask ↵.
-  // Ask sends quote + words to the Learn Assistant and opens the chat; Ask with no words attaches the
-  // quote to the chat instead. Escape or a click outside closes it. The text is only ever text.
+  // Ask sends the quote (and the words, or "Explain this." with none) to the Learn Assistant; the box
+  // stays, says Thinking…, then shows the answer inside it (server-built safe Markdown, polled from
+  // /learn/answer). Once asked the box is pinned: only ✕ or Escape closes it. The answer also stays in
+  // "Your questions" on the card. The floating chat never opens by itself. The quote is only ever text.
   const MAX_QUOTE = 1000;
   const learnView = document.getElementById("learn-view");
   const cardBody = document.querySelector("#learn-card .learn-card-body");
-  const frame = document.querySelector("iframe[data-explainer]");
+  const explainerFrame = () => document.querySelector("iframe[data-explainer]");
   let hlPop = null;
   let hlBox = null;
-  function closeHl() {
+  let answerPoll = null;
+  function closeHl({ keepPinned = false } = {}) {
     hlPop?.remove(); hlPop = null;
+    if (keepPinned && hlBox?.dataset.pinned) return;
+    if (answerPoll) clearTimeout(answerPoll.timer);
+    answerPoll = null;
     hlBox?.remove(); hlBox = null;
   }
   const clean = (text) => (text || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUOTE);
   function showPop(text, src, rect) { // rect: the selection, in page coordinates
-    closeHl();
+    closeHl({ keepPinned: true });
     if (!text || !learnView) return;
     hlPop = document.createElement("button");
     hlPop.type = "button";
@@ -878,30 +940,45 @@
     // A phone-width window: the open chat covers most of the page, so it folds to its head meanwhile.
     if (float?.dataset.state === "open" && innerWidth <= 600) setFloat("min");
     const card = learnView.dataset.card;
+    let replyId = null; // the answer shown in the box, for Add to notes
     hlBox = document.createElement("div");
     hlBox.className = "hl-box";
     hlBox.setAttribute("role", "dialog");
     hlBox.setAttribute("aria-label", "Ask about the selected text");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "float-btn hl-close";
+    close.setAttribute("aria-label", "Close");
+    close.title = "Close (the answer stays in Your questions)";
+    close.textContent = "✕";
+    close.addEventListener("click", () => closeHl());
     const quote = document.createElement("p");
     quote.className = "hl-quote";
     quote.textContent = `“${text}”`;
+    const asked = document.createElement("p"); // the words sent with the last Ask
+    asked.className = "lq-words";
+    asked.hidden = true;
+    const answer = document.createElement("div"); // Thinking…, then the answer
+    answer.className = "hl-answer";
+    answer.setAttribute("aria-live", "polite");
+    answer.hidden = true;
     const area = document.createElement("textarea");
-    area.rows = 3;
+    area.rows = 2;
     area.maxLength = 4000;
-    area.placeholder = "Ask, or say what to note (dictation works: Fn twice)…";
+    area.placeholder = "Ask ↵ explains it. Or type a question, or a note (dictation: Fn twice)…";
     area.setAttribute("aria-label", "Your question or note");
     const actions = document.createElement("div");
     actions.className = "hl-actions";
     const noteBtn = document.createElement("button");
     noteBtn.type = "button";
-    noteBtn.className = "btn btn-secondary btn-sm";
+    noteBtn.className = "btn btn-ghost btn-sm";
     noteBtn.textContent = "Add to notes";
     const askBtn = document.createElement("button");
     askBtn.type = "button";
     askBtn.className = "btn btn-primary btn-sm";
     askBtn.textContent = "Ask ↵";
     actions.append(noteBtn, askBtn);
-    hlBox.append(quote, area, actions);
+    hlBox.append(close, quote, asked, answer, area, actions);
     document.body.append(hlBox);
     const width = hlBox.offsetWidth;
     const pageW = document.documentElement.clientWidth;
@@ -909,34 +986,91 @@
     hlBox.style.top = `${rect.bottom + 8}px`;
     hlBox.scrollIntoView({ block: "nearest" });
     area.focus();
+    const box = hlBox;
     const data = () => new URLSearchParams({ card_id: card, quote: text, quote_src: src, body: area.value.trim() });
     const busy = (on) => { noteBtn.disabled = on; askBtn.disabled = on; };
+    // With an answer in the box and nothing typed, Add to notes keeps the answer; typed words: the quote + words.
+    const paintNote = () => { noteBtn.textContent = replyId && !area.value.trim() ? "Add answer to notes" : "Add to notes"; };
+    area.addEventListener("input", paintNote);
+    function thinking() {
+      answer.hidden = false;
+      answer.replaceChildren();
+      const p = document.createElement("p");
+      p.className = "lq-thinking";
+      p.setAttribute("role", "status");
+      const spin = document.createElement("span");
+      spin.className = "spinner";
+      spin.setAttribute("aria-hidden", "true");
+      p.append(spin, "Thinking…");
+      answer.append(p);
+    }
+    function waitFor(msgId) {
+      if (answerPoll) clearTimeout(answerPoll.timer);
+      const me = { timer: null, started: Date.now() };
+      answerPoll = me;
+      const tick = async () => {
+        if (answerPoll !== me || hlBox !== box) return;
+        try {
+          const res = await fetch(`/learn/answer?msg=${encodeURIComponent(msgId)}`, {
+            headers: { Accept: "application/json" }, credentials: "same-origin",
+          });
+          const reply = await res.json();
+          if (answerPoll !== me || hlBox !== box) return;
+          showResend(reply.failed);
+          if (reply.ok && reply.state !== "waiting") {
+            answerPoll = null;
+            if (reply.state === "answered") {
+              answer.innerHTML = reply.html; // server-built: the safe Markdown subset, every value escaped
+              replyId = reply.reply_id;
+            } else {
+              answer.textContent = "Cancelled.";
+            }
+            paintNote();
+            swapQuestions(reply.questions);
+            box.scrollIntoView({ block: "nearest", behavior: "smooth" });
+            return;
+          }
+        } catch { /* the server restarted or is busy: try again */ }
+        if (Date.now() - me.started > POLL_FOR_MS) {
+          answerPoll = null;
+          answer.textContent = "Still thinking. The answer shows in Your questions on this card when it arrives.";
+          return;
+        }
+        me.timer = setTimeout(tick, POLL_MS);
+      };
+      me.timer = setTimeout(tick, POLL_MS);
+    }
     async function ask() {
-      if (!area.value.trim()) { // nothing typed: attach the quote to the chat and type there
-        attachQuote(text, src);
-        closeHl();
-        setFloat("open", "assistant");
-        chatForm()?.querySelector("textarea")?.focus();
-        return;
-      }
       busy(true);
       try {
+        const words = area.value.trim();
         const reply = await post("/learn/message", data());
-        swapLearn(reply.html);
-        watchLearn();
-        closeHl();
-        setFloat("open", "assistant");
-        toast(reply.message);
-      } catch (err) { busy(false); toast(err.message || "Not sent.", { error: true }); }
+        box.dataset.pinned = "1";
+        asked.hidden = !words;
+        asked.textContent = words;
+        area.value = "";
+        replyId = null;
+        paintNote();
+        thinking();
+        swapLearn(reply.html); // the floating chat keeps the whole conversation (it stays as it is: open or not)
+        swapQuestions(reply.questions);
+        waitFor(reply.msg_id);
+      } catch (err) { toast(err.message || "Not sent.", { error: true }); }
+      busy(false);
     }
     async function note() {
       busy(true);
       try {
-        const reply = await post("/learn/quote-note", data());
-        closeHl();
+        const reply = replyId && !area.value.trim()
+          ? await post("/learn/add-note", new URLSearchParams({ card_id: card, reply_id: replyId }))
+          : await post("/learn/quote-note", data());
+        area.value = "";
+        paintNote();
+        if (!box.dataset.pinned) closeHl();
         refreshNotes();
         toast(reply.message);
-      } catch (err) { busy(false); toast(err.message || "Not saved.", { error: true }); }
+      } catch (err) { toast(err.message || "Not saved.", { error: true }); }
+      busy(false);
     }
     askBtn.addEventListener("click", ask);
     noteBtn.addEventListener("click", note);
@@ -961,21 +1095,22 @@
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && (hlPop || hlBox)) closeHl(); });
   document.addEventListener("mousedown", (e) => {
-    if ((hlPop || hlBox) && !e.target.closest(".hl-pop, .hl-box")) closeHl();
+    if ((hlPop || hlBox) && !e.target.closest(".hl-pop, .hl-box")) closeHl({ keepPinned: true });
   });
 
   // The explainer runs in a sandboxed iframe (no same origin); its standard script (/static/explainer.js)
   // posts {type: "selection", text, rect} and {type: "height", px}. Only messages from that iframe's
   // window are read, and only as plain text and numbers.
-  if (frame) {
+  if (learnView) { // the frame is looked up each time: it is swapped in when a new explainer is saved
     window.addEventListener("message", (e) => {
-      if (e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
+      const frame = explainerFrame();
+      if (!frame || e.source !== frame.contentWindow || !e.data || typeof e.data !== "object") return;
       if (e.data.type === "height") {
         const px = Number(e.data.px);
         if (Number.isFinite(px)) frame.style.height = `${Math.max(120, Math.min(20000, Math.round(px)))}px`;
       } else if (e.data.type === "selection") {
         const text = clean(typeof e.data.text === "string" ? e.data.text : "");
-        if (!text) { closeHl(); return; } // a click in the explainer is a click outside the box
+        if (!text) { closeHl({ keepPinned: true }); return; } // a click in the explainer is a click outside the box
         const box = frame.getBoundingClientRect();
         const r = e.data.rect && typeof e.data.rect === "object" ? e.data.rect : {};
         const num = (v, d) => (Number.isFinite(Number(v)) ? Number(v) : d);
@@ -1554,7 +1689,13 @@
         if (form.elements.quote) attachQuote("", "");
         if (reply.note) refreshNotes();
         watchLearn();
-        if (form.hasAttribute("data-open-chat")) setFloat("open", "assistant");
+        if (reply.explainer) { // Make an explainer / Refresh: the card itself says it is being written
+          const section = document.getElementById("learn-explainer");
+          const tpl = document.createElement("template");
+          tpl.innerHTML = reply.explainer;
+          if (section && tpl.content.firstElementChild) section.replaceWith(tpl.content.firstElementChild);
+          watchExplainer();
+        }
         toast(reply.message);
       } else if (mode === "thread") {
         // The Applications Assistant box: swap in the server-built, escaped conversation and wait for the reply.

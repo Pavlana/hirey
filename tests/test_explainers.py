@@ -135,6 +135,7 @@ class SectionTest(ExplainerTestCase):
             msg = db.thread(conn, topic=db.LEARN)[-1]
         self.assertEqual((msg["body"], msg["card_id"]), (db.LEARN_EXPLAIN, 1))
         self.assertEqual(self.post_json("/learn/explainer/refresh", {"card_id": "1"})[0], 400)  # none yet
+        self.answer(msg["id"], "Written.")
         self.write_page()
         self.record()
         (self.repo / "evals" / "run.py").write_text(RUN_PY.replace("7)", "8)"), encoding="utf-8")
@@ -143,11 +144,48 @@ class SectionTest(ExplainerTestCase):
             msg = db.thread(conn, topic=db.LEARN)[-1]
         self.assertTrue(msg["body"].startswith("Refresh the explainer for this card"))
         self.assertIn("(asked by the user)", msg["body"])  # to_label itself did not change
+        self.assertEqual(self.post_json("/learn/explainer/refresh", {"card_id": "1"})[0], 400)  # already on it
+        self.answer(msg["id"], "Refreshed.")
         (self.repo / "evals" / "run.py").write_text(RUN_PY.replace('"unscored"', '"none"'), encoding="utf-8")
         self.post_json("/learn/explainer/refresh", {"card_id": "1"})
         with self.conn() as conn:
             msg = db.thread(conn, topic=db.LEARN)[-1]
         self.assertIn("(evals/run.py · to_label)", msg["body"])
+
+    def test_make_never_opens_the_chat_and_the_card_says_it_is_being_written(self) -> None:
+        body = self.get("/learn?card=1")[2]
+        self.assertNotIn("data-open-chat", body)
+        status, reply = self.post_json("/learn/explainer/make", {"card_id": "1"})
+        self.assertEqual(status, 200)
+        self.assertIn('data-making="1"', reply["explainer"])
+        self.assertIn("Being written by the Learn Assistant", reply["explainer"])
+        self.assertNotIn('action="/learn/explainer/make"', reply["explainer"])
+        self.assertEqual(self.post_json("/learn/explainer/make", {"card_id": "1"})[0], 400)  # once at a time
+        body = self.get("/learn?card=1")[2]
+        self.assertIn('data-making="1"', body)
+        self.assertIn("No Learn Assistant task is set", body)  # no worker in the tests: the state says so
+        state = self.get_json("/learn/thread?card=1")
+        self.assertTrue(state["making"])
+        self.assertIn("data-explainer-state", state["making_html"])
+        self.assertEqual(state["explainer"], "")
+        with self.conn() as conn:
+            msg = db.thread(conn, topic=db.LEARN)[-1]
+        self.answer(msg["id"], "Written: a diagram and the code.")
+        self.write_page()
+        self.record()
+        state = self.get_json("/learn/thread?card=1")
+        self.assertFalse(state["making"])
+        self.assertIn("<iframe", state["explainer"])
+        self.assertNotIn("data-making", state["explainer"])
+
+    def test_refresh_keeps_the_page_while_it_is_rewritten(self) -> None:
+        self.write_page()
+        self.record()
+        self.post_json("/learn/explainer/refresh", {"card_id": "1"})
+        body = self.get("/learn?card=1")[2]
+        self.assertIn("Being refreshed by the Learn Assistant", body)
+        self.assertIn("<iframe", body)
+        self.assertNotIn('action="/learn/explainer/refresh"', body)  # no second Refresh meanwhile
 
 
 class CheckTest(ExplainerTestCase):
@@ -217,6 +255,54 @@ class CliTest(ExplainerTestCase):
 
 
 class HighlightTest(ExplainerTestCase):
+    def test_ask_with_an_empty_box_explains_the_quote(self) -> None:
+        status, reply = self.post_json("/learn/message", {"card_id": "1", "body": " ", "quote": "Set a TTL",
+                                                           "quote_src": "card"})
+        self.assertEqual(status, 200)
+        with self.conn() as conn:
+            msg = db.thread(conn, topic=db.LEARN)[-1]
+        self.assertEqual(msg["body"], "About this passage (Card):\n> Set a TTL\n\nExplain this.")
+        self.assertEqual(reply["msg_id"], msg["id"])
+        self.assertIn("Your questions", reply["questions"])
+        self.assertIn("Thinking…", reply["questions"])
+        self.ping.assert_called_once()
+        # still refused with neither words nor a quote, and a quote alone needs a card
+        self.assertEqual(self.post_json("/learn/message", {"card_id": "1", "body": ""})[0], 400)
+        self.assertEqual(self.post_json("/learn/message", {"body": "", "quote": "x"})[0], 400)
+
+    def test_answer_shows_in_place_and_stays_in_your_questions(self) -> None:
+        _, reply = self.post_json("/learn/message", {"card_id": "1", "quote": "Set a <b>TTL</b>",
+                                                      "quote_src": "explainer", "body": "why?"})
+        msg_id = reply["msg_id"]
+        waiting = self.get_json(f"/learn/answer?msg={msg_id}")
+        self.assertEqual((waiting["state"], waiting["html"], waiting["reply_id"]), ("waiting", "", None))
+        reply_id = self.answer(msg_id, "A **TTL** expires keys. <script>x</script>\n\nUnderstand: it bounds staleness\nSay it: \"A TTL bounds staleness.\"")
+        done = self.get_json(f"/learn/answer?msg={msg_id}")
+        self.assertEqual((done["state"], done["reply_id"]), ("answered", reply_id))
+        self.assertIn("<strong>TTL</strong>", done["html"])  # the safe Markdown renderer
+        self.assertIn("&lt;script&gt;", done["html"])
+        self.assertNotIn("<script>", done["html"])
+        self.assertIn("&lt;b&gt;TTL&lt;/b&gt;", done["questions"])  # the quote is text
+        self.assertIn(f'name="reply_id" value="{reply_id}"', done["questions"])  # Add answer to notes
+        body = self.get("/learn?card=1")[2]  # the next visit
+        self.assertIn('id="learn-questions"', body)
+        self.assertIn("Explainer</span>", body)
+        self.assertIn("<strong>TTL</strong>", body)
+        self.assertIn("why?", body)
+        # Add answer to notes keeps the essence, as in the chat
+        status, _ = self.post_json("/learn/add-note", {"card_id": "1", "reply_id": str(reply_id)})
+        self.assertEqual(status, 200)
+        self.assertIn("it bounds staleness", learnnotes.read(self.private, "1")["text"])
+
+    def test_answer_json_refusals_and_plain_questions_stay_out(self) -> None:
+        plain = self.ask(1, "quiz me")
+        self.assertEqual(self.get_json(f"/learn/answer?msg={plain}")["state"], "waiting")
+        self.assertNotIn("quiz me", self.get("/learn?card=1")[2].split('id="learn-questions"')[1].split("</section>")[0])
+        self.assertEqual(self.get("/learn/answer?msg=abc")[0], 400)
+        self.assertEqual(self.get("/learn/answer?msg=999")[0], 404)
+        reply = self.answer(plain, "ok")
+        self.assertEqual(self.get(f"/learn/answer?msg={reply}")[0], 404)  # an agent message
+
     def test_ask_marks_the_quote_and_its_source(self) -> None:
         status, reply = self.post_json("/learn/message", {"card_id": "1", "body": "Why <this>?",
                                                            "quote": "precision,\n recall  per threshold",
