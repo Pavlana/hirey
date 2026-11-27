@@ -610,15 +610,76 @@
     return { save };
   }
 
+  // Optional vim keys (vim.js) on an editor form: its [data-vim-toggle] button turns them on or off, remembered
+  // per browser for every editor; [data-ed-mode] and [data-ed-pos] show the mode and line,col. `save` runs on :w.
+  // Returns paintPos, for the editor to call when its text changes.
+  const VIM_KEY = "learn-vim";
+  function attachVim(form, area, save) {
+    const modeEl = form.querySelector("[data-ed-mode]");
+    const posEl = form.querySelector("[data-ed-pos]");
+    const vimBtn = form.querySelector("[data-vim-toggle]");
+    let vim = null;
+    function paintPos() {
+      if (!vim) return;
+      const { line, col } = HireyVim.position(area.value, area.selectionStart);
+      posEl.textContent = `${line},${col}`;
+    }
+    if (!vimBtn || typeof HireyVim === "undefined") return paintPos;
+    function paintMode() {
+      if (!vim) return;
+      modeEl.textContent = vim.mode === "command" ? `:${vim.cmd}` : vim.mode.toUpperCase();
+      modeEl.dataset.mode = vim.mode;
+      modeEl.title = vim.mode === "insert" ? "Esc: normal mode" : ":w saves · i inserts";
+      paintPos();
+    }
+    function paintCursor() {
+      const p = vim.pos;
+      const block = vim.mode !== "insert" && p < area.value.length && area.value[p] !== "\n";
+      area.setSelectionRange(p, block ? p + 1 : p);
+    }
+    function setVim(on) {
+      vim = on ? HireyVim.create(area.value, area.selectionStart) : null;
+      vimBtn.setAttribute("aria-pressed", String(on));
+      vimBtn.textContent = on ? "vim keys on" : "vim keys off";
+      modeEl.hidden = !on;
+      posEl.hidden = !on;
+      form.classList.toggle("is-vim", on);
+      if (on) { paintMode(); if (document.activeElement === area) paintCursor(); }
+    }
+    area.addEventListener("keydown", (e) => {
+      if (!vim || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const r = HireyVim.step({ ...vim, text: area.value, pos: area.selectionStart }, e.key);
+      vim = r.state;
+      if (!r.handled) return;
+      e.preventDefault();
+      if (r.changed) {
+        area.value = vim.text;
+        area.dispatchEvent(new Event("input"));
+      }
+      paintCursor();
+      paintMode();
+      if (r.save) save("manual");
+    });
+    ["keyup", "click"].forEach((type) => area.addEventListener(type, paintPos));
+    area.addEventListener("focus", () => { if (vim) paintCursor(); });
+    try { setVim(localStorage.getItem(VIM_KEY) === "1"); } catch { setVim(false); }
+    vimBtn.addEventListener("click", () => {
+      const on = !vim;
+      setVim(on);
+      try {
+        if (on) localStorage.setItem(VIM_KEY, "1");
+        else localStorage.removeItem(VIM_KEY);
+      } catch { /* not remembered */ }
+      area.focus();
+    });
+    vimBtn.hidden = false;
+    return paintPos;
+  }
+
   const editor = document.querySelector("form[data-learn-notes]");
   if (editor && window.fetch) {
     const area = editor.querySelector("textarea");
     const gutter = editor.querySelector(".ed-gutter");
-    const modeEl = editor.querySelector("[data-ed-mode]");
-    const posEl = editor.querySelector("[data-ed-pos]");
-    const vimBtn = editor.querySelector("[data-vim-toggle]");
-    const VIM_KEY = "learn-vim";
-    let vim = null;
 
     // Lines soft-wrap to the panel, so the gutter gives each logical line one number, sized to that
     // line's wrapped height: a hidden mirror with the textarea's width and font measures each line.
@@ -653,64 +714,9 @@
     area.addEventListener("scroll", () => { gutter.scrollTop = area.scrollTop; });
     if (window.ResizeObserver) new ResizeObserver(() => paintGutter()).observe(area);
     else window.addEventListener("resize", paintGutter);
-    function paintPos() {
-      if (!vim) return;
-      const { line, col } = HireyVim.position(area.value, area.selectionStart);
-      posEl.textContent = `${line},${col}`;
-    }
+    let paintPos = () => {};
     const { save } = autosaving(editor, { onText: () => { paintGutter(); paintPos(); } });
-
-    // vim keys
-    function paintMode() {
-      if (!vim) return;
-      modeEl.textContent = vim.mode === "command" ? `:${vim.cmd}` : vim.mode.toUpperCase();
-      modeEl.dataset.mode = vim.mode;
-      modeEl.title = vim.mode === "insert" ? "Esc: normal mode" : ":w saves · i inserts";
-      paintPos();
-    }
-    function paintCursor() {
-      const p = vim.pos;
-      const block = vim.mode !== "insert" && p < area.value.length && area.value[p] !== "\n";
-      area.setSelectionRange(p, block ? p + 1 : p);
-    }
-    function setVim(on) {
-      vim = on ? HireyVim.create(area.value, area.selectionStart) : null;
-      vimBtn.setAttribute("aria-pressed", String(on));
-      vimBtn.textContent = on ? "vim keys on" : "vim keys off";
-      modeEl.hidden = !on;
-      posEl.hidden = !on;
-      editor.classList.toggle("is-vim", on);
-      if (on) { paintMode(); if (document.activeElement === area) paintCursor(); }
-    }
-    area.addEventListener("keydown", (e) => {
-      if (!vim || e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return;
-      const r = HireyVim.step({ ...vim, text: area.value, pos: area.selectionStart }, e.key);
-      vim = r.state;
-      if (!r.handled) return;
-      e.preventDefault();
-      if (r.changed) {
-        area.value = vim.text;
-        area.dispatchEvent(new Event("input"));
-      }
-      paintCursor();
-      paintMode();
-      if (r.save) save("manual");
-    });
-    ["keyup", "click"].forEach((type) => area.addEventListener(type, paintPos));
-    area.addEventListener("focus", () => { if (vim) paintCursor(); });
-    if (typeof HireyVim !== "undefined") {
-      try { setVim(localStorage.getItem(VIM_KEY) === "1"); } catch { setVim(false); }
-      vimBtn.addEventListener("click", () => {
-        const on = !vim;
-        setVim(on);
-        try {
-          if (on) localStorage.setItem(VIM_KEY, "1");
-          else localStorage.removeItem(VIM_KEY);
-        } catch { /* not remembered */ }
-        area.focus();
-      });
-      vimBtn.hidden = false;
-    }
+    paintPos = attachVim(editor, area, save);
   }
 
   // Your answer: a plain textarea (no vim keys) that grows with the text, from its six rows.
@@ -1057,6 +1063,12 @@
           // its text and its stamp, so a save over the agent's addition is still refused, not lost.
           const editing = same && current.querySelector("#card-notes .notes-edit[open]")?.closest("#card-notes");
           if (editing) panel.querySelector("#card-notes")?.replaceWith(editing);
+          // So do the plan and CV editors with unsaved text (a stale save is refused, not lost).
+          ["#plan-edit", "#tailor-edit", "#master-edit"].forEach((sel) => {
+            const open = same && current.querySelector(`${sel}[open]`);
+            const area = open?.querySelector("textarea");
+            if (area && area.value !== area.defaultValue) panel.querySelector(sel)?.replaceWith(open);
+          });
           if (current) current.replaceWith(panel); else apps.append(panel);
           if (list) {
             panel.scrollTop = scroll; // a refresh keeps the reader's place
@@ -1362,6 +1374,60 @@
     e.preventDefault();
     const button = form.querySelector("button");
     if (button) button.disabled = true;
+    // Save and write the CV (the plan editor) posts the same text to its own formaction.
+    const url = e.submitter?.hasAttribute("formaction") ? e.submitter.formAction : form.action;
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        body: new URLSearchParams(new FormData(form)),
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      let reply = null;
+      if ((res.headers.get("content-type") || "").includes("application/json")) reply = await res.json();
+      if (!reply) throw new Error(`Not saved (HTTP ${res.status}).`);
+      if (reply.ok && !reply.html && refreshApps) { await refreshApps(); toast(reply.message); return; }
+      const card = form.closest("[data-swap], #card-notes");
+      if (reply.html && card) {
+        const tpl = document.createElement("template");
+        tpl.innerHTML = reply.html; // built and escaped by the server
+        const fresh = tpl.content.firstElementChild;
+        card.replaceWith(fresh);
+        if (!reply.ok) fresh.querySelector("textarea")?.focus();
+      }
+      if (!reply.ok) throw new Error(reply.message || "Not saved.");
+      toast(reply.message);
+    } catch (err) {
+      toast(err.message || "Not saved.", { error: true });
+    } finally {
+      if (button?.isConnected) button.disabled = false;
+    }
+  });
+
+  // --- CV editors (Tailored CV, My CV) ------------------------------------------------------------
+  // Edit opens the form; Save (or Cmd/Ctrl-S, :w with vim keys) posts it. A saved edit refreshes the panel
+  // (the PDF, the check and the versions change) and opens the editor again on the saved text; the My CV
+  // toast has Undo (Restore of the version it replaced). A save over a file that changed meanwhile comes
+  // back refused: the editor again with the current text above, the user's text kept in it.
+  document.addEventListener("toggle", (e) => {
+    const edit = e.target;
+    if (!edit.matches?.(".cv-edit") || !edit.open) return;
+    const form = edit.querySelector("form[data-cv-editor]");
+    if (!form || form.dataset.vim) return;
+    form.dataset.vim = "1";
+    attachVim(form, form.querySelector("textarea"), () => form.requestSubmit());
+  }, true);
+  document.addEventListener("keydown", (e) => {
+    const form = e.target.closest?.("form[data-cv-editor]");
+    if (form && (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s") { e.preventDefault(); form.requestSubmit(); }
+  });
+  document.addEventListener("submit", async (e) => {
+    const form = e.target.closest("form[data-cv-editor]");
+    if (!form || !window.fetch) return;
+    e.preventDefault();
+    const button = form.querySelector("button");
+    if (button) button.disabled = true;
+    const edit = form.closest("details");
     try {
       const res = await fetch(form.action, {
         method: "POST",
@@ -1372,16 +1438,26 @@
       let reply = null;
       if ((res.headers.get("content-type") || "").includes("application/json")) reply = await res.json();
       if (!reply) throw new Error(`Not saved (HTTP ${res.status}).`);
-      const card = form.closest("#card-notes");
-      if (reply.html && card) {
-        const tpl = document.createElement("template");
-        tpl.innerHTML = reply.html; // built and escaped by the server
-        const fresh = tpl.content.firstElementChild;
-        card.replaceWith(fresh);
-        if (!reply.ok) fresh.querySelector("textarea")?.focus();
+      if (!reply.ok) {
+        const box = form.closest("[data-swap]");
+        if (reply.html && box) {
+          const tpl = document.createElement("template");
+          tpl.innerHTML = reply.html; // built and escaped by the server
+          const fresh = tpl.content.firstElementChild;
+          box.replaceWith(fresh);
+          fresh.querySelector("textarea")?.focus();
+        }
+        throw new Error(reply.message || "Not saved.");
       }
-      if (!reply.ok) throw new Error(reply.message || "Not saved.");
-      toast(reply.message);
+      const id = edit?.id;
+      if (edit) edit.open = false; // not kept over the refresh: the fresh one has the new stamp
+      await refreshApps();
+      const again = id && document.getElementById(id);
+      if (again) { again.open = true; again.querySelector("textarea")?.focus(); }
+      const undoIt = () => post("/cv/restore", new URLSearchParams({ version: reply.previous }))
+        .then((r) => refreshApps().then(() => toast(r.message)))
+        .catch((err) => toast(err.message, { error: true }));
+      toast(reply.message, reply.previous ? { action: { label: "Undo", run: undoIt } } : {});
     } catch (err) {
       toast(err.message || "Not saved.", { error: true });
     } finally {

@@ -150,7 +150,7 @@ class CliTest(IsolatedTestCase):
             msg = db.add_message(conn, self.app, "Lead with Azure security.")
         out = self.run_cli("thread", "show", str(self.app))[1]
         self.assertIn(f"v1 {self.path(1)} (exists)", out)
-        self.assertIn(f"tailor path {self.app} --copy", out)
+        self.assertIn(f"tailor draft {self.app}", out)
         out = self.run_cli("tailor", "path", str(self.app), "--copy")[1]
         self.assertEqual(out.splitlines()[0], str(self.path(2)))
         self.assertEqual(self.path(2).read_text(encoding="utf-8"), TAILORED)
@@ -202,7 +202,7 @@ class CliTest(IsolatedTestCase):
         self.run_cli("tailor", "path", str(self.app), "--role-short", "Eng")
         write(self.path(1), TAILORED)
         self.save()
-        self.assertIn(f"agreed wording: {style} (exists)", self.run_cli("thread", "show", str(self.app))[1])
+        self.assertIn(f"agreed wording: {style} (exists;", self.run_cli("thread", "show", str(self.app))[1])
 
     def test_a_file_without_front_matter_is_refused(self) -> None:
         self.run_cli("tailor", "path", str(self.app), "--role-short", "Eng")

@@ -659,6 +659,15 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 }
 .notes-form textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 .notes-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; font-size: 12px; }
+/* The tailoring plan and the CV editors (prep/cvedit.py): the Notes card's Edit form, wider and monospaced. */
+.notes-form textarea.mono-area { min-height: 320px; font: 12.5px/1.55 var(--mono); tab-size: 4; }
+.cv-edit[open], .plan-edit[open] { flex-basis: 100%; }
+.cv-tools { margin: var(--space-2) 0; }
+.cv-note-input { width: 100%; padding: 4px var(--space-3); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); font-size: 13px; }
+.cv-editor .ed-current pre, .notes-form .ed-current pre { max-height: 220px; overflow: auto; white-space: pre-wrap;
+  margin: var(--space-2) 0 0; padding: var(--space-2) var(--space-3); font-size: 12px; background: var(--surface-2); }
+.plan-card .action-row { flex-wrap: wrap; }
 .older-versions > summary { cursor: pointer; font-size: 12px; color: var(--text-muted); }
 .older-versions[open] > summary { margin-bottom: var(--space-2); }
 .versions + .older-versions { margin-top: 6px; }

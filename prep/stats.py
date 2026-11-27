@@ -19,6 +19,10 @@ Definitions (used everywhere, documented in docs/reference/metrics.md):
   Applied (every submitted one), Screen (recruiter_call), Interview (technical, system_design or
   final), Offer (offer).
 - Weeks start on Monday, counted by date_applied.
+- Versions per sent CV: over applications whose tailored CV is marked sent (`cv sent`), the average
+  version number sent (versions count from 1, so v3 took three versions). Edits per sent CV: the
+  average number of in-place edits (the panel's editor or `tailor edit`, Undo included) made to those
+  versions before the CV was marked sent.
 """
 
 import sqlite3
@@ -115,3 +119,12 @@ def applications_per_week(conn: sqlite3.Connection, today: str | None = None,
                           weeks: int = WEEKS_SHOWN) -> list[tuple[str, int]]:
     rows = conn.execute("SELECT date_applied FROM applications WHERE date_applied IS NOT NULL")
     return _per_week([r[0] for r in rows], today, weeks)
+
+
+def cv_effort(conn: sqlite3.Connection) -> dict:
+    """{"sent": n, "versions": average or None, "edits": average or None} over sent tailored CVs."""
+    rows = db.cv_effort(conn)
+    if not rows:
+        return {"sent": 0, "versions": None, "edits": None}
+    return {"sent": len(rows), "versions": sum(r["versions"] for r in rows) / len(rows),
+            "edits": sum(r["edits"] for r in rows) / len(rows)}

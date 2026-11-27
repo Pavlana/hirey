@@ -94,6 +94,12 @@ Every dashboard endpoint, one line each. Details live on the page linked in the 
 | Method | Path | What it does | Reference |
 | --- | --- | --- | --- |
 | POST | `/cv/restore` | restore a master CV version (`version`; JSON `{version, previous}`) | [cvs.md](cvs.md) |
+| POST | `/cv/edit` | save the My CV editor (`stamp`, `text`, `note`); a stale stamp is a 400 with the editor; JSON `{version, previous}` | [cvs.md](cvs.md#editor) |
+| POST | `/applications/plan` | save the Tailoring plan card's editor (`app_id`, `stamp`, `text`); a stale stamp is a 400 | [cvs.md](cvs.md#tailoring-plan) |
+| POST | `/applications/plan/write` | Write the CV: the plan is agreed and a `tailor` request queued (saves `text` first when sent) | [cvs.md](cvs.md#tailoring-plan) |
+| POST | `/applications/cv/edit` | save the Tailored CV editor over the latest version (`app_id`, `version`, `stamp`, `text`) | [cvs.md](cvs.md#editor) |
+| POST | `/applications/cv/undo` | bring back the latest version's text from before its newest edit (`app_id`) | [cvs.md](cvs.md#editor) |
+| POST | `/applications/cv/revise` | ask the Applications Assistant to revise only the commented lines (`app_id`, or `topic=cv`) | [cvs.md](cvs.md#comments-for-the-agent) |
 | POST | `/workers/stop` | end one worker's open runs, optionally back to the queue | [assistants.md](assistants.md#workers-sidebar-and-run-history) |
 
 ## Learn

@@ -25,6 +25,7 @@ Requests live in `agent_requests`, one row per application and kind.
 | --- | --- | --- |
 | `research` | Company research | this page |
 | `cv_fit` | How cv.md fits the job | this page |
+| `plan` | The tailoring plan, before a tailored CV | [cvs.md](cvs.md#tailoring-plan) |
 | `tailor` | A tailored copy of cv.md | [cvs.md](cvs.md#tailored-cv) |
 | `cv_eval` | AI check of a tailored copy | [cvs.md](cvs.md#ai-check) |
 

@@ -242,9 +242,13 @@ Reference: [learn.md](reference/learn.md).
 
 ```mermaid
 flowchart TD
-    master["cv.md master<br/>versions in cv-history"] -->|"Tailor CV queued"| tailor["Research worker writes<br/>a new version file"]
-    facts["facts bank"] -.-> tailor
+    master["cv.md master<br/>versions in cv-history"] -->|"Tailor CV queued"| plan["Research worker writes<br/>the tailoring plan"]
+    plan -->|"user edits, answers,<br/>Write the CV"| tailor["Research worker writes<br/>the version file"]
+    master -->|"Just write it"| tailor
+    facts["facts bank"] -.-> plan
+    facts -.-> tailor
     tailor -->|"tailor save"| version["tailored_cv_versions<br/>never overwritten"]
+    version -->|"editor or tailor edit:<br/>in place, undoable"| version
     version --> pdf["PDF<br/>WeasyPrint, one column"]
     pdf --> rules["Rule check<br/>pages, contacts, dates, pay, keywords"]
     version -->|"AI check button"| ai["AI check<br/>separate pass: claims, fit, skim"]
@@ -253,8 +257,12 @@ flowchart TD
     verdict --> card["Ready, Look at these lines, or Blocked<br/>on the Tailored CV card"]
 ```
 
-- The master CV changes only through `cv save` from a draft, with a backup version first. Tailoring
-  rephrases, reorders and cuts; it never invents experience.
+- The master CV changes only through `cv save` or the My CV editor, with a backup version first.
+  Tailoring rephrases, reorders and cuts; it never invents experience.
+- Tailor CV asks for a short plan first (what the role needs, the evidence, the order, questions); the
+  user edits and answers it, then Write the CV. Just write it skips the plan.
+- The user edits the latest version in the panel, in place and undoable; a sent version is frozen and
+  an edit becomes the next version. `%%` comments ask the agent to revise only those lines.
 - Every save of a tailored version makes its PDF and runs the rule check; the AI check runs when the
   card's AI check button asks for it. One verdict merges both: Blocked when any finding blocks.
 - Which version was sent is recorded only when the user says so (`cv sent`).
@@ -316,6 +324,8 @@ erDiagram
     applications ||--o| cv_fits : "latest fit"
     applications ||--o{ tailored_cv_versions : "tailored versions"
     tailored_cv_versions ||--o| tailored_cv_checks : "verdict"
+    applications ||--o| tailor_plans : "tailoring plan"
+    applications ||--o{ tailored_cv_edits : "in-place edits"
     applications ||--o{ agent_messages : "messages"
     agent_messages ||--o{ agent_message_targets : "about"
     applications ||--o{ sessions : "practice"

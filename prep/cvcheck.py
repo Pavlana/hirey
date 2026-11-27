@@ -58,7 +58,7 @@ def body_lines(text: str) -> list[tuple[int, str]]:
     if lines and lines[0].strip() == research.FENCE:
         end = next((i for i in range(1, len(lines)) if lines[i].strip() == research.FENCE), None)
         start = end + 1 if end is not None else 0
-    return [(i + 1, lines[i]) for i in range(start, len(lines))]
+    return [(i + 1, lines[i]) for i in range(start, len(lines)) if not lines[i].lstrip().startswith("%%")]  # comments: never checked
 
 
 def _finding(check: str, severity: str, message: str, line: int | None = None, text: str = "") -> dict:

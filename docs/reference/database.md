@@ -68,12 +68,15 @@ Other `applications` columns: `link`, `type` (contract / permanent), `source`, `
 
 | Table | One row per | Key columns |
 | --- | --- | --- |
-| `agent_requests` | queued research, cv_fit, tailor or cv_eval | `application_id`, `kind`, `status`, `force`, `worker`, `reason`, times |
+| `agent_requests` | queued research, cv_fit, plan, tailor or cv_eval | `application_id`, `kind`, `status`, `force`, `worker`, `reason`, times |
 | `company_profiles` | company (`slug`) | `company`, `file_path`, size, recognition, funding, `sources`, `suggested_tier`, `tier_reason`, `researched_at` |
 | `cv_fits` | application (latest fit) | `score` 1-5, `top_gaps` (JSON, at most 3), `file_path`, `checked_at` |
 | `tailored_cvs` | application (latest version) | `file_path`, `version`, `updated_at` |
 | `tailored_cv_versions` | tailored CV version | `application_id`, `version`, `file_path`, `created_at` |
-| `tailored_cv_checks` | tailored CV version | `verdict`, `findings` (JSON), `changes` (JSON), `summary` (JSON, AI check), `checked_at` |
+| `tailored_cv_checks` | tailored CV version | `verdict`, `findings` (JSON), `changes` (JSON), `summary` (JSON, AI check; `stale` after an edit), `checked_at` |
+| `tailor_plans` | application (its tailoring plan) | `file_path`, `status` (draft / agreed), `created_at`, `updated_at`, `agreed_at` |
+| `tailored_cv_edits` | in-place edit of a tailored version | `application_id`, `version`, `backup_path`, `author` (user / agent), `created_at`, `undone_at` |
+| `cv_comments` | open comment for the agent on a CV line | `application_id` (NULL: the master CV), `anchor`, `body`, `position`, `created_at` |
 | `cv_versions` | master CV version (vN) | `file_name`, `note`, `sha256`, `created_at` |
 | `job_briefs` | getjo job | `brief` (Markdown), `updated_at` |
 | `brief_requests` | getjo job waiting for a brief | `status`, `force`, `worker`, `reason`, `screen_asked`, times |

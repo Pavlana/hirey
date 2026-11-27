@@ -1,6 +1,6 @@
 ---
 name: ask
-description: Answer messages left in the Applications Assistant box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers and change requests for the tailored CV, changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the Applications Assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
+description: Answer messages left in the Applications Assistant box on the Hirey dashboard — "which tasks need me?" and other questions about the whole search, questions about a company, the role or the CV fit (also for a job offer not yet tracked), comparisons of several ticked jobs, answers to the tailoring plan's questions, answers and change requests for the tailored CV (revised in place, also "revise only the lines I commented on"), changes to the master CV from the My CV panel ("add Terraform to my skills", "shorten my summary"), requests to change the application (tasks, comments, stage, tier, which CV was sent, skip), a pasted recruiter email or call notes that should update the stage. Reads the thread and its context files, answers (searching the web when needed) or records the stage change, and replies in the thread. Use when the user types /ask [application id, job, cv, compare or general] [message id], when the Applications Assistant receives "/ask <app> <msg>", "/ask job <msg>", "/ask cv <msg>", "/ask compare <msg>" or "/ask general <msg>", or when /today or the session-start note says thread messages are waiting.
 ---
 
 # /ask
@@ -211,39 +211,63 @@ skill file `.claude/skills/stage/SKILL.md` has the stage table and the rules.
 Reply in one or two lines, for example "Moved to Coding interview, Tue 10 Nov 14:00; prep tasks
 due Mon 9 Nov. Added: send availability to Sam."
 
-**About the tailored CV**: an answer to one of the agent's tailoring questions ("Yes, Terraform
-for two years at …") or a change request ("shorten the summary", "lead with Azure security"):
+**About the tailoring plan** (before the CV exists; the panel's Tailoring plan card,
+`python -m prep.cli plan show APP`): an answer to one of the plan's questions, a change to the plan, or
+"write it".
 
-1. Start the next version as a copy of the latest: `python -m prep.cli tailor path APP --copy`
-   prints the new file (`CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`). Every version is its own
-   file and is kept; never edit an earlier version. Read `cv.md` for facts.
-2. Edit the new file only. Never edit `cv.md` here (it changes only through a My CV request, below). Never invent experience: rephrase, reorder and cut. A fact the user states in the thread
-   may go into the copy in their words, and is added as one bullet to the facts bank (`cv-facts.md`
-   in private_dir, or the `facts_file` setting; create it from `cv-facts.example.md` if missing) so
-   the AI check can trace it; anything still unclear becomes a short question in the reply.
-   Follow the tailoring rules in `.claude/skills/research/SKILL.md` (length, structure, impact,
-   keyword coverage, the header from the facts bank's `## Contact` section). Wording the user agrees for reuse, such as a career gap line, goes into
-   `cv-tailored/_style.md` (path in `thread show`) as well as the copy.
-3. Save it; the note on stdin is the reply to this message, saying in a few lines what changed:
+- An answer to question N: `python -m prep.cli plan answer APP N --to MSG` with the user's answer on
+  stdin, in their words. It goes under that question in the plan (the CV is written from the plan)
+  and answers the message. Answers stay in the plan: never copy them to the facts bank.
+- A change to the plan ("lead with the evals harness", "drop the Go line"): edit the plan file (path
+  in `plan show`), keep its four `##` sections, then reply with `thread reply`.
+- "Write it" / "looks good": `python -m prep.cli plan write APP` (the same as the card's Write the
+  CV), then reply in one line that the CV is queued.
+
+**About the tailored CV**: an answer to one of the agent's tailoring questions, a change request
+("shorten the summary", "lead with Azure security"), or "Revise only the lines I commented on" (the
+panel's Revise commented lines). The user edits the CV in the panel and wants few versions, so a
+change goes into the latest version **in place**:
+
+1. `python -m prep.cli tailor draft APP` prints a working copy of the latest version. The user's
+   comments are in it as `%% …` lines under the line they are about. Read `cv.md`, the facts bank and
+   `cv-tailored/_style.md` for facts and agreed wording (paths in `thread show`).
+2. Edit the draft only, nothing else. For "Revise only the lines I commented on", change **only** the
+   commented lines, and delete each `%%` line you handled (one you cannot handle stays, and the reply
+   says why). Never edit `cv.md` here (it changes only through a My CV request, below). Never invent
+   experience: rephrase, reorder and cut. A fact the user states in the thread may go into the copy
+   in their words; anything still unclear becomes a short question in the reply. **Never add to the
+   facts bank (`cv-facts.md`) or `stories.md` on your own**: only when the user says so ("add this to
+   my facts"), and then as one bullet. Follow the tailoring rules in
+   `.claude/skills/research/SKILL.md` (length, structure, impact, keyword coverage, the header from the
+   facts bank's `## Contact` section). Wording the user approves for reuse, such as a career gap line,
+   is also recorded: `python -m prep.cli style add --app APP` with the wording on stdin (dated, with
+   the application, in `cv-tailored/_style.md`).
+3. Save it in place; the note on stdin is the reply to this message, saying in a few lines what changed:
 
    ```bash
-   python -m prep.cli tailor save APP --to MSG <<'NOTE'
-   v3 (CV_Globex_FDE_101126_3.md): summary cut to two lines; Azure security project first; Terraform in Skills.
+   python -m prep.cli tailor edit APP --to MSG <<'NOTE'
+   v2: the pipeline bullet now says it was owned end to end; the summary is two lines.
    NOTE
    ```
 
-   It records the file `tailor path` printed as the next version, makes its PDF (page count printed,
-   WARNING above two pages: shorten it in another version), checks it ("Check: Blocked" or "Look at
-   these lines" with the flagged lines: fix a blocking line in another version; keep the front
-   matter's `keywords` and `gaps` current, a term the user confirms moves from gaps into the text) and answers the
-   message, so do not also run `thread reply` for it. The AI check (grounding, fit, skim,
-   editorial) is not queued by the save: the user asks for it with the panel's AI check button.
-   When asked, it goes to the Research worker when one is set (`[workers] research`); otherwise it
-   is a separate pass, as the /research skill's "AI check of a tailored CV" says (`research next
-   APP`, then a fresh subagent).
+   It saves over the latest version and keeps the text before it (the panel's Undo edit, or
+   `tailor undo APP`), remakes the PDF (page count printed, WARNING above two pages: shorten it),
+   runs the rule check ("Check: Blocked" or "Look at these lines": fix a blocking line with another
+   edit; keep the front matter's `keywords` and `gaps` current, a term the user confirms moves from
+   gaps into the text), marks an earlier AI check out of date and answers the message, so do not also
+   run `thread reply` for it. A version marked as sent is never changed: the edit is saved as the next
+   version. A refused save ("changed while you were editing") means the user edited meanwhile: run
+   `tailor draft` again and redo the change on the new text.
+   Write a whole **new version** (`tailor path APP --copy`, edit, `tailor save APP --to MSG`) only when
+   the user asks for one ("start a fresh version", a different angle for the role).
+   The AI check (grounding, fit, skim, editorial, grammar) is not queued by any save: the user asks for
+   it with the panel's AI check button. When asked, it goes to the Research worker when one is set
+   (`[workers] research`); otherwise it is a separate pass, as the /research skill's "AI check of a
+   tailored CV" says (`research next APP`, then a fresh subagent).
    No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
-4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one.
+4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one (a plan
+   first), or Just write it for a role that needs only small changes.
 5. "I sent v2" or a file name: `python -m prep.cli cv sent APP FILE_NAME` (see the table above).
 
 **About the master CV** (`/ask cv MSG`, tagged "My CV"): a change to `cv.md` itself, such as "add
@@ -254,7 +278,8 @@ every tailored CV file with its path.
 
 1. **Never edit `cv.md` directly.** Every write goes through `cv save`, which saves the current
    text as a version first and replaces `cv.md` atomically. Start a draft:
-   `python -m prep.cli cv draft` prints its path (a fresh copy of `cv.md`).
+   `python -m prep.cli cv draft` prints its path (a fresh copy of `cv.md`, with the user's comments
+   from the My CV editor as `%% …` lines under their lines).
 2. Edit the draft only. Make exactly the change asked for and keep the rest as it is (headings,
    order, the skills groups that the panel shows as chips, either `- **Theme:** a, b` lines or a
    `- **Theme**` bullet with one indented `  - item` sub-bullet per skill; put a new skill in the
@@ -264,6 +289,9 @@ every tailored CV file with its path.
      an edit.
    - "Copy X from CV_…" : read that tailored file (path in `thread show`), copy the named part
      into the draft, and drop anything in it that is specific to that one job.
+   - "Revise only the lines I commented on": change only the lines with a `%%` comment under them
+     and delete each comment line you handled; `cv save` keeps the rest open and never writes
+     comment lines into `cv.md`.
    - No pay or salary in the CV or the note.
 3. Save it; the note is one line saying what changed, and with `--to` it is also the reply:
 

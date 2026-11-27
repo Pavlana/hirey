@@ -43,7 +43,7 @@ and CV work itself is in [research.md](research.md) and [cvs.md](cvs.md).
 | Agent | Setting | Handles | Skills |
 | --- | --- | --- | --- |
 | Applications Assistant | `assistant_task` | Applications Assistant box messages; any work whose route has no worker | /ask, /stage, /reply (fallback), /research (fallback) |
-| Research worker | `[workers] research` | company research, CV fit, tailored CV, AI CV check, job briefs | /research |
+| Research worker | `[workers] research` | company research, CV fit, tailoring plan, tailored CV, AI CV check, job briefs | /research |
 | Communication worker | `[workers] comms` | Draft a reply requests | /reply |
 | Learn Assistant | `prep_assistant_task` | Learn Assistant box messages | /learn-ask, /explainer |
 
@@ -59,7 +59,7 @@ Routing is plain code, no LLM (`assistant.target`, `assistant.message_target`).
 
 | Work | Route | Ping | Goes to |
 | --- | --- | --- | --- |
-| `agent_requests`: research, cv_fit, tailor, cv_eval | `research` | `/research <app id>` | `[workers] research`, else `assistant_task` |
+| `agent_requests`: research, cv_fit, plan, tailor, cv_eval | `research` | `/research <app id>` | `[workers] research`, else `assistant_task` |
 | `brief_requests` (job briefs) | `research` | `/research briefs` | `[workers] research`, else `assistant_task` |
 | Draft a reply (`agent_messages.comms` set) | `comms` | `/reply <app id \| job \| general> <msg id>` | `[workers] comms`, else `assistant_task` |
 | Applications Assistant box messages | none | `/ask <about> <msg id>` | `assistant_task` |
@@ -89,7 +89,7 @@ Routing is plain code, no LLM (`assistant.target`, `assistant.message_target`).
 - The dashboard runs it in a background thread. A failure is logged and the work stays queued for the
   hook or `/today`.
 - Research pings: when a dashboard request or a CLI `applied` / `update` queues new requests, each
-  affected application is sent `/research <id>`. The subject is "Tailored CV" or "AI CV check" when that
+  affected application is sent `/research <id>`. The subject is "Tailoring plan", "Tailored CV" or "AI CV check" when that
   is the only kind queued, else "Research".
 - Brief pings: when a page queued any briefs, it sends `/research briefs` once (a count, no ids;
   `assistant.notify_briefs_in_background`).
@@ -269,7 +269,7 @@ messages they are about (atomic per message; a lapsed claim counts as pending ag
 
 | Command | Prints |
 | --- | --- |
-| `thread show APP --claim` | the application (never pay), paths of the company file, CV fit file, cv.md and tailored versions, stage, tier, open tasks with ids, comments with refs, notes, brief, job description, its messages |
+| `thread show APP --claim` | the application (never pay); paths of the company, fit, cv.md, plan and tailored files; stage, tier, tasks, comments with refs, notes, brief, job description, messages |
 | `thread show --claim` (general) | open applications (stage, tier, next task, latest comment), the [review order](applications.md#review-order), the latest 30 messages |
 | `thread show --job ID` | a job offer not yet tracked: company, role, score, location, link, state, company file if any, cv.md, brief, job description, its messages |
 | `thread show --message MSG` | resolves any message to its application, job, the CV or the whole search; a comparison prints every target |

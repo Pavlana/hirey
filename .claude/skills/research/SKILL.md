@@ -1,6 +1,6 @@
 ---
 name: research
-description: Do the queued company research, CV fit checks, tailored CVs and job briefs in Hirey — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write a copy of the CV tailored to one job (questions go to the Applications Assistant box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
+description: Do the queued company research, CV fit checks, tailored CVs and job briefs in Hirey — research what a company does, its size, stack, culture, interview process and recent news, check how cv.md fits the job, set the tier, write the short tailoring plan for a job's CV (what the role needs, the evidence, the order, a few questions), write a copy of the CV tailored to one job from the agreed plan (questions go to the Applications Assistant box), check a tailored copy in a separate pass (claims traced to cv.md or the facts bank, fit, six-second skim), write the short job brief shown at the top of a job's panel, and save the results locally. Use when the user types /research [application id] or /research briefs, when /today or the session-start note says agent work or job briefs are pending, or when the user asks to research a company or check the CV against a job.
 ---
 
 # /research
@@ -23,13 +23,14 @@ place; the answers there are handled by `/ask`.
    id, first run `python -m prep.cli research queue 12`. Add `--kind research` or
    `--kind cv_fit` for only one of them, and `--redo` to research again a profile that is
    still fresh.
-2. Follow the printed packet: company research, CV fit, tailored CV and/or AI check of the tailored
-   CV, in that order. Each part names its file and the save command. The packet starts with the
+2. Follow the printed packet: company research, CV fit, tailoring plan, tailored CV and/or AI check
+   of the tailored CV, in that order. Each part names its file and the save command. The packet starts with the
    application's notes (the panel's Notes card: the user's notes and earlier agent additions);
    read them as context, for example what a recruiter already said about the process.
 3. Repeat until it prints "Nothing pending". Then reply in a few lines per application:
    - company: one line on what it does and the tier set
    - CV fit: the score and the top gaps
+   - tailoring plan: saved, and how many questions it asks
    - tailored CV: the version saved and how many questions went to the thread
    - AI check: the verdict and how many lines are flagged (editorial ones included)
    - when a save printed "both results in": the Interested application now has a "Review
@@ -217,9 +218,59 @@ Then run `python -m prep.cli fit save <app id>`. Its gaps also go into the gaps 
 "cv fit"); a gap already open with the same text is not added twice. Name each gap as a short
 skill or topic, for example "Kubernetes operators", not a sentence.
 
+## Tailoring plan → `cv-tailored/plans/PLAN_<Company>_<app id>.md`
+
+The panel's **Tailor CV** queues a plan first: no CV is written until the user agrees the plan
+(**Write the CV**). **Just write it** skips the plan for a role that needs only small changes and queues
+the CV straight away (the next section, "no plan"). The point of the plan is that the discussion is
+about the role and the evidence, not about whole drafts.
+
+Read what the packet lists: `cv.md`, the CV fit, the company research, the job brief and description,
+the facts bank (read only) and `_style.md`. Then write about half a page, in plain Markdown, with these
+four sections (an easy role gets a short plan):
+
+```
+## What the role needs
+- Must-haves: the 3-5 that decide this role, in the posting's words.
+- Seniority signals: what a senior individual contributor CV must show for this role (scope, scale,
+  ownership, production use), so the CV does not read as junior.
+
+## Evidence
+- Each need: the cv.md line or facts-bank fact that proves it, and which one to lead with.
+
+## Order
+1. Summary: the 2-3 lines in outline.
+2. The sections and bullets in order, older or unrelated roles cut to one line.
+
+## Questions
+1. Only where the evidence is unclear: "Have you done X, or something like it with another tool?"
+   Answer:
+```
+
+- Questions are about **this role** (what to lead with, which evidence, how to word the seniority) and
+  stay few; none is fine. Each is numbered, with an empty `Answer:` line under it.
+- Never invent experience in the plan either: evidence is a line of `cv.md` or a fact in the facts
+  bank, named so the user can check it.
+- No pay anywhere. `plan save` refuses a plan without the four sections or with pay.
+
+```bash
+python -m prep.cli plan path APP        # prints the file
+python -m prep.cli plan save APP </dev/null   # or a one-line note on stdin; posts it in the thread
+```
+
+The user reads the plan in the panel, edits it, answers under each question (or in the Applications
+Assistant box, which `/ask` writes into the plan with `plan answer`), and presses Write the CV. The
+answers stay in the plan; nothing goes to the facts bank (cv-facts.md) or `stories.md` unless the user
+says so in words ("add this to my facts").
+
 ## Tailored CV → `cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`
 
-A copy of `cv.md` for this one job. The master `cv.md` is never edited here: it changes only when
+A copy of `cv.md` for this one job, written **once**, from the agreed plan when the packet names one
+("agreed plan: …": follow its order, lead with its evidence, use the answers under its questions);
+"no plan" means Just write it was pressed: tailor straight from cv.md, the fit and the job. The user
+then edits the CV in the panel (saved in place, as often as needed, each save undoable) and
+leaves `%%` comments for revisions (`/ask`), so aim for a version that needs only a touch-up.
+The master `cv.md` is never edited here: it changes only when
 the user asks for that in the My CV panel (/ask, `cv save`). Read `cv.md` from the path in the packet (missing: stop and
 ask the user for it), the CV fit file when there is one (its gaps and "How to adapt the CV"), and
 the job description.
@@ -256,7 +307,8 @@ vague about ("Have you used Terraform?"), leave it out of the copy and ask about
 - **Agreed wording**: `cv-tailored/_style.md` (path in the packet) holds wording agreed in earlier
   threads, such as a one-line explanation of a career gap. Reuse it in every copy. On the first
   tailoring, if `cv.md` has an unexplained gap and the file has no wording for it, ask once in the
-  note for the preferred line; when the answer comes (/ask), add it to `_style.md`.
+  note for the preferred line; when the user approves one (/ask), record it with
+  `python -m prep.cli style add --app APP` (the wording on stdin; dated, with the application).
 
 Get the file name first. The first time, pick a short role name for this application (FDE,
 AIEng, PlatEng: letters and digits, at most 12) and pass it once; it stays the same for every
@@ -352,6 +404,7 @@ covered = true                 # stated truthfully in the summary or a recent bu
 quote = "LLM APIs, Model API A, Model API B"   # words copied exactly from the version
 issue = "A general term next to its own examples"
 suggestion = "LLM APIs (Model API A, Model API B)"   # keeps the job's exact keyword
+# kind = "wording" (the default), "grammar" or "spelling"
 +++
 
 Free notes (optional).
@@ -373,7 +426,12 @@ Free notes (optional).
   a recruiter see in six seconds that this person fits this role? 5: the job's title and two or
   three must-haves are there; 3: the right field but the role is not obvious; 1: it reads as a
   different job. One line of why.
-- **Editorial**: read the version as an editor, after the three steps above. True but sloppy
+- **Grounding covers the user's own edits too**: the user edits the CV in the panel, so a claim may be
+  the user's wording; trace it the same way, and an unsourced one is still `none`.
+- **Grammar and spelling**: read every line for grammar and spelling (UK English). Each mistake is an
+  `[[editorial]]` entry with `kind = "grammar"` or `kind = "spelling"`, the exact quote, the issue in a
+  few words and the corrected wording. Hyphenation and capitalisation of product names count.
+- **Editorial**: read the version as an editor, after the steps above. True but sloppy
   wording is an entry; a grounding problem stays a claim. Look for:
   - redundancy or overlap inside one line or group: a general term next to its own specific
     examples (a category next to two named members of it), or two items that mean the same;
@@ -400,5 +458,6 @@ claims were removed or need a fact in the facts bank.
 - CV text, tailored copies, fit results and research stay in private_dir and prep.db. Never quote the CV in a
   reply beyond a few words. Never write these into the repo, logs or commit messages.
 - Do not mention pay, in replies, notes or any file (tailored CVs included).
+- Never add to the facts bank (`cv-facts.md`) or `stories.md` on your own: only when the user says so.
 - Files can be edited by hand. Re-running the save command re-reads the file.
 - The dashboard shows each file read-only through the panel's Open links (every tailored version).

@@ -40,8 +40,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 
-from prep import (assistant, charts, criteria, cvcheck, cveval, cvfile, cvpdf, db, evals, explainers, getjo, learn, learnnotes,
-                  research, stats, workers)
+from prep import (assistant, charts, criteria, cvcheck, cvedit, cveval, cvfile, cvpdf, db, evals, explainers, getjo,
+                  learn, learnnotes, research, stats, tailorplan, workers)
 from prep.md import render_markdown
 from prep import search
 from prep.config import ConfigError, Settings, load_settings
@@ -109,6 +109,12 @@ MESSAGES = {
     "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
     "draft_requested": "Draft asked for. It shows in the Applications Assistant box with Copy; nothing is sent.",
     "notes_saved": "Notes saved.",
+    "plan_saved": "Plan saved.",
+    "plan_written": "Plan agreed. The CV is queued and written from it.",
+    "cv_edited": "Saved. The PDF and the rule check are redone.",
+    "cv_undone": "Undone: the text from before the last edit is back.",
+    "cv_revise": "Asked the assistant to revise only the commented lines.",
+    "master_edited": "CV saved as a new version; the text it replaced is kept.",
     "employer_saved": "Employer kind saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "interviews_set": "Saved. The company's jobs move out of Held: ranked, or filtered out.",
@@ -347,8 +353,9 @@ def _post(settings: Settings, path: str, form: dict[str, str], today: str, as_js
         assistant.notify_in_background(settings, assistant.route_requests(settings, conn, db.requests_since(conn, mark)))
     if "redirect" in extra:  # the ticked jobs (sel in the form's return) stay ticked where it goes next
         extra["redirect"] = _with_sel(extra["redirect"], form.get("return"))
+    text = extra.pop("message_text", None) or MESSAGES[msg]  # an action may word its own (built from ids only)
     if as_json:
-        return _json(200, {"ok": True, "message": MESSAGES[msg], **extra})
+        return _json(200, {"ok": True, "message": text, **extra})
     if "redirect" in extra:  # built by the action from database ids, never from the form
         target = urlsplit(extra["redirect"])
         back = urlsplit(_return_to(form.get("return"), target.path))  # an old /applications form counts too
@@ -788,7 +795,7 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     app_id = _app_id(conn, form)
     kind = form.get("kind") or ""
     if kind not in db.REQUEST_KINDS:
-        raise BadRequest("Pick research, cv_fit, tailor or cv_eval.")
+        raise BadRequest("Pick research, cv_fit, plan, tailor or cv_eval.")
     has_result, _ = research.result_path(conn, settings.private_dir, app_id, kind)
     _, created = db.queue_request(conn, app_id, kind, force=has_result)
     log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
@@ -820,6 +827,120 @@ def save_notes(settings: Settings, conn: sqlite3.Connection, form: dict[str, str
                          current["stamp"]) from e
     log.info("notes %s for application %s from the dashboard", "saved" if text else "cleared", app_id)
     return {"redirect": _here(app_id), "html": _notes_card(app_id, db.get_notes(conn, app_id), _here(app_id))}
+
+
+def save_plan(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The Tailoring plan card's Save: write the user's edit of the plan in place unless it changed since
+    the editor opened (`stamp`); then the card comes back with the user's text beside the current plan."""
+    app_id = _app_id(conn, form)
+    text = form.get("text", "")
+    try:
+        tailorplan.save_text(conn, app_id, text, form.get("stamp", ""))
+    except db.NotesChanged as e:
+        log.info("plan save for application %s refused: it changed meanwhile", app_id)  # never the text
+        raise NotesStale(str(e), _plan_card(conn, app_id, _here(app_id), draft=text, alert=str(e)),
+                         _plan_stamp(conn, app_id)) from e
+    log.info("tailoring plan of application %s edited from the dashboard", app_id)
+    return {"redirect": _here(app_id), "html": _plan_card(conn, app_id, _here(app_id))}
+
+
+def write_from_plan(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Write the CV: save the editor's text first when it was sent along (the button inside the editor),
+    then mark the plan agreed and queue the tailor request (db.agree_tailor_plan)."""
+    app_id = _app_id(conn, form)
+    if "text" in form:
+        save_plan(settings, conn, form, today)
+    db.agree_tailor_plan(conn, app_id)
+    log.info("tailoring plan of application %s agreed from the dashboard", app_id)
+    return {"redirect": _here(app_id)}
+
+
+def _version_field(form: dict[str, str]) -> int:
+    version = _int_field(form, "version")
+    if version is None:
+        raise BadRequest("version is missing.")
+    return version
+
+
+def edit_tailored_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The Tailored CV editor's Save: the text over the latest version in place (cvedit.save_tailored: the
+    replaced text kept for Undo, PDF and rule check again, an AI check marked out of date; a sent version
+    becomes the next one). A file changed meanwhile is refused and the user's text comes back in the editor."""
+    app_id = _app_id(conn, form)
+    if not settings.private_dir:
+        raise BadRequest("private_dir is not set, so there is no CV.")
+    version, text = _version_field(form), form.get("text", "")
+    try:
+        result = cvedit.save_tailored(settings, conn, app_id, version, text, form.get("stamp", ""))
+    except db.NotesChanged as e:
+        log.info("tailored cv edit for application %s refused: it changed meanwhile", app_id)  # never the text
+        current = cvedit.editor_text(conn, app_id)
+        raise NotesStale(str(e), _tailor_editor(app_id, current, _here(app_id), draft=text, alert=str(e)),
+                         current["stamp"], {"text": current["text"]}) from e
+    log.info("tailored cv v%s of application %s edited from the dashboard (%s)", result["version"], app_id,
+             "new version" if result["new_version"] else "in place" if result["changed"] else "comments only")
+    if not result["changed"]:
+        msg = f"Comments saved ({result['comments']} open); the CV text is unchanged."
+    elif result["new_version"]:
+        msg = (f"v{version} was sent, so it is kept as it was: your edit is saved as v{result['version']}. "
+               "The PDF and the rule check are redone.")
+    else:
+        msg = f"v{result['version']} saved. The PDF and the rule check are redone; Undo brings back the text before."
+    if result.get("pdf_error"):
+        msg += f" ({result['pdf_error']}.)"
+    return {"redirect": _here(app_id), "message_text": msg}
+
+
+def undo_tailored_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The Tailored CV card's Undo: the latest version's text from before its newest edit (cvedit.undo_tailored)."""
+    app_id = _app_id(conn, form)
+    if not settings.private_dir:
+        raise BadRequest("private_dir is not set, so there is no CV.")
+    result = cvedit.undo_tailored(settings, conn, app_id)
+    log.info("tailored cv v%s edit undone for application %s from the dashboard", result["version"], app_id)
+    return {"redirect": _here(app_id)}
+
+
+REVISE_TAILORED = ("Revise only the lines I commented on in the tailored CV ({n} comment{s}); keep everything "
+                   "else as it is. (tailor draft shows them as %% lines.)")
+REVISE_MASTER = ("Revise only the lines I commented on in my CV ({n} comment{s}); keep everything else as it is. "
+                 "(cv draft shows them as %% lines.)")
+
+
+def revise_comments(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """Revise commented lines: one message to the Applications Assistant (/ask) about the tailored CV of
+    `app_id`, or with topic cv about the master CV, asking it to change only the lines that carry a
+    comment. The comments themselves stay in prep.db; the message names how many, never their text."""
+    master = form.get("topic") == "cv"
+    app_id = None if master else _app_id(conn, form)
+    n = len(db.cv_comments(conn, app_id))
+    if not n:
+        raise BadRequest("There are no comments to revise: add a line starting with %% under a line first.")
+    body = (REVISE_MASTER if master else REVISE_TAILORED).format(n=n, s="s" if n != 1 else "")
+    msg_id = db.add_message(conn, app_id, body, topic="cv" if master else None)
+    log.info("revise request %s added (application %s, %d comments) from the dashboard", msg_id, app_id, n)
+    assistant.notify_message_in_background(settings, app_id, msg_id, topic="cv" if master else None)
+    return {"redirect": "/?cv=1" if master else _here(app_id)}
+
+
+def edit_master_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
+    """The My CV editor's Save: through cvedit.save_master (cvfile.write_cv: the replaced text kept as a
+    version first, the toast's Undo restores it). A cv.md changed meanwhile is refused, the text kept."""
+    if not settings.private_dir:
+        raise BadRequest("private_dir is not set, so there is no CV.")
+    text = form.get("text", "")
+    try:
+        result = cvedit.save_master(conn, settings.private_dir, text, form.get("stamp", ""), form.get("note", ""))
+    except db.NotesChanged as e:
+        log.info("master cv edit refused: cv.md changed meanwhile")  # never the text
+        current = cvedit.master_text(conn, settings.private_dir)
+        raise NotesStale(str(e), _master_editor(current, "/?cv=1", draft=text, alert=str(e)), current["stamp"],
+                         {"text": current["text"]}) from e
+    if result["version"] is None:
+        log.info("master cv comments saved from the panel (%d open)", result["comments"])
+        return {"redirect": "/?cv=1", "message_text": f"Comments saved ({result['comments']} open); cv.md is unchanged."}
+    log.info("master cv v%s written from the panel", result["version"])
+    return {"redirect": "/?cv=1", "version": result["version"], "previous": result["previous"]}
 
 
 def restore_cv(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
@@ -1168,6 +1289,12 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/cancel": (cancel_message, "/", "cancelled"),
     "/applications/stop": (stop_waiting, "/", "stopped"),
     "/applications/notes": (save_notes, "/", "notes_saved"),
+    "/applications/plan": (save_plan, "/", "plan_saved"),
+    "/applications/plan/write": (write_from_plan, "/", "plan_written"),
+    "/applications/cv/edit": (edit_tailored_cv, "/", "cv_edited"),
+    "/applications/cv/undo": (undo_tailored_cv, "/", "cv_undone"),
+    "/applications/cv/revise": (revise_comments, "/", "cv_revise"),
+    "/cv/edit": (edit_master_cv, "/", "master_edited"),
     "/applications/employer": (set_employer_kind, "/", "employer_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
@@ -1222,6 +1349,10 @@ def applications_tab(settings: Settings, conn: sqlite3.Connection, today: str) -
         + _tile("Offers", str(reached["Offer"]), f"<small>from {reply['submitted']} sent</small>",
                 "success" if reached["Offer"] else "")
     )
+    effort = stats.cv_effort(conn)
+    tiles += _tile("Versions per sent CV", "–" if effort["versions"] is None else f"{effort['versions']:.1f}",
+                   f"<small>{effort['sent']} sent CV{'s' if effort['sent'] != 1 else ''}"
+                   + (f" · {effort['edits']:.1f} edits each" if effort["edits"] is not None else "") + "</small>")
     warning = ""
     if reply["warning"]:
         warning = (f'<div class="warning" role="alert">Response rate is below {stats.REPLY_WARNING_RATE:.0%} after '
@@ -2622,7 +2753,7 @@ def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = 
         + _panel_tasks(r["tasks"], today, here)
         + _research_cards(app, found, versions, here, private_dir,
                           db.cv_check(conn, app["id"], versions[-1]["version"]) if versions else None,
-                          db.get_notes(conn, app["id"]))
+                          db.get_notes(conn, app["id"]), conn)
         + _history(conn, app["id"])
         + "</div></aside>"
     )
@@ -2699,14 +2830,24 @@ def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[
         buttons.append(done("card-fit", f"CV fit {fit['score']}/5"))
     else:
         buttons.append(queue("cv_fit", "CV fit"))
+    plan = db.tailor_plan(conn, app["id"])
     if "tailor" in open_kinds:
         buttons.append(busy("Tailoring…"))
+    elif "plan" in open_kinds:
+        buttons.append(busy("Planning…"))
     elif versions:
         sent = (" · sent" if app.get("cv_sent_version") == versions[-1]["version"]
                 else f" · sent v{app['cv_sent_version']}" if app.get("cv_sent_version") else "")
         buttons.append(done("card-tailor", f"CV v{versions[-1]['version']}{sent}"))
-    else:
-        buttons.append(queue("tailor", "Tailor CV"))
+    elif plan:
+        buttons.append(done("card-plan", "Plan agreed" if plan["status"] == "agreed" else "Plan ready"))
+    else:  # plan-first; Just write it skips the plan for a role that needs only small changes
+        buttons.append(queue("plan", "Tailor CV"))
+        buttons.append('<form method="post" action="/applications/research" class="inline">'
+                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="kind" value="tailor">'
+                       f'<input type="hidden" name="return" value="{h(here)}">'
+                       '<button class="btn btn-ghost btn-sm" title="Skip the plan: the CV is written straight away">'
+                       'Just write it</button></form>')
     if app["status"] == "to_apply":
         buttons.append(f'<form method="post" action="/applications/apply" class="inline" data-ajax="applied">'
                        f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
@@ -2797,7 +2938,7 @@ def _fit_tone(score: int) -> str:
 
 
 def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None,
-                    check: dict | None = None, notes: dict | None = None) -> str:
+                    check: dict | None = None, notes: dict | None = None, conn: sqlite3.Connection | None = None) -> str:
     """The Notes card (always, when `notes` is given: db.get_notes), then the agent's results, each with
     Open and Redo: company research (with the tier the research set and why), the CV fit with its top
     gaps, and the tailored CV: the latest version (with its PDF, its check's verdict, flagged lines and
@@ -2827,8 +2968,13 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
         score = _badge(f'{fit["score"]}/5', _fit_tone(fit["score"]))
         meta = f' {score} <span class="mono muted">{h(fit["checked_at"])}</span>'
         cards.append(_artifact("card-fit", "CV fit", meta, actions, gaps))
+    if conn is not None and db.tailor_plan(conn, app["id"]):
+        cards.append(_plan_card(conn, app["id"], here, busy="plan" in open_kinds or "tailor" in open_kinds,
+                                written=bool(versions)))
     if versions:
-        ai = "done" if check and check.get("summary") else ("pending" if "cv_eval" in open_kinds else "none")
+        summary = check.get("summary") if check else None
+        ai = ("done" if summary and not summary.get("stale") else "pending" if "cv_eval" in open_kinds
+              else "stale" if summary else "none")
 
         def item(v: dict) -> str:
             return (f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
@@ -2840,12 +2986,20 @@ def _research_cards(app: dict, found: dict, versions: list[dict], here: str, pri
         shown = [v for v in reversed(versions) if v is versions[-1] or v["version"] == app.get("cv_sent_version")]
         older = [v for v in reversed(versions) if v not in shown]
         actions = ("" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md"))
-        if ai == "none":  # the AI check costs a model pass, so it runs only when asked for
-            actions = _redo(app["id"], "cv_eval", here, "AI check") + actions
+        if ai in ("none", "stale"):  # the AI check costs a model pass, so it runs only when asked for
+            actions = _redo(app["id"], "cv_eval", here, "AI check" if ai == "none" else "AI check again") + actions
+        tools = ""
+        if conn is not None:
+            actions = _undo_form(conn, app["id"], versions[-1]["version"], here) + actions
+            tools = _tailor_tools(conn, app, versions[-1], here, private_dir)
+        sent = app.get("cv_sent_version") == versions[-1]["version"]
+        hint = ("Edit the CV here: every save keeps the text before it (Undo). "
+                + (f"v{versions[-1]['version']} was sent, so an edit is saved as the next version. " if sent else "")
+                + "Lines starting with %% are comments for the assistant; they never reach the PDF. "
+                "Tell the assistant which file you sent.")
         body = (f'<ul class="versions">{"".join(map(item, shown))}</ul>'
                 + _older_versions("".join(map(item, older)), len(older), "ul", "versions")
-                + _check_body(check, versions[-1]["version"], ai) +
-                '<p class="muted">Ask the assistant for changes; each one is a new version. Tell it which file you sent.</p>')
+                + _check_body(check, versions[-1]["version"], ai) + tools + f'<p class="muted">{h(hint)}</p>')
         cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
     return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
 
@@ -2883,6 +3037,134 @@ def _notes_card(app_id: int, notes: dict, here: str, draft: str | None = None, a
             f'{form}</section>')
 
 
+def _plan_stamp(conn: sqlite3.Connection, app_id: int) -> str:
+    plan = db.tailor_plan(conn, app_id)
+    return cvfile.sha256(tailorplan.read(Path(plan["file_path"]))) if plan else ""
+
+
+def _plan_card(conn: sqlite3.Connection, app_id: int, here: str, busy: bool = False, written: bool = False,
+               draft: str | None = None, alert: str = "") -> str:
+    """The Tailoring plan card: the plan as safe Markdown, how many of its questions are answered, Edit (the
+    text with its stamp; a stale save comes back with `draft` and `alert`), Write the CV (agree it and
+    queue the CV; also inside the editor, saving the text first) and Redo plan. Only private_dir files
+    recorded in prep.db are read."""
+    plan = db.tailor_plan(conn, app_id)
+    path = Path(plan["file_path"])
+    text = tailorplan.read(path)
+    stamp = cvfile.sha256(text)
+    asked = tailorplan.questions(text)
+    answered = sum(1 for q in asked if q.answer)
+    agreed = plan["status"] == "agreed"
+    badge = (_badge(f"agreed {_short_day(plan['agreed_at'])}", "s9") if agreed
+             else _badge("draft: read, edit, answer", "warning"))
+    meta = f" {badge}"
+    hidden = (f'<input type="hidden" name="app_id" value="{h(app_id)}">'
+              f'<input type="hidden" name="return" value="{h(here)}">')
+    write_label = "Write the CV again" if written else "Write the CV"
+    write = ("" if busy else
+             f'<form method="post" action="/applications/plan/write" class="inline" data-ajax="refresh">{hidden}'
+             + _button(write_label, "primary" if not agreed else "secondary", "sm") + "</form>")
+    actions = _open_link(app_id, "plan") + ("" if busy else _redo(app_id, "plan", here, "Redo plan"))
+    count = (f'<p class="muted">{answered} of {len(asked)} question{"s" if len(asked) != 1 else ""} answered'
+             + (": answer on each Answer: line, or in the Applications Assistant box." if answered < len(asked) else ".")
+             + "</p>") if asked else ""
+    current = ""
+    if draft is not None:
+        current = (f'<details class="ed-current" open><summary>The plan as it is now</summary>'
+                   f'<pre>{h(text)}</pre></details>')
+    opened = " open" if draft is not None else ""
+    editor = (f'<details class="notes-edit plan-edit" id="plan-edit"{opened}><summary class="btn btn-ghost btn-sm">'
+              'Edit</summary>'
+              '<form method="post" action="/applications/plan" class="notes-form" data-notes>'
+              f'{hidden}<input type="hidden" name="stamp" value="{h(stamp)}">{current}'
+              f'<textarea name="text" rows="18" maxlength="{tailorplan.MAX_PLAN}" class="mono-area" spellcheck="true" '
+              f'aria-label="Tailoring plan">{h(text if draft is None else draft)}</textarea>'
+              '<p class="notes-buttons">' + _button("Save", "primary", "sm")
+              + ("" if busy else '<button class="btn btn-secondary btn-sm" formaction="/applications/plan/write" '
+                 f'data-plan-write>Save and {h(write_label.lower())}</button>')
+              + f'<a class="btn btn-ghost btn-sm" href="{h(here)}" data-notes-cancel>Cancel</a>'
+              '<span class="muted">Markdown. Keep the four ## sections.</span></p></form></details>')
+    body = (count + f'<div class="doc plan-doc">{render_markdown(tailorplan.display(text), "<p class=muted>The plan file is empty.</p>")}</div>'
+            + f'<div class="action-row">{editor}{write}</div>')
+    return (f'<section class="artifact plan-card" id="card-plan" data-swap><div class="artifact-head">'
+            f'<strong>Tailoring plan</strong>{meta}<span class="artifact-actions">{actions}</span></div>'
+            f'{_banner(alert, "warning") if alert else ""}{body}</section>')
+
+
+def _undo_form(conn: sqlite3.Connection, app_id: int, version: int, here: str) -> str:
+    """Undo, while the latest version has an in-place edit Undo has not brought back."""
+    if db.last_undoable_edit(conn, app_id, version) is None:
+        return ""
+    return ('<form method="post" action="/applications/cv/undo" class="inline" data-ajax="refresh">'
+            f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="return" value="{h(here)}">'
+            '<button class="btn btn-ghost btn-sm" title="Bring back the text from before the last edit">Undo edit</button>'
+            '</form>')
+
+
+def _revise_form(count: int, here: str, app_id: int | None = None) -> str:
+    """Revise commented lines (N): asks the Applications Assistant to change only the commented lines."""
+    if not count:
+        return ""
+    target = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
+              else '<input type="hidden" name="topic" value="cv">')
+    return ('<form method="post" action="/applications/cv/revise" class="inline" data-ajax="refresh">'
+            f'{target}<input type="hidden" name="return" value="{h(here)}">'
+            + _button(f"Revise commented lines ({count})", "secondary", "sm") + "</form>")
+
+
+def _editor_form(action: str, hidden: str, text: str, stamp: str, label: str, here: str, draft: str | None,
+                 alert: str, current: str | None, extra: str = "", edit_id: str = "cv-edit") -> str:
+    """An Edit <details> with the CV editor: the text with its stamp, Save (also Cmd/Ctrl-S, :w with vim
+    keys), Cancel, and the vim keys toggle of the Learn notes editor. With `draft` (a refused save) it is
+    open with the user's text, `alert` and the `current` text above."""
+    opened = " open" if draft is not None else ""
+    shown = text if draft is None else draft
+    now = (f'<details class="ed-current" open><summary>The text as it is now</summary><pre>{h(current)}</pre></details>'
+           if draft is not None and current is not None else "")
+    return (f'<details class="notes-edit cv-edit" id="{edit_id}"{opened}><summary class="btn btn-ghost btn-sm">Edit</summary>'
+            f'<form method="post" action="{action}" class="notes-form cv-editor" data-cv-editor>'
+            f'{hidden}<input type="hidden" name="stamp" value="{h(stamp)}"><input type="hidden" name="return" value="{h(here)}">'
+            f'{_banner(alert, "warning") if alert else ""}{now}'
+            f'<textarea name="text" rows="24" maxlength="{cvedit.MAX_CV}" class="mono-area" spellcheck="true" '
+            f'aria-label="{h(label)}">{h(shown)}</textarea>{extra}'
+            '<p class="notes-buttons">' + _button("Save", "primary", "sm")
+            + f'<a class="btn btn-ghost btn-sm" href="{h(here)}" data-notes-cancel>Cancel</a>'
+            '<span class="ed-mode" data-ed-mode hidden></span><span class="mono muted" data-ed-pos hidden></span>'
+            '<button type="button" class="btn btn-ghost btn-sm" data-vim-toggle aria-pressed="false" hidden>vim keys off</button>'
+            '<span class="muted">%% under a line: a comment for the assistant.</span></p></form></details>')
+
+
+def _tailor_editor(app_id: int, current: dict, here: str, draft: str | None = None, alert: str = "") -> str:
+    """The Tailored CV editor for the latest version (cvedit.editor_text: body with comments, stamp)."""
+    hidden = (f'<input type="hidden" name="app_id" value="{h(app_id)}">'
+              f'<input type="hidden" name="version" value="{h(current["version"])}">')
+    return (f'<div class="cv-tools" data-swap>'
+            + _editor_form("/applications/cv/edit", hidden, current["text"], current["stamp"],
+                           f"Tailored CV v{current['version']}", here, draft, alert, current["text"],
+                           edit_id="tailor-edit") + "</div>")
+
+
+def _tailor_tools(conn: sqlite3.Connection, app: dict, latest: dict, here: str, private_dir: Path | None) -> str:
+    """Under the check: the comments count with Revise commented lines, and the editor (when the file is there)."""
+    count = len(db.cv_comments(conn, app["id"]))
+    revise = _revise_form(count, here, app["id"])
+    path = research.inside(private_dir, latest["file_path"])
+    if path is None or not path.is_file():
+        return f'<div class="action-row">{revise}</div>' if revise else ""
+    note = (f'<p class="muted">{count} comment{"s" if count != 1 else ""} for the assistant.</p>' if count else "")
+    return note + _tailor_editor(app["id"], cvedit.editor_text(conn, app["id"]), here) + (
+        f'<div class="action-row">{revise}</div>' if revise else "")
+
+
+def _master_editor(current: dict, here: str, draft: str | None = None, alert: str = "") -> str:
+    """The My CV editor: cv.md with its comments; a save goes through cv save's versioning."""
+    note = ('<input type="text" name="note" maxlength="200" class="cv-note-input" '
+            'placeholder="What changed (one line, optional)" aria-label="What changed">')
+    return (f'<div class="cv-tools" data-swap>'
+            + _editor_form("/cv/edit", "", current["text"], current["stamp"], "My CV (cv.md)", here, draft, alert,
+                           current["text"], extra=note, edit_id="master-edit") + "</div>")
+
+
 CHECK_TONES = {"ready": "success", "look": "warning", "blocked": "danger"}
 
 
@@ -2890,7 +3172,8 @@ def _verdict_badge(check: dict | None, ai: str = "none") -> str:
     """The verdict, and "AI check pending" while the AI check of that version is queued (`ai`: done,
     pending or none, as db.eval_state), so a rules-only Ready never reads as the final word."""
     badge = _badge(cvcheck.LABELS[check["verdict"]], CHECK_TONES[check["verdict"]]) if check else ""
-    return badge + (_badge("AI check pending") if ai == "pending" else "")
+    return badge + (_badge("AI check pending") if ai == "pending" else
+                    _badge("AI check out of date", "warning") if ai == "stale" else "")
 
 
 def _check_body(check: dict | None, version: int, ai: str = "none") -> str:
@@ -2900,6 +3183,9 @@ def _check_body(check: dict | None, version: int, ai: str = "none") -> str:
     if check is None:
         return f'<p class="muted">v{h(version)} is not checked yet: tailor check checks it.</p>'
     scores = ""
+    if ai == "stale":
+        scores = ('<p class="muted">The AI check was of the text before your last edit; its findings are cleared. '
+                  'AI check again checks the text as it is now.</p>')
     if ai == "done":
         why = check["summary"].get("skim_why")
         scores = (f'<p class="muted">AI check: {h(cveval.summary_line(check))}</p>'
@@ -2925,9 +3211,9 @@ def _history(conn: sqlite3.Connection, app_id: int) -> str:
 
 
 # --- the My CV panel ----------------------------------------------------------------------
-# The master CV (private_dir/cv.md) with its skills and saved versions. Read-only apart from
-# Restore: changes are asked of the agent in the Applications Assistant box ("About my CV"), which writes them
-# through `cli cv save` (prep.cvfile). Only cv.md and recorded cv-history files are read.
+# The master CV (private_dir/cv.md) with its skills and saved versions. The user edits it in the panel
+# (/cv/edit, through prep.cvedit and cvfile.write_cv: a version first) or asks the agent in the Applications
+# Assistant box ("About my CV"), which writes through `cli cv save`. Only cv.md and recorded cv-history files are read.
 
 def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
     """The side panel for ?cv=1: header (words, which version is current), jump buttons, then the
@@ -2962,11 +3248,17 @@ def _cv_panel(conn: sqlite3.Connection, settings: Settings, f: dict) -> str:
             jumps = "".join(
                 f'<a class="btn btn-secondary btn-sm" href="#{card}" data-jump="{card}">{label}</a>'
                 for card, label in (("cv-skills", "Skills"), ("cv-text", "CV"), ("cv-history", f"History {len(versions)}")))
+            comments = len(db.cv_comments(conn, None))
             body = (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{jumps}</div>'
-                    '<p class="muted">To change it, tick "Ask about this" and ask the assistant below; each change is '
-                    'saved as a version.</p></section>'
+                    '<p class="muted">Edit it under CV (each save is a version; Restore undoes it), or tick "Ask about '
+                    'this" and ask the assistant below. A line starting with %% is a comment for the assistant.</p></section>'
                     + _cv_skills(groups)
-                    + f'<section class="cv-doc" id="cv-text"><h3>CV</h3><div class="doc">{render_markdown(text)}</div></section>'
+                    + f'<section class="cv-doc" id="cv-text"><h3>CV</h3>'
+                    + (f'<p class="muted">{comments} comment{"s" if comments != 1 else ""} for the assistant.</p>'
+                       if comments else "")
+                    + f'<div class="action-row">{_revise_form(comments, here)}</div>'
+                    + _master_editor(cvedit.master_text(conn, private_dir), here)
+                    + f'<div class="doc">{render_markdown(text)}</div></section>'
                     + _cv_history(versions, current, f, here))
     return (
         '<aside class="panel panel-cv" id="panel" aria-labelledby="panel-title" data-cv="1">'
