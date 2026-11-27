@@ -713,6 +713,15 @@ table.mini td.due-cell { white-space: nowrap; text-align: right; }
 .check-findings .finding-block::marker { color: var(--danger); }
 .check-findings .finding-look::marker { color: var(--warning); }
 .cv-check .muted { margin: 4px 0 0; }
+.ai-changes { display: grid; gap: 4px; margin-bottom: 8px; }
+.ai-change-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.ai-change-list label { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+.ai-change-list input { margin-top: 3px; flex: none; }
+.ai-change-text { display: grid; gap: 1px; overflow-wrap: anywhere; }
+.ai-change-text del { color: var(--danger); text-decoration-thickness: 1px; }
+.ai-change-text ins { color: var(--success); text-decoration: none; }
+.ai-change-text small { font-size: 12px; }
+.ai-changes .notes-buttons { margin: 4px 0 0; }
 .doc { max-width: 72ch; line-height: 1.55; }
 .doc h2, .doc h3, .doc h4 { margin: var(--space-4) 0 var(--space-2); }
 .doc h2:first-child, .doc h3:first-child { margin-top: 0; }

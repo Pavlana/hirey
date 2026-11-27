@@ -159,7 +159,7 @@ CHECK_SOURCES = ("import", "agent", "user")
 SCREEN_FIELDS = ("role_family", "level", "team", "location", "pay", "builds_agents", "evals", "contract")
 MAX_CHECK_NOTE = 300
 PLAN_STATUSES = ("draft", "agreed")
-EDIT_AUTHORS = ("user", "agent")
+EDIT_AUTHORS = ("user", "agent", "ai-check")  # ai-check: the AI check's ticked changes
 SKIP_REASONS = ("location", "seniority", "role_type", "stack", "company", "pay", "contract_type", "other")
 
 SCHEMA = """
@@ -335,7 +335,7 @@ CREATE TABLE IF NOT EXISTS tailored_cv_edits (
     application_id INTEGER NOT NULL REFERENCES applications(id),
     version        INTEGER NOT NULL,
     backup_path    TEXT NOT NULL,
-    author         TEXT NOT NULL,       -- user / agent
+    author         TEXT NOT NULL,       -- user / agent / ai-check
     created_at     TEXT NOT NULL,
     undone_at      TEXT
 );
@@ -382,7 +382,7 @@ CREATE TABLE IF NOT EXISTS tailored_cv_versions (
 CREATE TABLE IF NOT EXISTS agent_messages (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     application_id INTEGER REFERENCES applications(id),  -- NULL: about the whole search
-    author         TEXT NOT NULL,       -- user / agent
+    author         TEXT NOT NULL,       -- user / agent / ai-check
     body           TEXT NOT NULL,
     status         TEXT,                -- user messages: pending / claimed / answered; NULL for agent
     reply_to       INTEGER REFERENCES agent_messages(id),  -- agent replies: the user message answered
@@ -2281,15 +2281,18 @@ def save_cv_check(conn: sqlite3.Connection, app_id: int, version: int, source: s
     of `source` are replaced: those of other checkers stay (the rule checks write "rules"; an AI check
     calls this with its own source), and the verdict is worked out again from all of them. `changes`
     (vs cv.md) and `summary` (the AI check's scores) replace the stored ones when given. Each finding: check, severity, line (or None),
-    message, and optionally text (the line, never pay)."""
+    message, and optionally text (the line, never pay) and edit (the AI check change it belongs to)."""
     if not any(v["version"] == version for v in tailored_versions(conn, app_id)):
         raise LookupError(f"no tailored CV v{version} on application {app_id}")
     clean = []
     for f in findings:
         if f["severity"] not in CHECK_SEVERITIES:
             raise ValueError(f"severity must be one of {', '.join(CHECK_SEVERITIES)}")
-        clean.append({"source": source, "check": f["check"], "severity": f["severity"], "line": f.get("line"),
-                      "message": f["message"], "text": f.get("text") or ""})
+        item = {"source": source, "check": f["check"], "severity": f["severity"], "line": f.get("line"),
+                "message": f["message"], "text": f.get("text") or ""}
+        if isinstance(f.get("edit"), int):  # an AI check editorial change the panel can apply (cveval.changes)
+            item["edit"] = f["edit"]
+        clean.append(item)
     with conn:
         old = cv_check(conn, app_id, version)
         kept = [f for f in (old["findings"] if old else []) if f["source"] != source]

@@ -18,6 +18,7 @@ the AI check runs when asked for, and the panel shows one verdict. (This page is
 - [PDF](#pdf)
 - [Rule check](#rule-check)
 - [AI check](#ai-check)
+  - [Applying editorial changes](#applying-editorial-changes)
 - [Verdict](#verdict)
 - [Commands](#commands)
 
@@ -123,6 +124,8 @@ saved in place always opens the new PDF.
 - **Agent edits**: `tailor draft APP` writes a working copy (`cv-tailored/drafts/`, with its stamp
   beside it); `tailor edit APP [--to MSG]` saves it the same way, author `agent`, refused when the
   version changed after the draft was made.
+- **AI check changes**: [Applying editorial changes](#applying-editorial-changes) saves the same way,
+  author `ai-check`.
 - **Master CV**: a save goes through `cvfile.write_cv` (the replaced text kept as a version first, note
   "Edited in the panel" unless one is typed); the toast's **Undo** restores that version.
 - CV text and comments are never logged.
@@ -189,9 +192,35 @@ one that wrote the CV and writes `cv-tailored/<version stem>.eval.md` (TOML fron
 - **Grammar and spelling**: an editorial entry with `kind = "grammar"` or `"spelling"`, shown as
   "Grammar: …" or "Spelling: …"; the summary counts them.
 - Grounding covers the user's own edits as well: every changed claim is traced, whoever wrote it.
-- An edit after the AI check marks it out of date ([Editor](#editor)).
+- An edit after the AI check marks it out of date ([Editor](#editor)), except the AI check's own
+  changes ([Applying editorial changes](#applying-editorial-changes)).
 
 Findings are placed by their quoted words, so line numbers come from the file, not the model.
+
+### Applying editorial changes
+
+An editorial entry whose quote is in one CV line exactly (case and Markdown as written) and whose
+suggestion holds no pay is a **change** (`cveval.edits`, kept in the check's summary under `edits`).
+The AI check card lists open changes instead of their findings: the old words struck through, the new
+words, the kind and the issue, each with a tick box, ticked by default. An entry that matches only
+loosely stays a plain finding to fix in the editor.
+
+**Apply ticked changes** posts `/applications/cv/ai-changes` (`cvedit.apply_ai_changes`, plain code, no
+agent run):
+
+- Each ticked change replaces the first occurrence of its quote on its line (the line it was found on,
+  else the first line that still holds the quote) with the suggestion.
+- All of them are saved in one `save_tailored` with author `ai-check`: one **Undo edit** brings the text
+  back, and the PDF and the rule check are redone. A sent version stays frozen: the changes become the
+  next version.
+- Unticked changes are declined. A ticked change whose words are gone is skipped. Each is marked
+  applied, declined or skipped, so it does not show again for that version.
+- The rest of the AI check stays up to date (the lines and their numbers are unchanged), so the
+  card is not marked out of date; the applied and declined changes leave the verdict.
+- The page's stamp must match the file: a CV changed after the card was shown is refused (400) and
+  nothing is written.
+- The toast counts them ("4 changes applied, 1 declined. Undo brings back the text before.").
+  Grounding findings and must-haves are never applied.
 
 ## Verdict
 

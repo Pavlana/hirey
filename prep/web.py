@@ -115,6 +115,7 @@ MESSAGES = {
     "plan_written": "Plan agreed. The CV is queued and written from it.",
     "cv_edited": "Saved. The PDF and the rule check are redone.",
     "cv_undone": "Undone: the text from before the last edit is back.",
+    "ai_changes": "Changes applied.",
     "cv_revise": "Asked the assistant to revise only the commented lines.",
     "master_edited": "CV saved as a new version; the text it replaced is kept.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
@@ -862,6 +863,38 @@ def undo_tailored_cv(settings: Settings, conn: sqlite3.Connection, form: dict[st
     return {"redirect": _here(app_id)}
 
 
+def _plural(n: int, word: str) -> str:
+    return f"{n} {word}{'s' if n != 1 else ''}"
+
+
+def apply_ai_changes(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
+    """Apply ticked changes, in the Tailored CV card's AI check: the ticked editorial changes (`change` boxes)
+    replace their quoted words in the latest version in one undoable save (cvedit.apply_ai_changes, plain code,
+    no agent run); the unticked ones are declined. The toast counts them; no CV text is logged."""
+    app_id = _app_id(conn, form)
+    if not settings.private_dir:
+        raise BadRequest("private_dir is not set, so there is no CV.")
+    raw = form.all.get("change", []) if isinstance(form, Form) else ([form["change"]] if form.get("change") else [])
+    if not all(v.isdigit() and len(v) <= 4 for v in raw):
+        raise BadRequest("change must be a change number.")
+    try:
+        result = cvedit.apply_ai_changes(settings, conn, app_id, _version_field(form), form.get("stamp", ""),
+                                         {int(v) for v in raw})
+    except db.NotesChanged as e:
+        raise BadRequest(str(e)) from e
+    log.info("AI check changes on application %s: %d applied, %d declined, %d skipped", app_id,
+             result["applied"], result["declined"], result["skipped"])
+    msg = (f"{_plural(result['applied'], 'change')} applied, {result['declined']} declined."
+           + (f" {result['skipped']} skipped: the words are no longer in the CV." if result["skipped"] else ""))
+    if result["new_version"]:
+        msg += f" The sent version is kept as it was: the changes are saved as v{result['version']}."
+    if result["applied"]:
+        msg += " Undo brings back the text before."
+    if result["pdf_error"]:
+        msg += f" ({result['pdf_error']}.)"
+    return {"redirect": _here(app_id), "message_text": msg}
+
+
 REVISE_TAILORED = ("Revise only the lines I commented on in the tailored CV ({n} comment{s}); keep everything "
                    "else as it is. (tailor draft shows them as %% lines.)")
 REVISE_MASTER = ("Revise only the lines I commented on in my CV ({n} comment{s}); keep everything else as it is. "
@@ -1306,6 +1339,7 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/plan/write": (write_from_plan, "/", "plan_written"),
     "/applications/cv/edit": (edit_tailored_cv, "/", "cv_edited"),
     "/applications/cv/undo": (undo_tailored_cv, "/", "cv_undone"),
+    "/applications/cv/ai-changes": (apply_ai_changes, "/", "ai_changes"),
     "/applications/cv/revise": (revise_comments, "/", "cv_revise"),
     "/cv/edit": (edit_master_cv, "/", "master_edited"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
@@ -3277,6 +3311,11 @@ def _tailor_card(conn: sqlite3.Connection, app: dict, found: dict, versions: lis
         actions = _redo(app["id"], "cv_eval", here, "AI check" if ai == "none" else "AI check again") + actions
     actions = _undo_form(conn, app["id"], versions[-1]["version"], here) + actions
     tools = _tailor_tools(conn, app, versions[-1], here, private_dir)
+    changes = ""
+    file = research.inside(private_dir, versions[-1]["file_path"]) if private_dir else None
+    if ai == "done" and file is not None and file.is_file():
+        changes = _ai_changes(app["id"], versions[-1]["version"], cvfile.sha256(file.read_text(encoding="utf-8")),
+                              summary.get("edits") or [], here)
     sent = app.get("cv_sent_version") == versions[-1]["version"]
     hint = ("Edit the CV here: every save keeps the text before it (Undo). "
             + (f"v{versions[-1]['version']} was sent, so an edit is saved as the next version. " if sent else "")
@@ -3284,7 +3323,7 @@ def _tailor_card(conn: sqlite3.Connection, app: dict, found: dict, versions: lis
             "Tell the assistant which file you sent.")
     body = (f'<ul class="versions">{"".join(map(item, shown))}</ul>'
             + _older_versions("".join(map(item, older)), len(older), "ul", "versions")
-            + _check_body(check, versions[-1]["version"], ai) + tools + f'<p class="muted">{h(hint)}</p>')
+            + _check_body(check, versions[-1]["version"], ai, changes) + tools + f'<p class="muted">{h(hint)}</p>')
     return _artifact("card-tailor", "Tailored CV", "", actions, body)
 
 
@@ -3469,10 +3508,34 @@ def _verdict_badge(check: dict | None, ai: str = "none") -> str:
                     _badge("AI check out of date", "warning") if ai == "stale" else "")
 
 
-def _check_body(check: dict | None, version: int, ai: str = "none") -> str:
-    """The latest version's check: the AI check's scores when in, its flagged lines (in line order, as
-    stored; marked by severity) and the changes vs cv.md. Every value escaped; a finding's text never
-    holds pay (cvcheck, cveval)."""
+def _ai_changes(app_id: int, version: int, stamp: str, edits: list[dict], here: str) -> str:
+    """The AI check's open editorial changes as tick boxes (ticked by default): the old words struck through,
+    the new ones, the kind and the issue; one Apply ticked changes button (unticked ones are declined).
+    Every value escaped."""
+    open_ = [e for e in edits if e.get("state") == "open"]
+    if not open_:
+        return ""
+    items = "".join(
+        f'<li><label><input type="checkbox" name="change" value="{h(e["n"])}" checked>'
+        f'<span class="ai-change-text"><span><del>{h(e["quote"])}</del> <span aria-hidden="true">→</span> '
+        f'<ins>{h(e["suggestion"])}</ins></span>'
+        f'<small class="muted">{h(cveval.EDITORIAL_LABELS.get(e.get("kind"), "Editorial"))}'
+        + (f' · {h(e["issue"])}' if e.get("issue") else "") + "</small></span></label></li>"
+        for e in open_)
+    return ('<form method="post" action="/applications/cv/ai-changes" class="ai-changes" data-ajax="refresh">'
+            f'<input type="hidden" name="app_id" value="{h(app_id)}"><input type="hidden" name="version" value="{h(version)}">'
+            f'<input type="hidden" name="stamp" value="{h(stamp)}"><input type="hidden" name="return" value="{h(here)}">'
+            f'<p class="muted">Suggested changes ({len(open_)}): untick any to decline.</p>'
+            f'<ul class="ai-change-list">{items}</ul>'
+            '<p class="notes-buttons">' + _button("Apply ticked changes", "secondary", "sm")
+            + '<span class="muted">One edit: Undo brings the text back.</span></p></form>')
+
+
+def _check_body(check: dict | None, version: int, ai: str = "none", changes: str = "") -> str:
+    """The latest version's check: the AI check's scores when in, its suggested changes (`changes`, the
+    tick-box form; their findings are left out of the list), its flagged lines (in line order, as stored;
+    marked by severity) and the changes vs cv.md. Every value escaped; a finding's text never holds pay
+    (cvcheck, cveval)."""
     if check is None:
         return f'<p class="muted">v{h(version)} is not checked yet: tailor check checks it.</p>'
     scores = ""
@@ -3486,11 +3549,11 @@ def _check_body(check: dict | None, version: int, ai: str = "none") -> str:
     items = "".join(
         f'<li class="finding-{h(f["severity"])}">{h(f["message"])}'
         + (f'<br><span class="mono muted">{h(f["text"])}</span>' if f["text"] else "") + "</li>"
-        for f in check["findings"])
+        for f in check["findings"] if not (changes and f.get("edit")))
     findings = f'<ul class="check-findings">{items}</ul>' if items else ""
-    changes = "".join(f"<li>{h(c)}</li>" for c in check["changes"])
-    return (f'<div class="cv-check">{scores}{findings}'
-            + (f'<p class="muted">Changes vs cv.md</p><ul class="gaps">{changes}</ul>' if changes else "") + "</div>")
+    diff = "".join(f"<li>{h(c)}</li>" for c in check["changes"])
+    return (f'<div class="cv-check">{scores}{changes}{findings}'
+            + (f'<p class="muted">Changes vs cv.md</p><ul class="gaps">{diff}</ul>' if diff else "") + "</div>")
 
 
 def _history(conn: sqlite3.Connection, app_id: int) -> str:

@@ -27,9 +27,15 @@ source "none" blocks (`save` refuses one whose quote is not in the CV, since a b
 its exact line); a must-have not covered asks for a look (unless the tailored file's front matter
 already lists it under `keywords` or `gaps`, which the rule checks handle); a fit score below the master
 CV's fit for the same job asks for a look; a skim score of 2 or less asks for a look; an editorial entry asks for a look, never blocks (`save` refuses
-one whose quote is not in the CV, or whose suggestion drops a `keywords` term the quoted words hold). Claims are found
-in the CV by their quoted words, so a finding's line number comes from the file, not from the model.
-Nothing here is logged.
+one whose quote is not in the CV, or whose suggestion drops a `keywords` term the quoted words hold, or runs over
+more than one line). Claims are found in the CV by their quoted words, so a finding's line number comes from the file,
+not from the model.
+
+Editorial changes (`edits`, kept in the summary under "edits"): an editorial entry whose quote is in one CV line
+exactly (case, Markdown and all) is kept as a change ({n, quote, suggestion, issue, kind, line, text, state "open"}) and its finding
+carries `edit` = n. The panel shows open changes as tick boxes; cvedit.apply_ai_changes applies the ticked ones in
+one undoable save and marks each applied, declined or skipped. An entry that only matches loosely stays a plain
+finding. Nothing here is logged.
 """
 
 import re
@@ -103,6 +109,9 @@ def read_eval(path: Path) -> dict:
             raise ValueError(f"editorial {i} needs an issue: what is wrong with the wording")
         if not isinstance(suggestion, str) or not suggestion.strip():
             raise ValueError(f"editorial {i} needs a suggestion: the better wording")
+        if "\n" in suggestion.strip() or "\n" in quote.strip():
+            raise ValueError(f"editorial {i}: the quote and the suggestion stay on one line (the suggestion replaces "
+                             "the quoted words as is)")
         kind = e.get("kind", "wording")
         if kind not in EDITORIAL_KINDS:
             raise ValueError(f"editorial {i}: kind must be one of {', '.join(EDITORIAL_KINDS)}; got {kind!r}")
@@ -137,6 +146,32 @@ def locate(quote: str, lines: list[tuple[int, str]]) -> tuple[int | None, str]:
     return None, ""
 
 
+def exact_line(quote: str, lines: list[tuple[int, str]]) -> tuple[int | None, str]:
+    """The (line number, line) holding `quote` exactly (case, Markdown and spacing as written), or (None, "")."""
+    return next(((n, line) for n, line in lines if quote and quote in line), (None, ""))
+
+
+def _applicable(e: dict, lines: list[tuple[int, str]]) -> bool:
+    """An editorial entry the panel can apply as is: its quote in one line exactly, no pay in it or its suggestion,
+    and a suggestion that differs from the quote."""
+    return (exact_line(e["quote"], lines)[0] is not None and e["suggestion"] != e["quote"]
+            and not db.PAY_PATTERN.search(e["quote"] + " " + e["suggestion"]))
+
+
+def edits(review: dict, cv_text: str) -> list[dict]:
+    """The editorial entries the panel can apply, numbered as in the file (from 1), each with its line and
+    state "open"."""
+    lines = cvcheck.body_lines(cv_text)
+    out = []
+    for i, e in enumerate(review["editorial"], 1):
+        if not _applicable(e, lines):
+            continue
+        n, line = exact_line(e["quote"], lines)
+        out.append({"n": i, "quote": e["quote"], "suggestion": e["suggestion"], "issue": _safe(e["issue"]),
+                    "kind": e.get("kind", "wording"), "line": n, "text": line.strip(), "state": "open"})
+    return out
+
+
 def _safe(text: str) -> str:
     """The agent's own words in a finding: dropped when they mention pay, shortened when long."""
     text = " ".join(text.split())
@@ -164,12 +199,15 @@ def findings(review: dict, cv_text: str, master_fit: int | None) -> list[dict]:
     if master_fit is not None and review["fit_score"] < master_fit:
         out.append(cvcheck._finding("fit", "look", f"Fit {review['fit_score']}/5 is below the master CV's "
                                     f"{master_fit}/5 for this job"))
-    for e in review["editorial"]:
+    for i, e in enumerate(review["editorial"], 1):
         n, line = locate(e["quote"], lines)
         issue, suggestion = _safe(e["issue"]), _safe(e["suggestion"])
         label = EDITORIAL_LABELS[e.get("kind", "wording")]
         message = label + (f": {issue}" if issue else "") + (f"; suggest: {suggestion}" if suggestion else "")
-        out.append(cvcheck._finding("editorial", "look", message, n, line or e["quote"]))
+        found = cvcheck._finding("editorial", "look", message, n, line or e["quote"])
+        if _applicable(e, lines):
+            found["edit"] = i  # shown as a change with a tick box (summary "edits")
+        out.append(found)
     if review["skim_score"] <= LOW_SKIM:
         why = _safe(review["skim_why"])
         out.append(cvcheck._finding("skim", "look", f"Six-second skim {review['skim_score']}/5" + (f": {why}" if why else "")))
@@ -230,7 +268,8 @@ def save(conn: sqlite3.Connection, app_id: int, version: int, path: Path) -> dic
     if dropped:
         raise ValueError("an editorial suggestion must keep the job's exact keywords: "
                          + "; ".join(f"editorial {i} drops {', '.join(terms)}" for i, terms in dropped))
-    db.save_cv_eval(conn, app_id, version, findings(review, text, master_fit), summary(review, master_fit))
+    db.save_cv_eval(conn, app_id, version, findings(review, text, master_fit),
+                    {**summary(review, master_fit), "edits": edits(review, text)})
     return db.cv_check(conn, app_id, version)
 
 
