@@ -47,7 +47,7 @@ DEBRIEF_TASK = "Debrief — what to improve"
 # First tasks for an application entering a stage: (title, kind, days until due, or None for undated).
 # For INTERVIEW_STAGES the days apply only when no interview date is given.
 STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
-    "to_apply": (),  # the agent researches first; REVIEW_TASK follows once both results are in
+    "to_apply": (),  # no task: the panel itself is the next step (research, questions, Tailor CV and apply)
     "applied": (("Chase if no reply", "admin", 7),),
     "recruiter_call": (("Prepare for the call (questions, pitch, availability)", "prep", 2),),
     "technical": (("Coding practice", "drill", 2), ("Review the role's tech stack", "prep", 2)),
@@ -62,7 +62,8 @@ STAGE_TASKS: dict[str, tuple[tuple[str, str, int | None], ...]] = {
 # marks old ones as auto tasks.
 RETIRED_STAGE_TASKS = {"to_apply": (("Research the company", "prep", 2), ("Check CV fit / tailor CV", "prep", 2),
                                     ("Apply", "apply", 3))}
-# Added to an Interested application once both its company research and CV fit are saved (review_task).
+# Added to an Interested application once both its company research and CV fit were saved, until 27 Nov 2026
+# (the panel shows the next step itself now). Old open ones are still completed on entering applied.
 REVIEW_TASK = ("Review research and apply", "apply", 2)
 AUTO_COMMENT = "auto: no reply in {days} days"
 # Agent work queued for an application (done by the /research skill, never by the dashboard).
@@ -290,6 +291,18 @@ CREATE TABLE IF NOT EXISTS cv_fits (
     top_gaps       TEXT NOT NULL,       -- JSON list, at most 3
     file_path      TEXT NOT NULL,
     checked_at     TEXT NOT NULL
+);
+
+-- The CV fit of a job offer not tracked yet (27 Nov 2026), keyed by its getjo job id (or "linkedin:<id>"): the
+-- same shape as cv_fits, written with the job brief when its panel first opens; the full text is
+-- private_dir/fit/job-<job>-<slug>.md. Interested copies it to cv_fits (adopt_job_fit): no second run.
+CREATE TABLE IF NOT EXISTS job_fits (
+    getjo_job_id   TEXT PRIMARY KEY,
+    score          INTEGER NOT NULL,    -- 1-5
+    top_gaps       TEXT NOT NULL,       -- JSON list, every gap, most important first
+    file_path      TEXT NOT NULL,
+    checked_at     TEXT NOT NULL,
+    recommendation TEXT                 -- JSON (research.read_recommendation), or NULL
 );
 
 -- The latest tailored copy of cv.md per application; the text is private_dir/cv-tailored/<app-id>-<slug>.md.
@@ -602,13 +615,22 @@ MIGRATIONS: dict[str, dict[str, str]] = {
     # worker: as on agent_messages. reason: why a worker marked it blocked (`research block`, `brief block`).
     "agent_requests": {"worker": "INTEGER", "reason": "TEXT"},
     # screen_asked: 1 once a done brief was queued again only for its job screen (Top 5), so that happens once.
-    "brief_requests": {"worker": "INTEGER", "reason": "TEXT", "screen_asked": "INTEGER NOT NULL DEFAULT 0"},
+    # fit_asked: 1 once a done brief was queued again only for its job's CV fit (an offer opened before job fits).
+    "brief_requests": {"worker": "INTEGER", "reason": "TEXT", "screen_asked": "INTEGER NOT NULL DEFAULT 0",
+                       "fit_asked": "INTEGER NOT NULL DEFAULT 0"},
+    # recommendation: the fit file's "## Recommendation" (research.read_recommendation) as JSON; NULL without one.
+    "cv_fits": {"recommendation": "TEXT"},
     # summary: the AI check's scores (JSON: fit, master fit, skim and why, claim and must-have counts);
     # NULL until the AI check of that version is saved.
     "tailored_cv_checks": {"summary": "TEXT"},
     # prompt: Markdown shown under a Learn card's question, always visible (the code a "read the code"
     # card asks about); NULL when the card has none. The back stays hidden until Show answer.
     "cards": {"prompt": "TEXT"},
+    # From the company research's front matter (27 Nov 2026), all optional: employer_kind (product / client),
+    # one line each on the engineering team and the interview style, red_flags and call_questions (JSON lists,
+    # at most MAX_PROFILE_ITEMS each, never pay; the questions are for the recruiter call, not technical).
+    "company_profiles": {"employer_kind": "TEXT", "engineering_team": "TEXT", "interview_style": "TEXT",
+                         "red_flags": "TEXT", "call_questions": "TEXT"},
 }
 
 APPLICATION_FIELDS = (
@@ -1070,8 +1092,10 @@ def stage_tasks(conn: sqlite3.Connection, app_id: int, stage: str, today: str | 
                             stage=stage))
     sync_next_action(conn, app_id)
     if stage == "to_apply":  # the agent researches the company and checks the CV fit (/research)
-        queue_request(conn, app_id, "research")  # cheap when the profile is fresh: it is reused
-        if cv_fit(conn, app_id) is None:
+        app = get_application(conn, app_id)
+        if company_profile(conn, company_slug(app["company"])) is None:  # the offer's research is reused
+            queue_request(conn, app_id, "research")
+        if not adopt_job_fit(conn, app_id) and cv_fit(conn, app_id) is None:  # so is the offer's CV fit
             queue_request(conn, app_id, "cv_fit")
     return ids
 
@@ -1105,22 +1129,6 @@ def set_interview_date(conn: sqlite3.Connection, app_id: int, stage: str, day: s
     conn.commit()
     sync_next_action(conn, app_id)
     return moved, due
-
-
-def review_task(conn: sqlite3.Connection, app_id: int, today: str | None = None) -> int | None:
-    """Add REVIEW_TASK to an Interested application once its company research and CV fit are both
-    saved, unless one is already open (a Redo adds no second one). Returns the new task id."""
-    app = get_application(conn, app_id)
-    if app is None or app["status"] != "to_apply":
-        return None
-    if company_profile(conn, company_slug(app["company"])) is None or cv_fit(conn, app_id) is None:
-        return None
-    title, kind, days = REVIEW_TASK
-    if conn.execute("SELECT 1 FROM tasks WHERE application_id = ? AND title = ? AND status = 'todo'",
-                    (app_id, title)).fetchone():
-        return None
-    return add_task(conn, title, kind, _stage_due(today or today_iso(), days, "to_apply", None), app_id,
-                    stage="to_apply")
 
 
 def sync_next_action(conn: sqlite3.Connection, app_id: int) -> None:
@@ -1865,6 +1873,12 @@ def queue_request(conn: sqlite3.Connection, app_id: int, kind: str, force: bool 
     return row["id"], False
 
 
+def requested_kinds(conn: sqlite3.Connection, app_id: int) -> set[str]:
+    """The request kinds ever queued for an application, whatever their status (a panel opening queues a
+    missing one only once)."""
+    return {r[0] for r in conn.execute("SELECT DISTINCT kind FROM agent_requests WHERE application_id = ?", (app_id,))}
+
+
 def last_request_id(conn: sqlite3.Connection) -> int:
     """The highest agent_requests id (0 if none): callers compare it before and after an action."""
     return conn.execute("SELECT COALESCE(MAX(id), 0) FROM agent_requests").fetchone()[0]
@@ -1949,14 +1963,17 @@ def applications_at(conn: sqlite3.Connection, slug: str) -> list[int]:
 PROFILE_FIELDS = (
     "company", "file_path", "what_it_does", "sector", "employees", "employees_as_of", "size_band",
     "london_remote", "recognition", "recognition_note", "funding", "sources", "suggested_tier",
-    "tier_reason", "researched_at",
+    "tier_reason", "researched_at", "employer_kind", "engineering_team", "interview_style", "red_flags",
+    "call_questions",
 )
+PROFILE_LISTS = ("sources", "red_flags", "call_questions")  # JSON lists in company_profiles
+MAX_PROFILE_ITEMS = 6  # red flags and call questions each
 
 
 def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict, today: str | None = None) -> list[int]:
     """Store (or replace) a company's research summary, finish the open research requests of every
-    application at that company and add the review task where the CV fit is in too (review_task).
-    Returns those application ids."""
+    application at that company and set the employer kind (product or client) of those whose kind is
+    unknown. Returns those application ids."""
     unknown = set(profile) - set(PROFILE_FIELDS)
     if unknown:
         raise ValueError(f"unknown profile fields: {', '.join(sorted(unknown))}")
@@ -1968,16 +1985,29 @@ def save_company_profile(conn: sqlite3.Connection, slug: str, profile: dict, tod
     _check("suggested_tier", profile.get("suggested_tier"), TIERS)
     _check_date("researched_at", profile["researched_at"])
     _check_date("employees_as_of", profile.get("employees_as_of"))
+    _check("employer_kind", profile.get("employer_kind"), EMPLOYER_KINDS)
+    for name in ("engineering_team", "interview_style"):
+        if profile.get(name):
+            check_no_pay(profile[name], name)
+    for name in ("red_flags", "call_questions"):
+        items = list(profile.get(name) or [])
+        if len(items) > MAX_PROFILE_ITEMS:
+            raise ValueError(f"{name}: at most {MAX_PROFILE_ITEMS} items; got {len(items)}")
+        for item in items:
+            check_no_pay(item, name)
     row = {name: profile.get(name) for name in PROFILE_FIELDS}
-    row["sources"] = json.dumps(list(profile.get("sources") or []))
+    for name in PROFILE_LISTS:
+        row[name] = json.dumps(list(profile.get(name) or []))
     row["slug"] = slug
     names = ", ".join(row)
     conn.execute(f"INSERT OR REPLACE INTO company_profiles ({names}) VALUES ({', '.join(':' + k for k in row)})", row)
     conn.commit()
     app_ids = applications_at(conn, slug)
     finish_requests(conn, app_ids, "research")
-    for app_id in app_ids:
-        review_task(conn, app_id, today)
+    if profile.get("employer_kind"):  # the research knows; a kind already set (by the user or agent) is kept
+        conn.executemany("UPDATE applications SET employer_kind = ? WHERE id = ? AND employer_kind IS NULL",
+                         [(profile["employer_kind"], a) for a in app_ids])
+        conn.commit()
     return app_ids
 
 
@@ -1985,42 +2015,90 @@ def company_profile(conn: sqlite3.Connection, slug: str) -> dict | None:
     row = conn.execute("SELECT * FROM company_profiles WHERE slug = ?", (slug,)).fetchone()
     if row is None:
         return None
+    return _profile_row(row)
+
+
+def _profile_row(row: sqlite3.Row) -> dict:
+    """A company_profiles row as a dict, its JSON lists decoded."""
     d = dict(row)
-    d["sources"] = json.loads(d["sources"] or "[]")
+    for name in PROFILE_LISTS:
+        d[name] = json.loads(d.get(name) or "[]")
     return d
 
 
-def save_cv_fit(conn: sqlite3.Connection, app_id: int, score: int, gaps: list[str], file_path: str,
-                day: str | None = None) -> list[int]:
-    """Store (or replace) an application's CV fit summary (score 1-5, its first 3 gaps), add its
-    gaps to the gaps table (session "cv fit", skipping ones already open), finish its open cv_fit
-    request and add the review task when the company research is in too (review_task). Returns
-    the new gap ids."""
+def _fit_values(score: object, gaps: list[str], day: str | None, recommendation: dict | None) -> tuple:
+    """(score, gaps, day, recommendation JSON) checked: a whole score 1-5, a date, never pay in the recommendation."""
     day = day or today_iso()
     _check_date("checked_at", day)
-    if get_application(conn, app_id) is None:
-        raise LookupError(f"no application with id {app_id}")
     if isinstance(score, bool) or not isinstance(score, int) or not 1 <= score <= 5:
         raise ValueError(f"the fit score must be a whole number from 1 to 5; got {score!r}")
     gaps = [g.strip() for g in gaps if isinstance(g, str) and g.strip()]
+    if recommendation:
+        check_no_pay(json.dumps(recommendation, ensure_ascii=False), "the recommendation")
+    return score, gaps, day, json.dumps(recommendation, ensure_ascii=False) if recommendation else None
+
+
+def save_cv_fit(conn: sqlite3.Connection, app_id: int, score: int, gaps: list[str], file_path: str,
+                day: str | None = None, recommendation: dict | None = None) -> list[int]:
+    """Store (or replace) an application's CV fit summary (score 1-5, its first 3 gaps, the recommendation), add
+    its gaps to the gaps table (session "cv fit", skipping ones already open), finish its open cv_fit
+    request. Returns the new gap ids."""
+    if get_application(conn, app_id) is None:
+        raise LookupError(f"no application with id {app_id}")
+    score, gaps, day, rec = _fit_values(score, gaps, day, recommendation)
     conn.execute(
-        "INSERT OR REPLACE INTO cv_fits (application_id, score, top_gaps, file_path, checked_at) VALUES (?, ?, ?, ?, ?)",
-        (app_id, score, json.dumps(gaps[:3]), file_path, day),
+        "INSERT OR REPLACE INTO cv_fits (application_id, score, top_gaps, file_path, checked_at, recommendation) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (app_id, score, json.dumps(gaps[:3]), file_path, day, rec),
     )
     conn.commit()
     new = add_open_gaps(conn, gaps, FIT_GAP_SESSION, app_id, day)
     finish_requests(conn, [app_id], "cv_fit")
-    review_task(conn, app_id)  # due from today, not from the file's checked_at
     return new
 
 
-def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
-    row = conn.execute("SELECT * FROM cv_fits WHERE application_id = ?", (app_id,)).fetchone()
+def _fit_row(row: sqlite3.Row | None) -> dict | None:
     if row is None:
         return None
     d = dict(row)
     d["top_gaps"] = json.loads(d["top_gaps"] or "[]")
+    d["recommendation"] = json.loads(d["recommendation"]) if d.get("recommendation") else None
     return d
+
+
+def cv_fit(conn: sqlite3.Connection, app_id: int) -> dict | None:
+    return _fit_row(conn.execute("SELECT * FROM cv_fits WHERE application_id = ?", (app_id,)).fetchone())
+
+
+def save_job_fit(conn: sqlite3.Connection, job_id: str, score: int, gaps: list[str], file_path: str,
+                 day: str | None = None, recommendation: dict | None = None) -> None:
+    """Store (or replace) the CV fit of a job offer not tracked yet (job_fits). Its gaps reach the gaps list
+    only when the job becomes an application (adopt_job_fit)."""
+    if not job_id:
+        raise ValueError("a job fit needs the job id")
+    score, gaps, day, rec = _fit_values(score, gaps, day, recommendation)
+    with conn:
+        conn.execute("INSERT OR REPLACE INTO job_fits (getjo_job_id, score, top_gaps, file_path, checked_at, "
+                     "recommendation) VALUES (?, ?, ?, ?, ?, ?)", (job_id, score, json.dumps(gaps), file_path, day, rec))
+
+
+def job_fit(conn: sqlite3.Connection, job_id: str) -> dict | None:
+    """The CV fit of a job offer (job_fits), or None."""
+    return _fit_row(conn.execute("SELECT * FROM job_fits WHERE getjo_job_id = ?", (job_id,)).fetchone())
+
+
+def adopt_job_fit(conn: sqlite3.Connection, app_id: int) -> bool:
+    """An application whose job was fitted as an offer takes that fit over (its gaps into the gaps list, its
+    cv_fit request finished), unless it has its own already. True when it did."""
+    app = get_application(conn, app_id)
+    if app is None or not app["getjo_job_id"] or cv_fit(conn, app_id) is not None:
+        return False
+    found = job_fit(conn, app["getjo_job_id"])
+    if found is None:
+        return False
+    save_cv_fit(conn, app_id, found["score"], found["top_gaps"], found["file_path"], found["checked_at"],
+                found["recommendation"])
+    return True
 
 
 def save_tailored_cv(conn: sqlite3.Connection, app_id: int, file_path: str, note: str | None,
@@ -2288,8 +2366,8 @@ def fit_scores(conn: sqlite3.Connection) -> dict[int, int]:
 def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
     """For the board, by application id: {"profile": dict | None, "fit": dict | None,
     "tailored": dict | None, "open": set of kinds with an open request}."""
-    profiles = {r["slug"]: dict(r) for r in conn.execute("SELECT * FROM company_profiles")}
-    fits = {r["application_id"]: dict(r) for r in conn.execute("SELECT * FROM cv_fits")}
+    profiles = {r["slug"]: _profile_row(r) for r in conn.execute("SELECT * FROM company_profiles")}
+    fits = {r["application_id"]: _fit_row(r) for r in conn.execute("SELECT * FROM cv_fits")}
     tailored = {r["application_id"]: dict(r) for r in conn.execute("SELECT * FROM tailored_cvs")}
     open_kinds: dict[int, set[str]] = {}
     for r in conn.execute("SELECT application_id, kind FROM agent_requests WHERE status IN ('pending', 'claimed')"):
@@ -2297,8 +2375,6 @@ def research_view(conn: sqlite3.Connection) -> dict[int, dict]:
     view = {}
     for a in conn.execute("SELECT id, company FROM applications"):
         fit = fits.get(a["id"])
-        if fit:
-            fit["top_gaps"] = json.loads(fit["top_gaps"] or "[]")
         view[a["id"]] = {"profile": profiles.get(company_slug(a["company"])), "fit": fit,
                          "tailored": tailored.get(a["id"]), "open": open_kinds.get(a["id"], set())}
     return view
@@ -2357,6 +2433,14 @@ def add_message(conn: sqlite3.Connection, app_id: int | None, body: str, job_id:
         if app_id is not None or job_id is not None or topic is not None:
             _add_targets(conn, cursor.lastrowid, [(app_id, job_id, topic)])
     return cursor.lastrowid
+
+
+def is_draft_source(msg: dict | None) -> bool:
+    """A message a reply can be drafted from: the user's own message in the Applications thread about an
+    application, a job offer or the whole search; not a draft request, a comparison, a CV or Learn message,
+    or a cancelled message."""
+    return bool(msg) and msg["author"] == "user" and not msg["comms"] and msg["topic"] is None \
+        and msg["status"] != "cancelled"
 
 
 def add_draft_request(conn: sqlite3.Connection, app_id: int | None, kind: str, channel: str, pasted: str = "",
@@ -2419,32 +2503,6 @@ def source_preview(body: str, limit: int = SOURCE_PREVIEW) -> str:
     """The first `limit` characters of a message on one line, "…" when cut: names a draft's source."""
     text = " ".join(body.split())
     return text if len(text) <= limit else text[:limit].rstrip() + "…"
-
-
-def is_draft_source(msg: dict | None) -> bool:
-    """A message a reply can be drafted from: the user's own message in the Applications thread about an
-    application, a job offer or the whole search; not a draft request, a comparison, a CV or Learn message,
-    or a cancelled message."""
-    return bool(msg) and msg["author"] == "user" and not msg["comms"] and msg["topic"] is None \
-        and msg["status"] != "cancelled"
-
-
-def draft_source(conn: sqlite3.Connection, app_id: int | None = None, job_id: str | None = None) -> dict | None:
-    """The message an empty Draft a reply form answers: the user's latest is_draft_source message about
-    application `app_id`, else untracked job `job_id`, else (neither) the whole search. None when there is none."""
-    if app_id is not None:
-        where, key = "application_id = ?", app_id
-    elif job_id:
-        where, key = "application_id IS NULL AND getjo_job_id = ?", job_id
-    else:
-        where, key = "application_id IS NULL AND getjo_job_id IS NULL AND ? IS NULL", None
-    rows = conn.execute(f"SELECT id FROM agent_messages WHERE author = 'user' AND comms IS NULL AND topic IS NULL "
-                        f"AND status != 'cancelled' AND {where} ORDER BY id DESC LIMIT 20", (key,))
-    for (msg_id,) in rows:
-        msg = get_message(conn, msg_id)
-        if is_draft_source(msg):
-            return msg
-    return None
 
 
 def request_source(conn: sqlite3.Connection, request: dict) -> dict | None:
@@ -2992,6 +3050,17 @@ def queue_missing_briefs(conn: sqlite3.Connection, job_ids: list[str]) -> list[s
         conn.executemany("INSERT OR IGNORE INTO brief_requests (getjo_job_id, requested_at) VALUES (?, ?)",
                          [(j, stamp) for j in added])
     return added
+
+
+def queue_job_fit(conn: sqlite3.Connection, job_id: str) -> bool:
+    """An offer opened again whose brief request is done but which has no CV fit (opened before job fits): its
+    brief request goes back to pending once (fit_asked), so the packet asks for the fit alone. True when queued."""
+    if job_fit(conn, job_id) is not None:
+        return False
+    with conn:
+        return conn.execute("UPDATE brief_requests SET status = 'pending', fit_asked = 1, force = 0, requested_at = ?, "
+                            "claimed_at = NULL, done_at = NULL, worker = NULL WHERE getjo_job_id = ? AND status = 'done' "
+                            "AND fit_asked = 0", (now_iso(), job_id)).rowcount == 1
 
 
 def cancel_brief(conn: sqlite3.Connection, job_id: str) -> int:

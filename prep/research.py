@@ -3,12 +3,14 @@
 The full text lives in private_dir (never committed):
     companies/<slug>.md       one per company (db.company_slug), reused for a second role there
     fit/<app-id>-<slug>.md    one per application
+    fit/job-<job>-<slug>.md   one per job offer not tracked yet (its application takes it over on Interested)
     cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md   a copy of cv.md tailored to one job,
                               one file per version (n), all kept; revised through the thread
 
 Each file starts with TOML front matter between two "+++" lines, read with tomllib; the
 summary stored in prep.db (company_profiles, cv_fits) comes from it, so a hand edit followed
-by `research save` / `fit save` updates the database. The Markdown body after it is free text.
+by `research save` / `fit save` updates the database. The Markdown body after it is free text, except a fit
+file's "## Recommendation" section, which read_recommendation parses for the panel.
 """
 
 from datetime import date, datetime
@@ -34,6 +36,11 @@ def company_file(private_dir: Path, slug: str) -> Path:
 
 def fit_file(private_dir: Path, app_id: int, slug: str) -> Path:
     return private_dir / FIT_DIR / f"{app_id}-{slug}.md"
+
+
+def job_fit_file(private_dir: Path, job_id: str, slug: str) -> Path:
+    """The CV fit file of a job offer not tracked yet ("job-" and the job id made safe for a file name)."""
+    return private_dir / FIT_DIR / f"job-{file_word(job_id.replace(':', '-'), 60).lower()}-{slug}.md"
 
 
 ROLE_SHORT_MAX = 12
@@ -137,19 +144,73 @@ def read_profile(path: Path) -> dict:
         "tier_reason": _text(data.get("tier_reason")),
         "researched_at": _day(data.get("researched_at"), "researched_at"),
     }
+    for name in ("employer_kind", "engineering_team", "interview_style"):
+        profile[name] = _text(data.get(name))
+    if profile["employer_kind"]:
+        profile["employer_kind"] = profile["employer_kind"].lower()
+    for name in ("red_flags", "call_questions"):
+        items = data.get(name) or []
+        if not isinstance(items, list) or not all(isinstance(x, str) for x in items):
+            raise ValueError(f"{name} must be a list of short lines")
+        profile[name] = [x.strip() for x in items if x.strip()]
     if profile["suggested_tier"]:
         profile["suggested_tier"] = profile["suggested_tier"].upper()
     return profile
 
 
 def read_fit(path: Path) -> dict:
-    """The CV fit summary in a fit/<app-id>-<slug>.md file: score, gaps, checked_at."""
-    data, _ = split_front_matter(path.read_text(encoding="utf-8"))
+    """The CV fit summary in a fit file: score, gaps, checked_at, and the recommendation (None without one)."""
+    data, body = split_front_matter(path.read_text(encoding="utf-8"))
     gaps = data.get("gaps") or []
     if not isinstance(gaps, list) or not all(isinstance(g, str) for g in gaps):
         raise ValueError("gaps must be a list of strings, most important first")
-    return {"score": data.get("score"), "gaps": gaps, "checked_at": _day(data.get("checked_at"), "checked_at")}
+    return {"score": data.get("score"), "gaps": gaps, "checked_at": _day(data.get("checked_at"), "checked_at"),
+            "recommendation": read_recommendation(body)}
 
+
+# The recommendation in a fit file (27 Nov 2026): "## Recommendation", a "Verdict: <Apply | Stretch | Skip> — why"
+# line, then "### <part>" headings with "-" bullets. The part headings are matched by their first words.
+VERDICTS = {"apply": "Apply", "stretch": "Stretch: apply only if cheap", "skip": "Skip"}
+REC_PARTS = (("soft", "gaps that matter less"), ("real", "gaps that are real"), ("favour", "in its favour"),
+             ("decide", "what would decide"), ("effort", "if you apply"))
+MAX_REC_ITEMS = 5
+
+
+def read_recommendation(body: str) -> dict | None:
+    """{"verdict": apply / stretch / skip, "why", and a list per REC_PARTS key} from a fit file's Markdown, or
+    None when it has no "## Recommendation" section. ValueError for a section without a known verdict."""
+    lines = body.splitlines()
+    start = next((i for i, line in enumerate(lines) if re.match(r"^##\s+recommendation\b", line, re.IGNORECASE)), None)
+    if start is None:
+        return None
+    rec: dict = {"verdict": None, "why": "", **{key: [] for key, _ in REC_PARTS}}
+    part = None
+    for line in lines[start + 1:]:
+        if re.match(r"^##\s", line):
+            break
+        head = re.match(r"^###\s+(.*)", line)
+        if head:
+            words = head.group(1).strip().lower().replace("favor", "favour")
+            part = next((key for key, name in REC_PARTS if words.startswith(name)), None)
+            continue
+        verdict = re.match(r"^\s*\**verdict\**\s*:\s*\**(.*)$", line, re.IGNORECASE)
+        if verdict and rec["verdict"] is None:
+            text = verdict.group(1).replace("**", "").strip()
+            word = re.match(r"[a-z]+", text.lower())
+            if not word or word.group(0) not in VERDICTS:
+                raise ValueError("the recommendation's verdict must start with Apply, Stretch or Skip")
+            rec["verdict"] = word.group(0)
+            rest = text[len(word.group(0)):]
+            if rec["verdict"] == "stretch":
+                rest = re.sub(r"^\s*:?\s*apply only if cheap", "", rest, flags=re.IGNORECASE)
+            rec["why"] = re.sub(r"^[\s:—–\-.,]+", "", rest).strip()
+            continue
+        item = re.match(r"^\s*[-*]\s+(.*\S)", line)
+        if item and part and len(rec[part]) < MAX_REC_ITEMS:
+            rec[part].append(item.group(1).replace("**", "").strip())
+    if rec["verdict"] is None:
+        raise ValueError('the "## Recommendation" section needs a "Verdict: Apply | Stretch | Skip — why" line')
+    return rec
 
 def freshness(profile: dict | None, max_age_days: int, today: str) -> tuple[str, int | None]:
     """("missing", None), ("fresh", age in days) or ("stale", age) for a company profile."""

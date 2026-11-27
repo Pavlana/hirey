@@ -35,6 +35,17 @@ PLAN = """## What the role needs
 2. Say "Senior" in the summary?
    Answer: Yes, as on the Brightwater role.
 """
+NEW_PLAN = """## What the role needs
+
+- ✓ Shipping Python services to production
+- ~ Azure (one project, no certification)
+- ✗ Kubernetes operators
+
+## What will change in the CV
+
+- Summary: platform engineer who owned a shared pipeline; Python and Azure first.
+- Brightwater bullets first; the older support role cut to one line.
+"""
 JSON = {**HOST, "Accept": "application/json", "Origin": "http://localhost:8765", "Sec-Fetch-Site": "same-origin"}
 
 
@@ -57,8 +68,12 @@ class PlanTextTest(IsolatedTestCase):
             tailorplan.set_answer(PLAN, 1, "  ")
 
     def test_check(self) -> None:
-        self.assertTrue(tailorplan.check(PLAN).endswith("\n"))
-        with self.assertRaisesRegex(ValueError, "## Questions"):
+        self.assertTrue(tailorplan.check(NEW_PLAN).endswith("\n"))  # two sections, no questions
+        self.assertEqual(tailorplan.questions(NEW_PLAN), [])
+        with self.assertRaisesRegex(ValueError, "## What will change in the CV"):
+            tailorplan.check(NEW_PLAN.split("## What will change")[0])
+        self.assertTrue(tailorplan.check(PLAN).endswith("\n"))  # an older four-section plan still saves
+        with self.assertRaisesRegex(ValueError, "## What will change in the CV"):
             tailorplan.check(PLAN.split("## Questions")[0])
         with self.assertRaisesRegex(ValueError, "pay"):
             tailorplan.check(PLAN + "\nSalary expectations: none\n")
@@ -317,12 +332,22 @@ class PanelTest(WebTestCase):
     def panel(self) -> str:
         return self.get(f"/?app={self.app}")[2]
 
-    def test_tailor_cv_asks_for_a_plan_and_just_write_it_skips_it(self) -> None:
+    def test_tailor_cv_always_asks_for_a_plan_first(self) -> None:
         body = self.panel()
         self.assertIn('name="kind" value="plan"', body)
-        self.assertIn("Just write it", body)
+        self.assertNotIn("Just write it", body)
+        self.assertNotIn('name="kind" value="tailor"', body)
         self.post("/applications/research", {"app_id": self.app, "kind": "plan"})
         self.assertIn("Planning…", self.panel())
+
+    def test_a_two_section_plan_has_no_question_counter(self) -> None:
+        path = write(tailorplan.plan_file(self.private, "Globex Labs", self.app), NEW_PLAN)
+        with self.conn() as conn:
+            db.save_tailor_plan(conn, self.app, str(path), "Plan ready.")
+        body = self.panel()
+        self.assertIn("What will change in the CV", body)
+        self.assertNotIn("questions answered", body)
+        self.assertNotIn("question answered", body)
 
     def test_plan_card_edit_and_write(self) -> None:
         path = write(tailorplan.plan_file(self.private, "Globex Labs", self.app), PLAN)

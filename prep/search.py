@@ -5,8 +5,9 @@ Plain code where the answer is plain, the agent where it needs judgement:
     candidates (getjo: open, untracked, undecided, score 7+; later other sources, same job dict)
         -> plain gates: company and sector (company_checks), interviews (company_checks), location, level
            words in the title
-        -> agent gates (job_screens, written with the job brief): role family, level from the ad, team size,
-           location detail, pay pass / fail / unknown, and the ranking signals (agents, evals, contract)
+        -> agent gates (job_screens, written with the job brief): role family, level from the ad, location
+           detail, pay pass / fail / unknown, and the ranking signals (agents, evals, contract); the screen's
+           team size is never a gate (criteria.NOT_GATES): the job's panel shows it as a red flag or a question
         -> state: failed (a gate says no) · screening (no screen yet) · held (interview style unknown) · passed
         -> passed jobs ranked by the criteria's order, each with one "why" line
         -> the week's picks (top_picks): the first `top_per_week` passed jobs, kept for the week
@@ -29,7 +30,7 @@ from prep import db
 from prep.criteria import Criteria
 
 STATES = ("failed", "screening", "held", "passed")
-AGENT_GATES = ("role_family", "level", "team", "location", "pay")  # gates the screen answers
+AGENT_GATES = ("role_family", "level", "location", "pay")  # gates the screen answers
 GATE_LABELS = {"company": "company", "sector": "sector", "interviews": "interview style", "role_family": "role family",
                "level": "level", "team": "team size", "location": "location", "pay": "pay"}
 SCORE = {"yes": 2, "unknown": 1, "no": 0}

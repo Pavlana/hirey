@@ -30,7 +30,8 @@ def job(**kw) -> dict:
 class CriteriaTest(IsolatedTestCase):
     def test_example_file_is_read(self) -> None:
         c = crit()
-        self.assertEqual(c.gates, ("company", "sector", "interviews", "role_family", "level", "team", "location", "pay"))
+        self.assertEqual(c.gates, ("company", "sector", "interviews", "role_family", "level", "location", "pay"))  # no team
+        self.assertNotIn("team", criteria.parse("## Gates\n\n1. **Team**: at least 5 engineers.\n", c.path).gates)
         self.assertIn("staff", c.level_out)
         self.assertIn("graduate", c.level_out)  # the Out list runs over two lines
         self.assertEqual((c.cities, c.remote_regions), (("London",), ("UK",)))

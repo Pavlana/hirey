@@ -42,30 +42,33 @@ the AI check runs when asked for, and the panel shows one verdict. (This page is
 
 ## Tailoring plan
 
-A short plan agreed before any CV is written, so the discussion is about the role and the evidence
-rather than whole drafts (`prep/tailorplan.py`).
+A short, plain plan agreed before any CV is written: it keeps only what preparing to apply needs
+(`prep/tailorplan.py`).
 
 - **Tailor CV** in an application's panel queues a `plan` request
   ([research.md](research.md#requests-and-the-queue)); the Research worker, or the Applications
-  Assistant when none is set, writes it with the `/research` skill. **Just write it** beside it queues
-  the `tailor` request at once, with no plan, for a role that needs only small changes.
-- The file is `private_dir/cv-tailored/plans/PLAN_<Company>_<app id>.md`, about half a page, with four
-  sections:
+  Assistant when none is set, writes it with the `/research` skill. Every tailored CV starts with a plan
+  (**Just write it** was removed on 27 Nov 2026; "New from cv.md" on the Tailored CV card queues a new plan).
+- The file is `private_dir/cv-tailored/plans/PLAN_<Company>_<app id>.md`, with two sections
+  (`tailorplan.SECTIONS`):
 
 | Section | What it holds |
 | --- | --- |
-| `## What the role needs` | the must-haves and the seniority signals (scope, scale, ownership, production use) |
-| `## Evidence` | the cv.md line or facts-bank fact behind each need, and which to lead with |
-| `## Order` | the order of sections and bullets, the 2-3 summary lines in outline |
-| `## Questions` | numbered, only where the evidence is unclear, each with an `Answer:` line |
+| `## What the role needs` | the 3-5 must-haves in the posting's words, each ✓ have, ~ partly or ✗ not yet, with a few plain words |
+| `## What will change in the CV` | the summary in outline, the order of sections and bullets, what is cut or shortened |
 
-- `plan save` refuses a plan without the four sections or with pay; it records the plan as a draft
-  (`tailor_plans`), closes the request and posts a note in the Applications Assistant box.
-- The panel's **Tailoring plan** card shows the plan (each question with its answer, or "not yet"),
-  how many questions are answered, **Edit** (stale-save protected, as the Notes card), **Write the CV**
-  (also "Save and write the CV" inside the editor) and **Redo plan**.
-- An answer given in the Applications Assistant box is written under its question by `/ask`
-  (`plan answer APP N`). Answers stay in the plan: nothing is written to the facts bank or
+- No evidence references or cv.md quotes in the plan: the agent still traces every claim (the rule and AI
+  checks guarantee it). No questions by default; one the CV truly needs goes to the Applications Assistant
+  box.
+- `plan save` refuses a plan without the two sections or with pay; it records the plan as a draft
+  (`tailor_plans`), closes the request and posts a note in the Applications Assistant box. A plan written
+  before, with the four sections What the role needs, Evidence, Order and Questions
+  (`tailorplan.OLD_SECTIONS`), still shows and saves.
+- The panel's **Tailoring plan** card shows the plan, **Edit** (stale-save protected, as the Notes card),
+  **Write the CV** (also "Save and write the CV" inside the editor) and **Redo plan**; for an older plan
+  with questions, each with its answer or "not yet" and how many are answered.
+- An answer given in the Applications Assistant box to an older plan's question is written under it by
+  `/ask` (`plan answer APP N`). Answers stay in the plan: nothing is written to the facts bank or
   `stories.md` unless the user asks for it in words.
 - **Write the CV** (or `plan write APP`) marks the plan agreed and queues `tailor`; the tailoring packet
   then names the agreed plan and the CV is written from it.
@@ -74,7 +77,7 @@ rather than whole drafts (`prep/tailorplan.py`).
 
 ## Tailored CV
 
-- The `tailor` request comes from Write the CV (with an agreed plan) or Just write it (none); the
+- The `tailor` request comes from Write the CV (with an agreed plan; requests from before may have none); the
   Research worker, or the Applications Assistant, writes it with the `/research` skill.
 - Each version is its own file:
   `private_dir/cv-tailored/CV_<Company>_<RoleShort>_<DDMMYY>_<n>.md`. `cv.md` is never changed.

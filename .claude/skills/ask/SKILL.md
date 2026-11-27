@@ -194,6 +194,12 @@ NOTES
   `python -m prep.cli update APP --pay "…"` only when the user asks.
 - Say in the reply what was added ("Added to Notes: format, AI tools not allowed, two names.").
 
+**A follow-up, chase or thank-you note asked in plain words** ("write a thank-you note to Sam", "chase
+Globex"): write the draft in the reply, ready to copy, following /reply's rules for that kind (short, dry
+and professional, the debrief for a thank-you, never pay; `.claude/skills/reply/SKILL.md`). Nothing is sent.
+When the job's panel lists questions to clarify (`thread show` prints them), a reply to a recruiter may ask
+them, never the pay one in writing.
+
 **A "Draft a reply" request** (its first line is "Draft a … (/reply)", or the ping is
 `/reply …`): not an /ask message. Run /reply for it (`.claude/skills/reply/SKILL.md`); `thread show
 --claim` never takes it.
@@ -212,14 +218,15 @@ Reply in one or two lines, for example "Moved to Coding interview, Tue 10 Nov 14
 due Mon 9 Nov. Added: send availability to Sam."
 
 **About the tailoring plan** (before the CV exists; the panel's Tailoring plan card,
-`python -m prep.cli plan show APP`): an answer to one of the plan's questions, a change to the plan, or
-"write it".
+`python -m prep.cli plan show APP`): a change to the plan, "write it", or (an older plan with questions, or
+the one question the plan's note asked) an answer.
 
-- An answer to question N: `python -m prep.cli plan answer APP N --to MSG` with the user's answer on
+- An answer to question N of an older plan: `python -m prep.cli plan answer APP N --to MSG` with the user's answer on
   stdin, in their words. It goes under that question in the plan (the CV is written from the plan)
   and answers the message. Answers stay in the plan: never copy them to the facts bank.
 - A change to the plan ("lead with the evals harness", "drop the Go line"): edit the plan file (path
-  in `plan show`), keep its four `##` sections, then reply with `thread reply`.
+  in `plan show`), keep its `##` sections (What the role needs, What will change in the CV), plain and short,
+  no evidence references, then reply with `thread reply`.
 - "Write it" / "looks good": `python -m prep.cli plan write APP` (the same as the card's Write the
   CV), then reply in one line that the CV is queued.
 
@@ -267,7 +274,7 @@ change goes into the latest version **in place**:
    No pay in the copy or the note. "Make a PDF of v2" is
    `python -m prep.cli tailor pdf APP --version 2`.
 4. If there is no tailored copy yet, reply that the Tailor CV button in the panel starts one (a plan
-   first), or Just write it for a role that needs only small changes.
+   first: the plan is short).
 5. "I sent v2" or a file name: `python -m prep.cli cv sent APP FILE_NAME` (see the table above).
 
 **About the master CV** (`/ask cv MSG`, tagged "My CV"): a change to `cv.md` itself, such as "add

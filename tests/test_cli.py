@@ -124,7 +124,7 @@ class AppliedTest(IsolatedTestCase):
         self.assertIn("[interested]", out)
         self.assertNotIn("Apply due", out)  # the review task follows the agent's results
         self.assertIn("queued for the agent: Company research and CV fit", out)
-        self.assertIn('"Review research and apply" task follows', out)
+        self.assertNotIn("Review research and apply", out)  # no task: the panel shows the next step
         self.assertNotIn("Research the company", out)  # the agent's job (company research), not a to-do
         with closing(db.connect(self.prep_db)) as conn:
             row = conn.execute("SELECT decision FROM job_decisions").fetchone()

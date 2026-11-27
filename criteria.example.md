@@ -18,7 +18,8 @@ the agent reads the rest.
 4. **Role family**: hands-on AI engineering roles (AI engineer, LLM engineer, AI platform engineer).
 5. **Level**: senior individual contributor only. Out: lead, principal, staff, head, manager, junior,
    graduate. A title with no level is judged from the ad.
-6. **Team**: at least 5 engineers.
+6. **Team**: not a gate. A small team can still be interesting; a team of one or an unclear team is a red
+   flag and a question to clarify in the job's panel.
 7. **Location**: London on-site or hybrid, or remote within the UK.
 8. **Pay**: at or above the floor written in the real file. Unknown pay passes; only a stated figure below
    the floor fails. Only pass / fail / unknown is ever stored.

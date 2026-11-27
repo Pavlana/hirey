@@ -82,7 +82,8 @@ prep/        config.py (settings), db.py (prep.db schema + queries), getjo.py (r
              cveval.py (AI check of a tailored CV: grounding, fit, skim, editorial and grammar, from the agent's .eval.md),
              tailorplan.py (the tailoring plan written before a tailored CV: sections, questions, answers),
              cvedit.py (the panel's CV editor: in-place saves with undo, sent version frozen, %% comments),
-             criteria.py (the private criteria file: gates and ranking), search.py (gate, ranking, Top 5 picks,
+             criteria.py (the private criteria file: gates and ranking), decision.py (the job panel's red flags and
+             recruiter-call questions), search.py (gate, ranking, Top 5 picks,
              company list import; New offers' Top 5 this week),
              assistant.py (optional dev3 message to a standing agent: /ask, /research, /reply, /learn-ask; picks among several workers),
              workers.py (Workers sidebar and Run history: each worker's state, queue and runs; no message text or pay),
@@ -127,7 +128,8 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
 - Daily brief: `python -m prep.cli today`
 - Record an application: `python -m prep.cli applied --job-id ID --next-action "..." --next-date +7`
 - Applications: `python -m prep.cli apps`, `python -m prep.cli update ID --status ... [--comment ...]`,
-  `python -m prep.cli update ID --employer-kind product|client|unknown` (in-house product vs client delivery; unknown clears it),
+  `python -m prep.cli update ID --employer-kind product|client|unknown` (in-house product vs client delivery; unknown clears it;
+  the company research sets it when unknown),
   `python -m prep.cli comment ID "..."`
 - Tasks: `python -m prep.cli task add|list|done`
 - Gaps: `python -m prep.cli gap add|list|close` (each named gap gets one drill task; closing a gap completes it)
@@ -150,7 +152,7 @@ requirements.txt  pinned third-party libraries (WeasyPrint); install into a venv
   `python -m prep.cli learn-thread show MSG [--claim]`, `learn-thread reply --to MSG` (text on stdin),
   `learn-thread pending`
 - Feedback for getjo: `python -m prep.cli feedback export [--out PATH]`
-- Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save`,
+- Research queue: `python -m prep.cli queue` (read-only), `research next|queue|save`, `fit save APP` (or `fit save --job ID` for a job offer not tracked yet; Interested takes it over),
   `research block APP [--kind K] --reason R` / `brief block --job ID --reason R` (the worker cannot do it; shown in
   the Workers sidebar and Run history, `/runs`)
 - Applications Assistant box (used by /ask): `python -m prep.cli thread show [APP | --job ID | --message MSG] [--claim]`

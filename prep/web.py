@@ -43,6 +43,7 @@ from urllib.parse import parse_qs, parse_qsl, urlencode, urlsplit
 from prep import (assistant, charts, criteria, cvcheck, cvedit, cveval, cvfile, cvpdf, db, evals, explainers, getjo,
                   learn, learnnotes, research, stats, tailorplan, workers)
 from prep.md import render_markdown
+from prep import decision as decision_
 from prep import search
 from prep.config import ConfigError, Settings, load_settings
 
@@ -107,7 +108,6 @@ MESSAGES = {
     "task_reopened": "Task reopened.",
     "research_queued": "Queued for the Applications Assistant. It runs in the next Claude session (/research).",
     "message_sent": "Sent to the Applications Assistant. Its reply shows in the thread.",
-    "draft_requested": "Draft asked for. It shows in the Applications Assistant box with Copy; nothing is sent.",
     "invite_pasted": ("Sent. The job is checked against your criteria and a reply is drafted to edit and copy; "
                       "nothing is sent."),
     "notes_saved": "Notes saved.",
@@ -117,7 +117,6 @@ MESSAGES = {
     "cv_undone": "Undone: the text from before the last edit is back.",
     "cv_revise": "Asked the assistant to revise only the commented lines.",
     "master_edited": "CV saved as a new version; the text it replaced is kept.",
-    "employer_saved": "Employer kind saved.",
     "cv_restored": "Restored. The CV it replaced is kept as a version.",
     "interviews_set": "Saved. The company's jobs move out of Held: ranked, or filtered out.",
     "brief_queued": "Brief queued. The assistant writes it from the job description; it shows here.",
@@ -629,40 +628,6 @@ def _send_about(settings: Settings, conn: sqlite3.Connection, form: Form) -> dic
     return {"html": _thread(conn, settings, *_panel_ctx(conn, form))}
 
 
-def request_draft(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
-    """Draft a reply: store a draft request (db.add_draft_request: what to write, the channel, the pasted
-    message and the user's notes) about the application (`app_id`), the job offer not yet tracked
-    (`job_id`) or the whole search (neither), and ping `/reply …` with its id in the background: the comms
-    worker when one is set, else the Applications Assistant. Nothing is ever sent to the recruiter; the
-    draft comes back in the box with Copy. The JSON reply is the thread."""
-    app_id = _int_field(form, "app_id")
-    if app_id is not None and db.get_application(conn, app_id) is None:
-        raise BadRequest(f"No application with id {app_id}.")
-    job_id = None if app_id is not None else _optional(form, "job_id")
-    if job_id and db.find_by_job(conn, job_id) is None and job_id not in db.job_decisions(conn):
-        _getjo_job(settings, {"job_id": job_id})  # an unknown job is refused
-    kind, channel = form.get("comms") or "reply", form.get("channel") or ""
-    if kind not in db.COMMS_KINDS or channel not in db.CHANNELS:
-        raise BadRequest("Pick what to write and the channel (LinkedIn or Email).")
-    if kind == "invite":
-        raise BadRequest("Paste a recruiter's invitation into Paste recruiter message at the top.")
-    source = None
-    if kind == "reply" and not form.get("pasted", "").strip():
-        # nothing pasted: the message the form named (source_id), else the latest one the user sent about it
-        named = _int_field(form, "source_id")
-        source = db.draft_source(conn, app_id, job_id)
-        if named is not None and named != (source or {}).get("id"):
-            found = db.get_message(conn, named)
-            same = found and (found["application_id"], found["getjo_job_id"] if found["application_id"] is None
-                              else None) == (app_id, job_id if app_id is None else None)
-            source = found if same and db.is_draft_source(found) else source
-        if source is None:
-            raise BadRequest("Paste the recruiter's message to reply to.")
-    msg_id = db.add_draft_request(conn, app_id, kind, channel, form.get("pasted", ""), form.get("notes", ""), job_id,
-                                  source["id"] if source else None)
-    return _route_draft(settings, conn, form, msg_id, kind, channel)
-
-
 def paste_invitation(settings: Settings, conn: sqlite3.Connection, form: Form, today: str) -> dict:
     """Paste recruiter message (top of Applications): one step, no type or channel to pick. Stores an
     invitation request (db.add_draft_request, comms "invite", LinkedIn) about the whole search and pings
@@ -803,17 +768,6 @@ def queue_research(settings: Settings, conn: sqlite3.Connection, form: dict[str,
     has_result, _ = research.result_path(conn, settings.private_dir, app_id, kind)
     _, created = db.queue_request(conn, app_id, kind, force=has_result)
     log.info("%s %s for application %s from the dashboard", kind, "queued" if created else "already queued", app_id)
-    return {"redirect": _here(app_id)}
-
-
-def set_employer_kind(settings: Settings, conn: sqlite3.Connection, form: dict[str, str], today: str) -> dict:
-    """The panel's employer select: product, client, or "" for unknown (stored as NULL)."""
-    app_id = _app_id(conn, form)
-    kind = form.get("employer_kind") or ""
-    if kind and kind not in db.EMPLOYER_KINDS:
-        raise BadRequest("Pick product, client or unknown.")
-    db.update_application(conn, app_id, employer_kind=kind or None)
-    log.info("employer kind of application %s set to %s from the dashboard", app_id, kind or "unknown")
     return {"redirect": _here(app_id)}
 
 
@@ -1341,7 +1295,6 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/skip": (skip_application, "/", "app_skipped"),
     "/applications/research": (queue_research, "/", "research_queued"),
     "/applications/message": (send_message, "/", "message_sent"),
-    "/applications/draft": (request_draft, "/", "draft_requested"),
     "/applications/invite": (paste_invitation, "/", "invite_pasted"),
     "/applications/resend": (resend_message, "/", "resent"),
     "/applications/cancel": (cancel_message, "/", "cancelled"),
@@ -1353,7 +1306,6 @@ ACTIONS: dict[str, tuple[Callable[..., dict | None], str, str]] = {
     "/applications/cv/undo": (undo_tailored_cv, "/", "cv_undone"),
     "/applications/cv/revise": (revise_comments, "/", "cv_revise"),
     "/cv/edit": (edit_master_cv, "/", "master_edited"),
-    "/applications/employer": (set_employer_kind, "/", "employer_saved"),
     "/cv/restore": (restore_cv, "/", "cv_restored"),
     "/offers/brief": (queue_brief, "/", "brief_queued"),
     "/offers/interviews": (set_interviews, "/", "interviews_set"),
@@ -2260,15 +2212,16 @@ def _offer_list(rows: list[tuple[dict, dict | None]], f: dict, found: dict, now:
 SEL_HEAD = '<th scope="col" class="col-sel"><span class="sr-only">Ask about</span></th>'
 
 
-def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str,
-                 stale_days: int, busy: bool = False, draft_from: dict | None = None) -> str:
-    """The side panel for a job not yet tracked: header (company, role, score, location, seen date,
-    posting link, open/closed chips, the Ask-about tick), Interested · Skip (or Skipped with Undo
-    skip) and the job brief (or the tidied description while it is written: `brief`, from
-    _brief_section). `busy`: a brief is being written, so the page polls."""
+def _offer_panel(settings: Settings, conn: sqlite3.Connection, job: dict, decision: dict | None, briefs: dict,
+                 description: str | None, f: dict, now: str) -> str:
+    """The side panel for a job not yet tracked, the same decision page as an application's: header (company,
+    role, score, location, seen date, posting link, open/closed chips), then 1. the company and the red flags,
+    2. the questions for the recruiter call, 3. Interested · Skip (or Skipped with Undo skip). The job brief,
+    the screen, the company check and the company research are queued when the panel first opens
+    (_queue_briefs); "Researching…" shows while they are written, and the page polls."""
     here = home_url(f, job=job["id"], app=None)
     close = home_url(f, job=None, app=None)
-    state = getjo.job_state(job, now, stale_days)
+    state = getjo.job_state(job, now, settings.stale_days)
     sub = " ".join(x for x in (
         _score_badge(job["score"]) if job["score"] is not None else "",
         f'<span>{h(job["location"])}</span>' if job["location"] else "",
@@ -2289,19 +2242,36 @@ def _offer_panel(job: dict, decision: dict | None, brief: str, f: dict, now: str
                    f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(job["id"])}" data-skip-field="job_id" '
                    f'data-skip-action="/offers/skip" data-skip-label="{h(job["company"])} — {h(job["title"])}" '
                    'data-after="refresh">Skip</a>')
-    tick = _sel_tick(f, f'j:{job["id"]}', f'{job["company"]} — {job["title"]}', "Ask about this")
+    busy = job["id"] in briefs["open"]
+    profile = db.company_profile(conn, db.company_slug(job["company"] or ""))
+    check = db.company_check(conn, job["company"] or "")
+    screen = db.job_screens(conn).get(job["id"])
+    brief = briefs.get(job["id"])
+    fit = db.job_fit(conn, job["id"])
+    gates = decision_.gate_values(job, check, screen, _criteria(settings))
+    kind = decision_.employer_kind(profile, check, None)
+    flags = decision_.red_flags(profile, brief["brief"] if brief else None, gates, screen is not None, kind == "client",
+                                (screen or {}).get("contract"))
+    more = _brief_section(job["id"], briefs, description, here,
+                          gone=not job["first_seen"] and description is None, buttons=False)
+    if profile:
+        more += _profile_card(profile, None, None, here)
+    apply = (f'<section class="decide decide-apply" aria-labelledby="decide-apply"><h3 id="decide-apply">'
+             f'<span class="step">3</span>Decide</h3><div class="action-row">{buttons}</div></section>')
     return (
         f'<aside class="panel panel-offer" id="panel" aria-labelledby="panel-title" data-job="{h(job["id"])}"'
         f'{" data-busy" if busy else ""}>'
         f'<header class="panel-head"><div><h2 id="panel-title">{h(job["company"])}</h2>'
         f'<p class="panel-role">{h(job["title"])}</p><p class="panel-sub">{sub}</p></div>'
-        f'<span class="panel-head-actions">{tick}<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
+        '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
         'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         '<div class="panel-body">'
-        f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{buttons}</div>'
-        + _draft_form(here, job_id=job["id"], source=draft_from) + "</section>"
-        + brief
+        + _recommendation(fit, busy)
+        + _decide_company(profile, check, kind, brief, flags, busy, _fit_line(fit, busy and fit is None), more)
+        + _decide_questions(decision_.call_questions(profile, gates, brief["facts"] if brief else ""),
+                            f'j{job["id"]}', copy=False)
+        + apply
         + "</div></aside>"
     )
 
@@ -2546,7 +2516,12 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
     targets = sel_targets(conn, f, rows, found)
     f["sel"] = tuple(t["key"] for t in targets)  # unknown ids dropped, a tracked job named by its application
     top, top_error = _top_board(settings, conn, found, f, today)
-    briefs = _queue_briefs(settings, conn, found, job if focus is None and decision is None else None)
+    if focus is not None and focus["group"] != "closed":
+        _research_on_open(settings, conn, focus)
+    opened = [job["id"]] if job is not None and focus is None and decision is None else []
+    if focus is not None and focus["group"] != "closed" and focus["app"]["getjo_job_id"]:
+        opened.append(focus["app"]["getjo_job_id"])
+    briefs = _queue_briefs(settings, conn, found, opened)
     open_count = sum(1 for r in rows if r["group"] != "closed")
     closed_count = len(rows) - open_count
     offers = None if found["error"] else len(found["new"])
@@ -2568,14 +2543,10 @@ def home_page(settings: Settings, conn: sqlite3.Connection, today: str,
         panel = _cv_panel(conn, settings, f)
     elif focus:
         job_id = focus["app"]["getjo_job_id"]
-        brief = (_brief_section(job_id, briefs, _read_description(settings, job_id), home_url(f)) if job_id
-                 else _invite_card(conn, settings, focus["app"], today, home_url(f, app=focus["app"]["id"])))
-        panel = _panel(conn, focus, today, f, brief, bool(job_id) and job_id in briefs["open"], settings.private_dir)
+        panel = _panel(settings, conn, focus, today, f, briefs, _read_description(settings, job_id) if job_id else None,
+                       found["jobs"].get(job_id) if job_id else None)
     elif job:
-        brief = _brief_section(job["id"], briefs, found["description"], home_url(f),
-                               gone=not job["first_seen"] and found["description"] is None)
-        panel = _offer_panel(job, decision, brief, f, now, settings.stale_days, job["id"] in briefs["open"],
-                             db.draft_source(conn, job_id=job["id"]))
+        panel = _offer_panel(settings, conn, job, decision, briefs, found["description"], f, now)
     else:
         panel = ""
     agent = _agent_box(conn, settings, f, targets)
@@ -2651,9 +2622,33 @@ def _sel_tick(f: dict, key: str, label: str, text: str = "") -> str:
             f'title="Tick to ask the assistant about it"><span class="box" aria-hidden="true"></span>{words}</a>')
 
 
-def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, opened: dict | None) -> dict:
+def _research_on_open(settings: Settings, conn: sqlite3.Connection, r: dict) -> None:
+    """Opening an application's panel queues its company research and CV fit once when they are missing: never
+    when one was ever asked for this application (done, blocked or cancelled too), and no research when the
+    company has a profile or another application at it has research queued (one profile per company). Pings
+    the worker like any queued request; the panel shows "Researching…". Never changes the application."""
+    app, found = r["app"], r["found"]
+    if not found["fit"] and db.adopt_job_fit(conn, app["id"]):  # fitted as an offer before it was tracked
+        found["fit"] = db.cv_fit(conn, app["id"])
+    asked = db.requested_kinds(conn, app["id"])
+    slug = db.company_slug(app["company"])
+    company_busy = any(q["kind"] == "research" and db.company_slug(q["company"]) == slug for q in db.open_requests(conn))
+    mark = db.last_request_id(conn)
+    if not found["profile"] and "research" not in asked and not company_busy:
+        db.queue_request(conn, app["id"], "research")
+    if not found["fit"] and "cv_fit" not in asked:
+        db.queue_request(conn, app["id"], "cv_fit")
+    new = db.requests_since(conn, mark)
+    if new:
+        log.info("%d request(s) queued on opening application %s", len(new), app["id"])
+        found["open"] = set(found["open"]) | {q["kind"] for q in new}
+        assistant.notify_in_background(settings, assistant.route_requests(settings, conn, new))
+
+
+def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, opened: list[str]) -> dict:
     """Queue job briefs the agent has not been asked for: every new offer scored at least
-    brief_auto_min_score (in the background), and an untracked offer whose panel is open (`opened`). With a
+    brief_auto_min_score (in the background), and the job of an open panel (`opened`: an untracked offer, or
+    an open application's getjo job), once ever. With a
     criteria file (Top 5), every new offer plain code does not fail instead, the screen and company check
     with the brief (db.queue_screens), and none for a job it fails.
     Pings the Applications Assistant once when any were added. Returns {job id: brief…} plus "open" (the
@@ -2664,9 +2659,11 @@ def _queue_briefs(settings: Settings, conn: sqlite3.Connection, found: dict, ope
         checks = db.company_checks(conn)
         new = [j for j in new if not search.plain_fail(j, checks.get(db.company_slug(j["company"] or "")), crit)]
     wanted = [j["id"] for j in new if (j["score"] or 0) >= settings.brief_auto_min_score]
-    if opened is not None:
-        wanted.append(opened["id"])
+    wanted += opened
     added = db.queue_missing_briefs(conn, wanted)
+    for job_id in opened:  # an offer whose brief was written before job fits: its CV fit, once
+        if job_id not in added and db.find_by_job(conn, job_id) is None and db.queue_job_fit(conn, job_id):
+            added.append(job_id)
     if crit is not None:  # ... and every other candidate gets its brief, screen and company check
         added += [j for j in db.queue_screens(conn, [j["id"] for j in new]) if j not in added]
     if added:
@@ -2809,13 +2806,17 @@ def _read_description(settings: Settings, job_id: str) -> str | None:
         return None
 
 
-def _brief_section(job_id: str, briefs: dict, description: str | None, here: str, gone: bool = False) -> str:
-    """The top of a job's panel: the agent's brief (key facts line as chips, then its sections), with
+def _brief_section(job_id: str, briefs: dict, description: str | None, here: str, gone: bool = False,
+                   buttons: bool = True) -> str:
+    """The job brief in section 1's More: the agent's brief (key facts line as chips, then its sections), with
     Redo and the original description behind Show original; without a brief, Write brief (or
-    "Writing brief…") and the original, tidied and collapsed (Show all)."""
+    "Writing brief…") and the original, tidied and collapsed (Show all). `buttons` False (a job offer: the
+    brief is queued when its panel opens) leaves Write brief and Redo out."""
     brief, busy = briefs.get(job_id), job_id in briefs["open"]
     keep = (f'<input type="hidden" name="job_id" value="{h(job_id)}"><input type="hidden" name="return" value="{h(here)}">')
-    if busy:
+    if not buttons:
+        action = ""
+    elif busy:
         action = ('<button class="btn btn-ghost btn-sm is-busy" disabled><span class="spinner" aria-hidden="true"></span>'
                   'Writing brief…</button>')
     else:
@@ -2914,52 +2915,220 @@ def _age_text(days: int) -> str:
     return f'{days} day{"s" if days != 1 else ""} in this stage' if days > 0 else "new today"
 
 
-def _panel(conn: sqlite3.Connection, r: dict, today: str, f: dict, brief: str = "", brief_busy: bool = False,
-           private_dir: Path | None = None) -> str:
-    """The side panel, top to bottom: header (with the Ask-about tick), the job brief (`brief`, from
-    _brief_section; none without a getjo job), the latest comment (read-only), shortcut buttons, tasks
-    (tick to mark done), the agent's results (company research, CV fit, tailored CV versions) and
-    the stage history. Everything else is asked of the agent in the Applications Assistant box under the list."""
+def _panel(settings: Settings, conn: sqlite3.Connection, r: dict, today: str, f: dict, briefs: dict,
+           description: str | None, gjob: dict | None) -> str:
+    """The side panel of an application, a decision page, top to bottom: header (company, role, stage, posting
+    link, close), 1. the company and the red flags (_decide_company; More holds the full brief, research and CV
+    fit), 2. the questions for the recruiter call, the latest reply draft and a recruiter invitation's card,
+    3. Tailor CV (plan first) · Mark applied · Skip with the plan and tailored CV cards, then quiet: notes,
+    comments and the stage history. Research, the CV fit and the job brief were queued when it opened
+    (_research_on_open). Everything else is asked of the agent in the Applications Assistant box."""
     app, found = r["app"], r["found"]
     here = home_url(f, app=app["id"])
     link = (f'<span>{_link(app["link"], "Job posting ↗")}</span>'
             if app["link"] and urlsplit(app["link"]).scheme in ("http", "https") else "")
     close = home_url(f, app=None, job=None)
     versions = db.tailored_versions(conn, app["id"])
+    job_id = app["getjo_job_id"]
+    brief_busy = bool(job_id) and job_id in briefs["open"]
     busy = " data-busy" if found["open"] or brief_busy else ""
-    tick = _sel_tick(f, f'a:{app["id"]}', f'{app["company"]} — {app["role"]}', "Ask about this")
+    view = decision_.for_application(conn, app, _criteria(settings), (gjob or {}).get("location"))
+    check, brief, kind, flags = view["check"], view["brief"], view["kind"], view["flags"]
+    more = (_brief_section(job_id, briefs, description, here) if job_id else "")
+    if found["profile"]:
+        more += _profile_card(found["profile"], app, found["open"], here)
+    if found["fit"]:
+        more += _fit_card(app, found, here)
+    researching = "research" in found["open"] or brief_busy
     return (
         f'<aside class="panel" id="panel" aria-labelledby="panel-title" data-app="{h(app["id"])}" '
         f'data-status="{h(app["status"])}"{busy}>'
-        f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}{_employer_badge(app["employer_kind"])}</h2>'
+        f'<header class="panel-head"><div><h2 id="panel-title">{h(app["company"])}</h2>'
         f'<p class="panel-role">{h(app["role"])}</p>'
         f'<p class="panel-sub">{_status_badge(app["status"])} {step_dots(app["status"], label=False)}'
         f'{_job_closed_badge() if r["closed"] else ""}'
-        f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p>{_employer_select(app, here)}</div>'
-        f'<span class="panel-head-actions">{tick}<a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
+        f'<span class="muted">{h(_age_text(r["days"]))}</span>{link}</p></div>'
+        '<span class="panel-head-actions"><a class="panel-ask btn btn-secondary btn-sm" href="#agent" data-ask-agent>'
         'Ask the assistant</a>'
         f'<a class="panel-close btn btn-ghost btn-sm" href="{h(close)}" aria-label="Close" data-close-panel>✕</a></span></header>'
         f'<div class="panel-body">'
-        + brief
+        + _recommendation(found["fit"], "cv_fit" in found["open"])
+        + _decide_company(found["profile"], check, kind, brief, flags, researching,
+                          _fit_line(found["fit"], "cv_fit" in found["open"]), more)
+        + _decide_questions(view["questions"], f'a{app["id"]}',
+                            _panel_draft(conn, app["id"]) + _invite_card(conn, settings, app, today, here))
+        + _decide_apply(conn, app, found, versions, here, settings.private_dir)
+        + '<div class="panel-quiet">'
+        + _notes_card(app["id"], db.get_notes(conn, app["id"]), here)
         + _comments_section(conn, app["id"])
-        + _shortcuts(conn, app, found, versions, here)
-        + _panel_tasks(r["tasks"], today, here)
-        + _research_cards(app, found, versions, here, private_dir,
-                          db.cv_check(conn, app["id"], versions[-1]["version"]) if versions else None,
-                          db.get_notes(conn, app["id"]), conn)
         + _history(conn, app["id"])
-        + "</div></aside>"
+        + "</div></div></aside>"
     )
+
+
+EMPLOYER_WORDS = {"product": "Product company", "client": "Client delivery"}
+VERDICT_TONES = {"apply": "success", "stretch": "warning", "skip": "danger"}
+REC_LABELS = {"soft": "Gaps that matter less", "real": "Gaps that are real", "favour": "In its favour",
+              "decide": "What would decide it", "effort": "If you apply"}
+
+
+def _recommendation(fit: dict | None, busy: bool) -> str:
+    """The recommendation at the top of a job's panel, from its CV fit (research.read_recommendation): the
+    verdict (Apply / Stretch: apply only if cheap / Skip) with its one sentence, then each part as a short list.
+    While the fit is being written, one line says so; without a fit or a recommendation, nothing."""
+    rec = (fit or {}).get("recommendation")
+    if not rec:
+        if busy and not fit:
+            return ('<section class="decide decide-rec" aria-label="Recommendation"><p class="muted is-busy">'
+                    '<span class="spinner" aria-hidden="true"></span>Recommendation: written with the CV fit…</p></section>')
+        return ""
+    head = (f'<h3 id="decide-rec">Recommendation {_badge(research.VERDICTS[rec["verdict"]], VERDICT_TONES[rec["verdict"]])}'
+            f' {_badge("CV fit " + str(fit["score"]) + "/5", _fit_tone(fit["score"]))}</h3>')
+    why = f'<p class="rec-why">{h(rec["why"])}</p>' if rec.get("why") else ""
+    parts = "".join(f'<div class="rec-part rec-{key}"><h4>{h(label)}</h4><ul>'
+                    + "".join(f"<li>{h(x)}</li>" for x in rec[key]) + "</ul></div>"
+                    for key, label in REC_LABELS.items() if rec.get(key))
+    return (f'<section class="decide decide-rec" aria-labelledby="decide-rec">{head}{why}'
+            f'<div class="rec-parts">{parts}</div></section>')
+
+
+def _fit_line(fit: dict | None, busy: bool) -> str:
+    """The CV fit as a badge for section 1 ("CV fit 4/5"), or "Checking CV fit…" while it is queued. Nothing
+    when the recommendation above already shows the score."""
+    if busy:
+        return '<span class="muted"><span class="spinner" aria-hidden="true"></span>Checking CV fit…</span>'
+    if not fit or fit.get("recommendation"):
+        return ""
+    return _badge(f'CV fit {fit["score"]}/5', _fit_tone(fit["score"]))
+
+
+def _decide_company(profile: dict | None, check: dict | None, kind: str | None, brief: dict | None, flags: list[str],
+                    busy: bool, fit: str, more: str) -> str:
+    """1. Company and red flags: what the company does, one line of facts (size, sector, product or client
+    work, where), the engineering team and the interview style, the brief's key facts and what the role needs
+    (its must-haves), then the red flags.
+    "Researching…" while the research or the brief is being written. More: the full brief, research and fit."""
+    lines = []
+    if profile and profile["what_it_does"]:
+        lines.append(f'<p>{h(profile["what_it_does"])}</p>')
+    facts = " · ".join(x for x in (
+        profile and profile["size_band"] and f'{profile["size_band"]} people',
+        profile and profile["sector"],
+        EMPLOYER_WORDS.get(kind or "", ""),
+        profile and profile["london_remote"],
+    ) if x)
+    if facts:
+        lines.append(f'<p class="muted">{h(facts)}</p>')
+    if profile and profile.get("engineering_team"):
+        lines.append(f'<p><span class="label">Engineering team</span> {h(profile["engineering_team"])}</p>')
+    style = (profile or {}).get("interview_style") or (check or {}).get("note")
+    if style:
+        lines.append(f'<p><span class="label">Interviews</span> {h(style)}</p>')
+    if brief:
+        chips = "".join(f'<span class="fact">{h(x.strip())}</span>' for x in brief["facts"].split("·") if x.strip())
+        lines.append(f'<p class="brief-facts" aria-label="Key facts">{chips}</p>')
+        needs = decision_.role_needs(brief["brief"])
+        if needs:
+            lines.append('<h4>What the role needs</h4><ul class="needs">'
+                         + "".join(f"<li>{h(x)}</li>" for x in needs) + "</ul>")
+    if fit:
+        lines.append(f'<p>{fit}</p>')
+    if busy:
+        lines.append('<p class="muted is-busy"><span class="spinner" aria-hidden="true"></span>Researching…</p>')
+    elif not (profile or brief):
+        lines.append('<p class="muted">No research yet.</p>')
+    if flags:
+        body = "".join(f"<li>{h(x)}</li>" for x in flags)
+        lines.append(f'<h4>Red flags</h4><ul class="flags">{body}</ul>')
+    elif profile or brief:
+        lines.append('<p class="muted">No red flags found.</p>')
+    extra = f'<details class="decide-more"><summary>More</summary>{more}</details>' if more else ""
+    return (f'<section class="decide decide-company" aria-labelledby="decide-company"><h3 id="decide-company">'
+            f'<span class="step">1</span>Company and red flags</h3>{"".join(lines)}{extra}</section>')
+
+
+def _decide_questions(questions: list[dict], key: str, after: str = "", copy: bool = True) -> str:
+    """2. Questions to clarify on the recruiter call, each with Copy, and Copy all (pay is never copied: it is
+    asked on the call, never written in a message). `after`: the latest reply draft, an invitation's card.
+    `copy` False (a job offer, still being decided): "Still unknown", a plain list of what is not known yet."""
+    if not copy:
+        items = "".join(f'<li><span>{h(q["text"])}</span>'
+                        + (f' {_badge("ask on the call", "neutral")}' if q["call_only"] else "") + "</li>"
+                        for q in questions)
+        return (f'<section class="decide decide-questions" aria-labelledby="decide-questions"><h3 id="decide-questions">'
+                f'<span class="step">2</span>Still unknown</h3><ul class="questions">{items}</ul></section>')
+    items, copy_all = [], []
+    for n, q in enumerate(questions):
+        qid = f"q-{key}-{n}"
+        if q["call_only"]:
+            items.append(f'<li><span>{h(q["text"])}</span> {_badge("ask on the call", "neutral")}</li>')
+            continue
+        copy_all.append(q["text"])
+        items.append(f'<li><span id="{h(qid)}">{h(q["text"])}</span>'
+                     f'<button type="button" class="btn btn-ghost btn-sm" data-copy="{h(qid)}">Copy</button></li>')
+    all_id = f"q-{key}-all"
+    hidden = f'<span id="{h(all_id)}" hidden>{h(chr(10).join("- " + q for q in copy_all))}</span>'
+    actions = (f'<span class="decide-actions">{hidden}<button type="button" class="btn btn-ghost btn-sm" '
+               f'data-copy="{h(all_id)}">Copy all</button></span>') if copy_all else ""
+    return (f'<section class="decide decide-questions" aria-labelledby="decide-questions"><h3 id="decide-questions">'
+            f'<span class="step">2</span>Questions to clarify{actions}</h3>'
+            f'<ul class="questions">{"".join(items)}</ul>{after}</section>')
+
+
+def _decide_apply(conn: sqlite3.Connection, app: dict, found: dict, versions: list[dict], here: str,
+                  private_dir: Path | None) -> str:
+    """3. Tailor CV and apply: Tailor CV (always plan first) or its state, Mark applied and Skip while the
+    application is Interested (the outcome afterwards), then the plan card and the tailored CV card."""
+    open_kinds = found["open"]
+
+    def busy(label: str) -> str:
+        return f'<button class="btn btn-ghost btn-sm is-busy" disabled><span class="spinner" aria-hidden="true"></span>{h(label)}</button>'
+
+    def state(text: str) -> str:
+        return f'<button class="btn btn-ghost btn-sm is-done" disabled>{h(text)}</button>'
+
+    buttons = []
+    plan = db.tailor_plan(conn, app["id"])
+    if "tailor" in open_kinds:
+        buttons.append(busy("Tailoring…"))
+    elif "plan" in open_kinds:
+        buttons.append(busy("Planning…"))
+    elif not versions and not plan:
+        buttons.append('<form method="post" action="/applications/research" class="inline">'
+                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="kind" value="plan">'
+                       f'<input type="hidden" name="return" value="{h(here)}">' + _button("Tailor CV", "secondary", "sm") + "</form>")
+    if app["status"] == "to_apply":
+        buttons.append(f'<form method="post" action="/applications/apply" class="inline" data-ajax="applied">'
+                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
+                       + _button("Mark applied", size="sm") + "</form>")
+        skip_url = "/applications/skip?" + urlencode([("app", app["id"]), ("return", here)])
+        buttons.append(f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(app["id"])}" '
+                       'data-skip-field="app_id" data-skip-action="/applications/skip" '
+                       f'data-skip-label="{h(app["company"])} — {h(app["role"])}" data-after="refresh">Skip</a>')
+    elif app["status"] == "skipped":
+        buttons.append(state("Skipped"))
+    elif app["date_applied"]:
+        buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
+    cards = ""
+    if plan:
+        cards += _plan_card(conn, app["id"], here, busy="plan" in open_kinds or "tailor" in open_kinds,
+                            written=bool(versions))
+    if versions:
+        cards += _tailor_card(conn, app, found, versions, here, private_dir)
+    return (f'<section class="decide decide-apply" aria-labelledby="decide-apply"><h3 id="decide-apply">'
+            f'<span class="step">3</span>Tailor CV and apply</h3><div class="action-row">{"".join(buttons)}</div>'
+            f'{cards}</section>')
 
 
 GATE_TONES = {"no": "danger", "unknown": "neutral"}
 
 
 def _invite_card(conn: sqlite3.Connection, settings: Settings, app: dict, today: str, here: str) -> str:
-    """The card of an application recorded from a recruiter's invitation, only what needs attention: one line
-    with the state and the why line (search.gate_line; the CV fit once, out of 10), the gates that say no or
-    unknown, the week's Top 5 rank, a note when the recruiter's answer named the job, and the reply drafted for
-    it (editable, with Copy) or that it is being drafted. "" for any other application."""
+    """The card of an application recorded from a recruiter's invitation, only what sections 1 and 2 do not
+    already say: one line with the state and the why line (search.gate_line; the CV fit once, out of 10), the
+    week's Top 5 rank, a note when the recruiter's answer named the job, and the reply drafted for it (editable,
+    with Copy) or that it is being drafted. The gates that say no or unknown are the panel's red flags and
+    questions. "" for any other application."""
     inv = db.invitation_for_app(conn, app["id"])
     if inv is None:
         return ""
@@ -2979,10 +3148,6 @@ def _invite_card(conn: sqlite3.Connection, settings: Settings, app: dict, today:
         if row["job"]["score"] is None:
             line += " · CV fit " + ("being checked" if "cv_fit" in open_kinds else "not checked yet")
         body += f'<p class="why">{h(line)}</p>'
-        look = search.attention(row)
-        if look:
-            body += ('<ul class="gate-list">' + "".join(f'<li>{h(label)}: {_badge(v, GATE_TONES[v])}</li>'
-                                                       for label, v in look) + "</ul>")
         week = search.week_start(today)
         rank = next((p["rank"] for p in db.week_picks(conn, week) if p["getjo_job_id"] == inv["job_id"]), None)
         if rank is not None:
@@ -2995,18 +3160,6 @@ def _invite_card(conn: sqlite3.Connection, settings: Settings, app: dict, today:
     elif asked and asked[-1]["status"] in db.WAITING:
         body += '<p class="muted"><span class="spinner" aria-hidden="true"></span> Drafting the reply…</p>'
     return _artifact("card-invite", "LinkedIn invitation", "", "", body)
-
-
-def _employer_select(app: dict, here: str) -> str:
-    """Product / Client / Unknown for the application, saved on change (a Save button without the script)."""
-    current = app["employer_kind"] or ""
-    options = "".join(f'<option value="{v}"{" selected" if v == current else ""}>{label}</option>'
-                      for v, label in (("product", "Product"), ("client", "Client"), ("", "Unknown")))
-    return ('<form method="post" action="/applications/employer" class="inline employer-form" data-ajax="refresh">'
-            f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-            '<label class="muted" for="employer-kind">Employer</label> '
-            f'<select id="employer-kind" name="employer_kind" data-autosubmit>{options}</select>'
-            '<noscript>' + _button("Save", "ghost", "sm") + '</noscript></form>')
 
 
 def _comments_section(conn: sqlite3.Connection, app_id: int) -> str:
@@ -3033,114 +3186,6 @@ def _short_day(stamp: str | None) -> str:
     except ValueError:
         return stamp
     return f"{day.day} {day:%b}"
-
-
-def _shortcuts(conn: sqlite3.Connection, app: dict, found: dict, versions: list[dict], here: str) -> str:
-    """Tailor CV · Just write it · Mark applied · Skip, the primary actions. Company research and the CV fit
-    (queued on entering Interested) show here only while queued ("Researching…") or, never asked for, as a
-    button; a result is its card below, with Open and Redo. The tailored CV's state links to its card. Mark
-    applied and Skip act while the application is Interested, and show the outcome afterwards."""
-    profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
-
-    def queue(kind: str, label: str) -> str:
-        return ('<form method="post" action="/applications/research" class="inline">'
-                f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="kind" value="{kind}">'
-                f'<input type="hidden" name="return" value="{h(here)}">' + _button(label, "secondary", "sm") + "</form>")
-
-    def busy(label: str) -> str:
-        return f'<button class="btn btn-ghost btn-sm is-busy" disabled><span class="spinner" aria-hidden="true"></span>{h(label)}</button>'
-
-    def done(card: str, label: str) -> str:
-        return f'<a class="btn btn-secondary btn-sm is-done" href="#{card}" data-jump="{card}">{h(label)}</a>'
-
-    def state(text: str) -> str:
-        return f'<button class="btn btn-ghost btn-sm is-done" disabled>{h(text)}</button>'
-
-    buttons = []
-    if "research" in open_kinds:
-        buttons.append(busy("Researching…"))
-    elif not profile:
-        buttons.append(queue("research", "Research company"))
-    if "cv_fit" in open_kinds:
-        buttons.append(busy("Checking CV fit…"))
-    elif not fit:
-        buttons.append(queue("cv_fit", "CV fit"))
-    plan = db.tailor_plan(conn, app["id"])
-    if "tailor" in open_kinds:
-        buttons.append(busy("Tailoring…"))
-    elif "plan" in open_kinds:
-        buttons.append(busy("Planning…"))
-    elif versions:
-        sent = (" · sent" if app.get("cv_sent_version") == versions[-1]["version"]
-                else f" · sent v{app['cv_sent_version']}" if app.get("cv_sent_version") else "")
-        buttons.append(done("card-tailor", f"CV v{versions[-1]['version']}{sent}"))
-    elif plan:
-        buttons.append(done("card-plan", "Plan agreed" if plan["status"] == "agreed" else "Plan ready"))
-    else:  # plan-first; Just write it skips the plan for a role that needs only small changes
-        buttons.append(queue("plan", "Tailor CV"))
-        buttons.append('<form method="post" action="/applications/research" class="inline">'
-                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="kind" value="tailor">'
-                       f'<input type="hidden" name="return" value="{h(here)}">'
-                       '<button class="btn btn-ghost btn-sm" title="Skip the plan: the CV is written straight away">'
-                       'Just write it</button></form>')
-    if app["status"] == "to_apply":
-        buttons.append(f'<form method="post" action="/applications/apply" class="inline" data-ajax="applied">'
-                       f'<input type="hidden" name="app_id" value="{h(app["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-                       + _button("Mark applied", size="sm") + "</form>")
-        skip_url = "/applications/skip?" + urlencode([("app", app["id"]), ("return", here)])
-        buttons.append(f'<a class="btn btn-ghost btn-sm" href="{h(skip_url)}" data-skip="{h(app["id"])}" '
-                       'data-skip-field="app_id" data-skip-action="/applications/skip" '
-                       f'data-skip-label="{h(app["company"])} — {h(app["role"])}" data-after="refresh">Skip</a>')
-    elif app["status"] == "skipped":
-        buttons.append(state("Skipped"))
-    elif app["date_applied"]:
-        buttons.append(state(f"Applied · {_short_day(app['date_applied'])}"))
-    return (f'<section class="shortcuts" aria-label="Shortcuts"><div class="action-row">{"".join(buttons)}</div>'
-            + _panel_draft(conn, app["id"])
-            + _draft_form(here, app_id=app["id"], source=db.draft_source(conn, app["id"])) + "</section>")
-
-
-def _draft_form(here: str, app_id: int | None = None, job_id: str | None = None, source: dict | None = None) -> str:
-    """Draft a reply (folded): what to write (reply, follow-up, thank-you note), the channel, the recruiter's
-    message pasted in and the user's notes. Posts a draft request about this application, this job offer
-    or (neither) the whole search; the draft comes back in the Applications Assistant box with Copy.
-    `source` (db.draft_source): the message a reply answers when nothing is pasted, named under the box."""
-    about = (f'<input type="hidden" name="app_id" value="{h(app_id)}">' if app_id is not None
-             else f'<input type="hidden" name="job_id" value="{h(job_id)}">' if job_id else "")
-    kinds = "".join(f'<option value="{k}">{h(db.COMMS_LABELS[k])}</option>' for k in db.COMMS_KINDS if k != "invite")
-    channels = "".join(f'<label class="draft-channel"><input type="radio" name="channel" value="{c}"'
-                       f'{" checked" if c == "linkedin" else ""}> {h(db.CHANNEL_LABELS[c])}</label>'
-                       for c in db.CHANNELS)
-    if source is None:
-        placeholder, uses = "Paste the recruiter's message (LinkedIn or email). Needed for a reply.", ""
-    else:
-        placeholder = "Paste the recruiter's message, or leave it empty to use your message below."
-        uses = (f'<input type="hidden" name="source_id" value="{h(source["id"])}">'
-                f'<p class="muted draft-uses">Left empty, a reply uses your '
-                f'message of {h(_local_time(source["created_at"]))}: “{h(db.source_preview(source["body"]))}”</p>')
-    return ('<details class="draft-reply"><summary>Draft a reply</summary>'
-            '<form method="post" action="/applications/draft" class="ask draft-form" data-ajax="draft">'
-            f'{about}<input type="hidden" name="return" value="{h(here)}">'
-            f'<div class="draft-row"><select name="comms" aria-label="What to write">{kinds}</select>'
-            f'<span class="draft-channels" role="radiogroup" aria-label="Channel">{channels}</span></div>'
-            f'<textarea name="pasted" rows="4" maxlength="{db.MAX_MESSAGE}" aria-label="Their message" '
-            f'placeholder="{h(placeholder)}"></textarea>{uses}'
-            '<textarea name="notes" rows="2" maxlength="2000" aria-label="What I want to say" '
-            'placeholder="What to say, optional: available Tue/Wed after 2, ask about hybrid…"></textarea>'
-            '<div class="ask-foot"><span class="muted">A draft to copy. Nothing is sent.</span>'
-            + _button("Draft", size="sm") + "</div></form></details>")
-
-
-def _panel_tasks(tasks: list[dict], today: str, here: str) -> str:
-    """Open tasks with a tick that marks them done (a direct action; Undo in the toast)."""
-    rows = "".join(
-        '<tr><td class="tick-cell"><form method="post" action="/tasks/done" class="inline" data-ajax="tick">'
-        f'<input type="hidden" name="task_id" value="{h(t["id"])}"><input type="hidden" name="return" value="{h(here)}">'
-        f'<button class="tick" aria-label="Mark done: {h(t["title"])}" title="Mark done">☐</button></form></td>'
-        f'<td>{h(t["title"])}</td><td class="due-cell">{_due(t["due_date"], today)}</td></tr>'
-        for t in tasks)
-    body = f'<table class="mini tasks-list"><tbody>{rows}</tbody></table>' if rows else '<p class="muted">No open tasks.</p>'
-    return f'<section class="panel-tasks"><h3>Tasks <span class="count">{len(tasks)}</span></h3>{body}</section>'
 
 
 def _redo(app_id: int, kind: str, here: str, label: str = "Redo") -> str:
@@ -3173,71 +3218,71 @@ def _fit_tone(score: int) -> str:
     return "s9" if score >= 4 else ("s6" if score == 3 else "s3")
 
 
-def _research_cards(app: dict, found: dict, versions: list[dict], here: str, private_dir: Path | None = None,
-                    check: dict | None = None, notes: dict | None = None, conn: sqlite3.Connection | None = None) -> str:
-    """The Notes card (always, when `notes` is given: db.get_notes), then the agent's results, each with
-    Open and Redo: company research (with the tier the research set and why), the CV fit with its top
-    gaps, and the tailored CV: the latest version (with its PDF, its check's verdict, flagged lines and
-    changes vs cv.md: `check`) and the sent one (marked), the rest folded under "Older versions". A result card shows once there is a result;
-    queued work shows on its shortcut button."""
-    profile, fit, open_kinds = found["profile"], found["fit"], found["open"]
-    cards = [_notes_card(app["id"], notes, here)] if notes is not None else []
-    if profile:
-        size = " · ".join(x for x in (
-            profile["size_band"] and f'{profile["size_band"]} people',
-            profile["sector"],
-            profile["recognition"] and db.RECOGNITION_LABELS.get(profile["recognition"], profile["recognition"]),
-            profile["london_remote"],
-        ) if x)
-        body = (f'<p>{h(profile["what_it_does"])}</p>' if profile["what_it_does"] else "")
-        body += f'<p class="muted">{h(size)}</p>' if size else ""
+def _profile_card(profile: dict, app: dict | None, open_kinds: set | None, here: str) -> str:
+    """The company research card in section 1's More: what it does, size and sector, the tier (an
+    application's, with the research's reason), Open (the full file) and Redo for an application."""
+    size = " · ".join(x for x in (
+        profile["size_band"] and f'{profile["size_band"]} people',
+        profile["sector"],
+        profile["recognition"] and db.RECOGNITION_LABELS.get(profile["recognition"], profile["recognition"]),
+        profile["london_remote"],
+    ) if x)
+    body = (f'<p>{h(profile["what_it_does"])}</p>' if profile["what_it_does"] else "")
+    body += f'<p class="muted">{h(size)}</p>' if size else ""
+    actions = ""
+    if app is not None:
         tier = app["tier"] or profile["suggested_tier"]
         if tier:
             why = profile["tier_reason"] if tier == profile["suggested_tier"] else None
             body += f'<p>{_tier_badge(tier)}' + (f' {h(why)}' if why else "") + "</p>"
-        actions = _open_link(app["id"], "research") + ("" if "research" in open_kinds else _redo(app["id"], "research", here))
-        cards.append(_artifact("card-research", "Company research",
-                               f' <span class="mono muted">{h(profile["researched_at"])}</span>', actions, body))
-    if fit:
-        gaps = ('<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>") if fit["top_gaps"] else ""
-        actions = _open_link(app["id"], "cv_fit") + ("" if "cv_fit" in open_kinds else _redo(app["id"], "cv_fit", here))
-        score = _badge(f'{fit["score"]}/5', _fit_tone(fit["score"]))
-        meta = f' {score} <span class="mono muted">{h(fit["checked_at"])}</span>'
-        cards.append(_artifact("card-fit", "CV fit", meta, actions, gaps))
-    if conn is not None and db.tailor_plan(conn, app["id"]):
-        cards.append(_plan_card(conn, app["id"], here, busy="plan" in open_kinds or "tailor" in open_kinds,
-                                written=bool(versions)))
-    if versions:
-        summary = check.get("summary") if check else None
-        ai = ("done" if summary and not summary.get("stale") else "pending" if "cv_eval" in open_kinds
-              else "stale" if summary else "none")
+        actions = _open_link(app["id"], "research") + ("" if "research" in (open_kinds or set())
+                                                       else _redo(app["id"], "research", here))
+    return _artifact("card-research", "Company research",
+                     f' <span class="mono muted">{h(profile["researched_at"])}</span>', actions, body)
 
-        def item(v: dict) -> str:
-            return (f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
-                    f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
-                    + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
-                    + _open_link(app["id"], "tailor", version=v["version"])
-                    + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check, ai) if v is versions[-1] else "")
-                    + "</li>")
-        shown = [v for v in reversed(versions) if v is versions[-1] or v["version"] == app.get("cv_sent_version")]
-        older = [v for v in reversed(versions) if v not in shown]
-        actions = ("" if "tailor" in open_kinds else _redo(app["id"], "tailor", here, "New from cv.md"))
-        if ai in ("none", "stale"):  # the AI check costs a model pass, so it runs only when asked for
-            actions = _redo(app["id"], "cv_eval", here, "AI check" if ai == "none" else "AI check again") + actions
-        tools = ""
-        if conn is not None:
-            actions = _undo_form(conn, app["id"], versions[-1]["version"], here) + actions
-            tools = _tailor_tools(conn, app, versions[-1], here, private_dir)
-        sent = app.get("cv_sent_version") == versions[-1]["version"]
-        hint = ("Edit the CV here: every save keeps the text before it (Undo). "
-                + (f"v{versions[-1]['version']} was sent, so an edit is saved as the next version. " if sent else "")
-                + "Lines starting with %% are comments for the assistant; they never reach the PDF. "
-                "Tell the assistant which file you sent.")
-        body = (f'<ul class="versions">{"".join(map(item, shown))}</ul>'
-                + _older_versions("".join(map(item, older)), len(older), "ul", "versions")
-                + _check_body(check, versions[-1]["version"], ai) + tools + f'<p class="muted">{h(hint)}</p>')
-        cards.append(_artifact("card-tailor", "Tailored CV", "", actions, body))
-    return f'<section class="panel-results"><h3>Results</h3>{"".join(cards)}</section>' if cards else ""
+
+def _fit_card(app: dict, found: dict, here: str) -> str:
+    """The CV fit card in section 1's More: the score, its top gaps, Open and Redo."""
+    fit = found["fit"]
+    gaps = ('<ul class="gaps">' + "".join(f"<li>{h(g)}</li>" for g in fit["top_gaps"]) + "</ul>") if fit["top_gaps"] else ""
+    actions = _open_link(app["id"], "cv_fit") + ("" if "cv_fit" in found["open"] else _redo(app["id"], "cv_fit", here))
+    meta = f' {_badge(str(fit["score"]) + "/5", _fit_tone(fit["score"]))} <span class="mono muted">{h(fit["checked_at"])}</span>'
+    return _artifact("card-fit", "CV fit", meta, actions, gaps)
+
+
+def _tailor_card(conn: sqlite3.Connection, app: dict, found: dict, versions: list[dict], here: str,
+                 private_dir: Path | None) -> str:
+    """The tailored CV card: the latest version (with its PDF, its check's verdict, flagged lines and changes vs
+    cv.md) and the sent one (marked), the rest folded under "Older versions"; the editor and its tools."""
+    open_kinds = found["open"]
+    check = db.cv_check(conn, app["id"], versions[-1]["version"])
+    summary = check.get("summary") if check else None
+    ai = ("done" if summary and not summary.get("stale") else "pending" if "cv_eval" in open_kinds
+          else "stale" if summary else "none")
+
+    def item(v: dict) -> str:
+        return (f'<li><span class="mono version-name">{h(Path(v["file_path"]).name)}</span>'
+                f'<span class="muted">{h(_short_day(v["created_at"]))}</span>'
+                + (_badge("sent", "s9") if app.get("cv_sent_version") == v["version"] else "")
+                + _open_link(app["id"], "tailor", version=v["version"])
+                + (_pdf_link(private_dir, app["id"], v) + _verdict_badge(check, ai) if v is versions[-1] else "")
+                + "</li>")
+    shown = [v for v in reversed(versions) if v is versions[-1] or v["version"] == app.get("cv_sent_version")]
+    older = [v for v in reversed(versions) if v not in shown]
+    actions = ("" if "tailor" in open_kinds else _redo(app["id"], "plan", here, "New from cv.md"))
+    if ai in ("none", "stale"):  # the AI check costs a model pass, so it runs only when asked for
+        actions = _redo(app["id"], "cv_eval", here, "AI check" if ai == "none" else "AI check again") + actions
+    actions = _undo_form(conn, app["id"], versions[-1]["version"], here) + actions
+    tools = _tailor_tools(conn, app, versions[-1], here, private_dir)
+    sent = app.get("cv_sent_version") == versions[-1]["version"]
+    hint = ("Edit the CV here: every save keeps the text before it (Undo). "
+            + (f"v{versions[-1]['version']} was sent, so an edit is saved as the next version. " if sent else "")
+            + "Lines starting with %% are comments for the assistant; they never reach the PDF. "
+            "Tell the assistant which file you sent.")
+    body = (f'<ul class="versions">{"".join(map(item, shown))}</ul>'
+            + _older_versions("".join(map(item, older)), len(older), "ul", "versions")
+            + _check_body(check, versions[-1]["version"], ai) + tools + f'<p class="muted">{h(hint)}</p>')
+    return _artifact("card-tailor", "Tailored CV", "", actions, body)
 
 
 def _older_versions(items: str, count: int, tag: str, cls: str) -> str:
@@ -3319,7 +3364,7 @@ def _plan_card(conn: sqlite3.Connection, app_id: int, here: str, busy: bool = Fa
               + ("" if busy else '<button class="btn btn-secondary btn-sm" formaction="/applications/plan/write" '
                  f'data-plan-write>Save and {h(write_label.lower())}</button>')
               + f'<a class="btn btn-ghost btn-sm" href="{h(here)}" data-notes-cancel>Cancel</a>'
-              '<span class="muted">Markdown. Keep the four ## sections.</span></p></form></details>')
+              '<span class="muted">Markdown. Keep the ## sections.</span></p></form></details>')
     body = (count + f'<div class="doc plan-doc">{render_markdown(tailorplan.display(text), "<p class=muted>The plan file is empty.</p>")}</div>'
             + f'<div class="action-row">{editor}{write}</div>')
     return (f'<section class="artifact plan-card" id="card-plan" data-swap><div class="artifact-head">'

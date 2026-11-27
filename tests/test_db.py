@@ -499,7 +499,8 @@ class MigrationTest(unittest.TestCase):
 
 
 class ReviewTaskTest(DbTest):
-    """Interested adds no Apply task; "Review research and apply" follows once both results are in."""
+    """Interested adds no task, and none follows the research: the panel shows the next step itself. An old open
+    "Review research and apply" (made before 27 Nov 2026) is still done on Applied."""
     PROFILE = {"company": "Acme", "file_path": "/x/companies/acme.md", "researched_at": "2026-03-09",
                "suggested_tier": "A"}
 
@@ -511,53 +512,18 @@ class ReviewTaskTest(DbTest):
         app_id, _ = db.record_application(self.conn, company, "Engineer", status="to_apply", today=TODAY)
         return app_id
 
-    def test_created_once_both_results_are_in_either_order(self) -> None:
-        review = [("Review research and apply", "apply", "2026-03-12", "to_apply")]
-        first = self.interested()
-        self.assertEqual(self.open_titles(first), [])
-        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
-        self.assertEqual(self.open_titles(first), [], "only research is in")
-        db.save_cv_fit(self.conn, first, 4, [], "/x/fit/1-acme.md", "2026-01-01")  # an old checked_at
-        self.assertEqual([t[:2] for t in self.open_titles(first)], [review[0][:2]])
-        # the other order: CV fit first, then the company save adds it
-        second = self.interested("Globex")
-        db.save_cv_fit(self.conn, second, 3, [], "/x/fit/2-globex.md", TODAY)
-        self.assertEqual(self.open_titles(second), [])
-        db.save_company_profile(self.conn, "globex", {**self.PROFILE, "company": "Globex"}, today=TODAY)
-        self.assertEqual(self.open_titles(second), review)
-
-    def test_redo_adds_no_second_one_while_open(self) -> None:
+    def test_no_task_when_both_results_are_in(self) -> None:
         app_id = self.interested()
         db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
         db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/1-acme.md", TODAY)
-        db.queue_request(self.conn, app_id, "research", force=True)
-        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
-        db.save_cv_fit(self.conn, app_id, 5, [], "/x/fit/1-acme.md", TODAY)
-        self.assertEqual(len(self.open_titles(app_id)), 1)
+        self.assertEqual(self.open_titles(app_id), [])
 
-    def test_not_after_moving_on_and_done_on_applied(self) -> None:
-        later = self.interested()
-        db.move_application(self.conn, later, "applied", TODAY)
-        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
-        db.save_cv_fit(self.conn, later, 4, [], "/x/fit/1-acme.md", TODAY)
-        self.assertNotIn("Review research and apply", [t[0] for t in self.open_titles(later)])
-        # a second role at the same company gets it, and Applied marks it done
-        app_id = self.interested()
-        db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/2-acme.md", TODAY)
-        self.assertEqual(self.open_titles(app_id)[0][0], "Review research and apply")
-        db.move_application(self.conn, app_id, "applied", TODAY)
-        done = [t["status"] for t in db.list_tasks(self.conn, None)
-                if t["application_id"] == app_id and t["title"] == "Review research and apply"]
-        self.assertEqual(done, ["done"])
-
-    def test_old_apply_task_stays_and_review_is_added(self) -> None:
+    def test_old_review_and_apply_tasks_are_done_on_applied(self) -> None:
         app_id = self.interested()
         old = db.add_task(self.conn, "Apply", "apply", "2026-03-13", app_id, stage="to_apply")  # made before
-        db.save_company_profile(self.conn, "acme", self.PROFILE, today=TODAY)
-        db.save_cv_fit(self.conn, app_id, 4, [], "/x/fit/1-acme.md", TODAY)
-        self.assertEqual({t[0] for t in self.open_titles(app_id)}, {"Review research and apply", "Apply"})
+        review = db.add_task(self.conn, db.REVIEW_TASK[0], "apply", None, app_id, stage="to_apply")
         db.move_application(self.conn, app_id, "applied", TODAY)
-        self.assertEqual(db.get_task(self.conn, old)["status"], "done")
+        self.assertEqual([db.get_task(self.conn, t)["status"] for t in (old, review)], ["done", "done"])
 
     def test_backfill_still_tags_old_apply_tasks(self) -> None:
         self.assertIn(("Apply", "apply", 3), db.RETIRED_STAGE_TASKS["to_apply"])

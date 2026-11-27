@@ -146,7 +146,8 @@ class GateTest(InviteBase):
         code, out, _ = self.save("--to", str(msg), "--company", "Northwind Robotics", "--role", "Lead AI Engineer",
                                  screen=SCREEN.replace('team = "yes"', 'team = "no"'))
         self.assertEqual(code, 0)
-        self.assertIn("failed: level, team size", out)
+        self.assertIn("failed: level:", out)  # a team of one is a red flag in the panel, never a gate
+        self.assertNotIn("team size", out)
         with self.conn() as conn:
             inv = db.invitations(conn, named=True)[-1]
             self.assertEqual(db.get_application(conn, inv["application_id"])["status"], "to_apply")
@@ -174,7 +175,8 @@ class GateTest(InviteBase):
         card = panel[panel.index('id="card-invite"'):panel.index("</section>", panel.index('id="card-invite"'))]
         self.assertIn("Passes all gates · 8/10 CV fit · strong company · builds agents", card)
         self.assertNotIn("4/5", card)  # the fit once, out of 10
-        self.assertIn("pay: <span", card)  # only what needs a look: unknown or no
+        self.assertNotIn("pay:", card)  # what needs a look is in sections 1 and 2, not repeated here
+        self.assertIn("What is the pay range?", panel)  # a question for the call
         self.assertNotIn("sector:", card)
         self.assertNotIn("tailoring plan", card)  # Tailor CV is the one way to start it
         self.assertIn("Top 5 this week · #1", card)
@@ -208,8 +210,8 @@ class FormTest(InviteBase):
             msg = db.thread(conn)[-1]
         self.assertEqual((msg["comms"], msg["channel"], msg["application_id"]), ("invite", "linkedin", None))
         self.assertEqual(self.post_json("/applications/invite", {"pasted": " "})[0], 400)
-        self.assertEqual(self.post_json("/applications/draft", {"comms": "invite", "channel": "linkedin",
-                                                                "pasted": INVITE})[0], 400)
+        self.assertEqual(self.post("/applications/draft", {"comms": "invite", "channel": "linkedin",
+                                                           "pasted": INVITE})[0], 404)  # no such route any more
 
     def test_invitation_draft_is_editable_in_the_box(self) -> None:
         msg = self.request(VAGUE)

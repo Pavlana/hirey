@@ -2,7 +2,7 @@
   "about": "Which doc pages own which code. python -m prep.docs_check --changed BASE fails when code in a rule changed but none of its docs did, unless the pull request says 'Docs: not needed, <reason>'. Patterns are fnmatch globs from the repository root ('*' also crosses '/').",
   "ignore": ["prep/__init__.py", "*/__pycache__/*", "*.pyc"],
   "rules": [
-    {"name": "Dashboard pages and routes", "code": ["prep/web.py"],
+    {"name": "Dashboard pages and routes", "code": ["prep/web.py", "prep/decision.py"],
      "docs": ["docs/reference/*.md", "docs/how-it-works.md", "docs/usage.md"]},
     {"name": "Dashboard look and behaviour", "code": ["prep/static/*"],
      "docs": ["docs/reference/*.md", "docs/screenshots/*", "docs/usage.md"]},

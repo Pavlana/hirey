@@ -21,7 +21,9 @@ class StopTest(ResendCancelBase):
         return status, json.loads(body)
 
     def test_no_stop_when_nothing_waits(self) -> None:
-        self.assertNotIn(STOP, self.get(f"/?app={ACME}")[2])
+        self.assertIn(STOP, self.get(f"/?app={ACME}")[2])  # opening it queued its research, CV fit and brief
+        self.post_json("/applications/stop", {"panel_app": str(ACME)})
+        self.assertNotIn(STOP, self.get(f"/?app={ACME}")[2])  # never queued twice
 
     def test_stop_cancels_every_waiting_message_but_not_learn(self) -> None:
         with self.conn() as conn:

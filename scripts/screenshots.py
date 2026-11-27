@@ -40,12 +40,24 @@ def _invite_app() -> int:
     return row[0] if row else 0
 
 
+def _interested_app() -> int:
+    """An example application at Interested that is not from an invitation (the application panel's shot)."""
+    import sqlite3
+    with sqlite3.connect(ROOT / "data" / "example.db") as conn:
+        row = conn.execute("SELECT id FROM applications WHERE status = 'to_apply' AND id NOT IN "
+                           "(SELECT application_id FROM invitations WHERE application_id IS NOT NULL) "
+                           "ORDER BY id LIMIT 1").fetchone()
+    return row[0] if row else 0
+
+
 def shots() -> dict[str, tuple[str, int, int]]:
     """name -> (path and query, width, height). Page-level only: no clicks needed."""
     return {
         "applications": ("/", 1440, 950),
         "new-offers": ("/?view=offers", 1440, 950),
         "linkedin-invitation": (f"/?app={_invite_app()}", 1440, 950),
+        "offer-panel": ("/?view=offers&job=ashby%3Ainitrode-ai%3Aa1", 1440, 1500),
+        "application-panel": (f"/?app={_interested_app()}", 1440, 1300),
         "pipeline-stats": ("/stats", 1440, 1300),
         "run-history": ("/runs", 1440, 950),
         "evals": ("/evals", 1440, 1500),
@@ -59,7 +71,6 @@ BY_HAND = {
     "learn": "a Learn card with its explainer and the floating chat open",
     "workers-sidebar": "the Workers sidebar with a working, an idle and a stuck worker",
     "workers-popover-stop": "a worker's popover with the Stop choice open",
-    "draft-reply-form": "the Draft a reply form open and filled",
     "draft-linkedin": "a LinkedIn draft in the thread",
     "draft-email": "an email draft in the thread",
 }

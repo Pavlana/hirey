@@ -211,13 +211,14 @@ class CliTest(IsolatedTestCase):
         code, out, err = self.run_cli("fit", "save", str(self.app))
         self.assertEqual(code, 0, err)
         self.assertIn("4/5, 4 gaps (4 new", out)
-        self.assertIn(f"both results in for #{self.app}: added #", out)
-        self.assertIn("[apply] Review research and apply due", out)
+        self.assertNotIn("Review research and apply", out)  # no task follows: the panel shows the next step
         self.assertEqual(self.run_cli("queue")[1], "")
         with closing(db.connect(self.prep_db)) as conn:
             second, _ = db.record_application(conn, "Globex Labs", "Manager", status="to_apply")
-        out = self.run_cli("research", "next", str(second))[1]
-        self.assertIn("reuse it", out)
+            kinds = {r["kind"] for r in db.open_requests(conn, second)}
+        self.assertEqual(kinds, {"cv_fit"})  # the company's profile is reused: no second research
+        out = self.run_cli("research", "queue", str(second), "--kind", "research")[1]
+        self.assertIn("reuse it", self.run_cli("research", "next", str(second))[1])
 
     def test_save_errors(self) -> None:
         code, _, err = self.run_cli("fit", "save", str(self.app))
@@ -292,18 +293,26 @@ class DashboardTest(WebTestCase):
 
     @staticmethod
     def shortcuts(panel: str) -> str:
-        return panel[panel.index('class="shortcuts"'):panel.index('class="panel-tasks"')]
+        """Section 3, Tailor CV and apply."""
+        return panel[panel.index('class="decide decide-apply"'):panel.index('class="panel-quiet"')]
 
-    def test_buttons_queue_then_show_pending_then_redo(self) -> None:
+    @staticmethod
+    def company(panel: str) -> str:
+        """Section 1, Company and red flags (its More included)."""
+        return panel[panel.index('class="decide decide-company"'):panel.index('class="decide decide-questions"')]
+
+    def test_opening_queues_research_and_fit_once_then_redo(self) -> None:
         panel = self.panel(self.MDE)
-        self.assertIn(">Research company</button>", self.shortcuts(panel))
+        self.assertIn("Researching…", self.company(panel))
+        self.assertIn("Checking CV fit…", self.company(panel))
         self.assertNotIn('id="card-research"', panel)  # no card before a result
-        status, headers, _ = self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
-        self.assertEqual((status, headers["Location"]), (303, f"/?app={self.MDE}&msg=research_queued"))
-        self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})  # again: no change
         with self.conn() as conn:
-            self.assertEqual(len(db.open_requests(conn, self.MDE)), 1)
-        self.assertIn("Researching…</button>", self.shortcuts(self.panel(self.MDE)))
+            self.assertEqual({r["kind"] for r in db.open_requests(conn, self.MDE)}, {"research", "cv_fit"})
+            db.cancel_requests(conn, self.MDE)  # Stop: opening again never asks twice
+        self.panel(self.MDE)
+        with self.conn() as conn:
+            self.assertEqual(db.open_requests(conn, self.MDE), [])
+            self.assertEqual(db.get_application(conn, self.MDE)["status"], "to_apply")  # never changed
         self.assertEqual(self.post("/applications/research", {"app_id": self.MDE, "kind": "nope"})[0], 400)
 
         write(self.private / "companies" / "massive-dynamic-example.md", PROFILE)
@@ -311,14 +320,25 @@ class DashboardTest(WebTestCase):
             db.save_company_profile(conn, "massive-dynamic-example", research.read_profile(
                 self.private / "companies" / "massive-dynamic-example.md"))
         panel = self.panel(self.MDE)
-        self.assertNotIn("Research", self.shortcuts(panel))  # the result is its card, with Redo: not a button
-        card = panel[panel.index('id="card-research"'):]
-        self.assertIn("Makes &lt;b&gt;example&lt;/b&gt; widgets.", card)
+        self.assertNotIn("Researching…", panel)
+        self.assertIn("<p>Makes &lt;b&gt;example&lt;/b&gt; widgets.</p>", self.company(panel))  # the summary, escaped
+        card = panel[panel.index('id="card-research"'):]  # under More
         self.assertIn(f"/research/file?app={self.MDE}&amp;kind=research", card)
         self.assertIn(">Redo</button>", card)
         self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
         with self.conn() as conn:
             self.assertEqual(db.open_requests(conn, self.MDE)[0]["force"], 1, "Redo forces new research")
+
+    def test_research_of_the_company_is_reused_for_its_other_jobs(self) -> None:
+        with self.conn() as conn:
+            other, _ = db.record_application(conn, "Massive Dynamic Example", "Other role", status="to_apply")
+            db.cancel_requests(conn, other)
+        self.panel(self.MDE)  # queues the company's research once
+        self.panel(other)
+        with self.conn() as conn:
+            kinds = [(r["application_id"], r["kind"]) for r in db.open_requests(conn) if r["kind"] == "research"
+                     and r["application_id"] in (self.MDE, other)]
+        self.assertEqual(kinds, [(self.MDE, "research")])
 
     def save_both(self) -> None:
         profile = write(self.private / "companies" / "massive-dynamic-example.md", PROFILE)
@@ -329,11 +349,11 @@ class DashboardTest(WebTestCase):
 
     def test_results_and_tier_in_the_panel(self) -> None:
         self.post("/offers/interested", {"job_id": "lever:globex-labs:abc"})  # unrelated, queues its own work
-        self.post("/applications/research", {"app_id": self.MDE, "kind": "research"})
-        self.assertIn("Researching…", self.shortcuts(self.panel(self.MDE)))
+        self.assertIn("Researching…", self.company(self.panel(self.MDE)))
         self.save_both()
         panel = self.panel(self.MDE)
-        self.assertNotIn("CV fit", self.shortcuts(panel))  # primary actions only: the result is its card
+        self.assertNotIn("CV fit", self.shortcuts(panel))  # primary actions only: the result is in section 1
+        self.assertIn("CV fit 4/5", self.company(panel))
         self.assertIn(">Tailor CV</button>", self.shortcuts(panel))
         company = panel[panel.index('id="card-research"'):panel.index('id="card-fit"')]
         self.assertIn(">Tier A</span></p>", company)  # the fixture's tier A, not the research's B: no B reason
@@ -341,10 +361,10 @@ class DashboardTest(WebTestCase):
         with self.conn() as conn:
             db.update_application(conn, self.MDE, tier="B")
             titles = [t["title"] for t in db.app_tasks(conn)[self.MDE]]
-        self.assertIn("Review research and apply", titles)
+        self.assertNotIn("Review research and apply", titles)  # no review task
         self.assertIn(">Tier B</span> Decent fit, less known.", self.panel(self.MDE))  # with the research's reason
         self.post("/applications/research", {"app_id": self.MDE, "kind": "cv_fit"})  # Redo
-        self.assertIn("Checking CV fit…", self.shortcuts(self.panel(self.MDE)))
+        self.assertIn("Checking CV fit…", self.company(self.panel(self.MDE)))
 
     def test_apply_from_the_panel(self) -> None:
         status, headers, _ = self.post("/applications/apply", {

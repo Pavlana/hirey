@@ -15,6 +15,7 @@ the script adds, and one section per page. Every endpoint is listed in [routes.m
 - [Polling](#polling)
 - [Applications page: Pipeline view](#applications-page-pipeline-view)
 - [The application panel](#the-application-panel)
+  - [Red flags and questions](#red-flags-and-questions)
 - [Applications page: New offers view](#applications-page-new-offers-view)
 - [The offer panel](#the-offer-panel)
 - [Other pages](#other-pages)
@@ -216,35 +217,58 @@ All · Product · Client sits beside Show closed.
 
 ## The application panel
 
-Top to bottom:
+A decision page: it answers what the company is and which red flags the job shows, what to clarify on the
+recruiter call, then Tailor CV and apply. Top to bottom (`web._panel`):
 
 1. **Header**: company, role, stage badge with interview step dots, "N days in this stage", the job
-   posting link, the "closed" badge when it applies, the Product or Client label beside the company and
-   an Employer select (Product / Client / Unknown) that posts `/applications/employer` on change, the
-   "Ask about this" tick, ✕ to the same view without `app`.
-2. **Job brief** or the readable description with Write brief (only with a getjo job;
-   [research.md](research.md)); for an application from a recruiter's invitation, the **LinkedIn
-   invitation** card instead ([search.md](search.md#recruiters-invitations)).
-3. **Latest comment** with the number of earlier ones, read-only.
-4. **Shortcut row** (`web._shortcuts`):
-   - the primary actions: Tailor CV and Just write it queue a request (`/applications/research`), show
-     "Planning…" / "Tailoring…" while it is open, and once there is a result link to its card
-     ("Plan ready", "CV v2 · sent");
-   - company research and the CV fit, queued on entering Interested, show here only while open
-     ("Researching…", "Checking CV fit…"); a result is its card under Results, with Open and Redo. An
-     application where they were never asked for gets Research company and CV fit buttons;
-   - Mark applied and Skip while Interested, afterwards a disabled "Applied · 3 Nov" or "Skipped"
-     ([applications.md](applications.md#mark-applied-and-skip));
-   - Draft a reply, folded ([assistants.md](assistants.md#draft-a-reply-communication-worker)).
-5. **Tasks**, each with a ☐ tick that posts `/tasks/done`.
-6. **Results**, always shown:
-   - the Notes card (Edit, Save, Cancel; [applications.md](applications.md#notes));
-   - one card per result with Open and Redo: company research with its tier and reason, CV fit with its
-     top gaps, Tailored CV ([cvs.md](cvs.md)).
-7. **History**: the stage changes newest first in a collapsed `<details>`.
+   posting link, the "closed" badge when it applies, ✕ to the same view without `app`.
+2. **Recommendation** (`web._recommendation`), from the CV fit's "## Recommendation" section: the verdict
+   (Apply, Stretch: apply only if cheap, Skip) with its sentence and the CV fit score, then short lists:
+   gaps that matter less, gaps that are real, in its favour, what would decide it, if you apply
+   ([research.md](research.md#the-recommendation)). "Written with the CV fit…" while the fit is queued.
+3. **1. Company and red flags** (`web._decide_company`): what the company does, one facts line (size,
+   sector, "Product company" or "Client delivery", where), the engineering team and the interview style,
+   the job brief's key facts and "What the role needs" (its Must-haves), the CV fit badge, then the red
+   flags ([how they are built](#red-flags-and-questions)). "Researching…" while the company research or
+   the brief is being written. **More** holds the full brief (with Write brief / Redo brief and Show
+   original), the company research card and the CV fit card, each with Open and Redo.
+4. **2. Questions to clarify**: the questions for the recruiter call, each with Copy, and Copy all; the pay
+   question is marked "ask on the call" and is never copied. Under them the latest reply draft (editable,
+   with Copy) and, for an application from a recruiter's invitation, the **LinkedIn invitation** card: its
+   gate line, Top 5 rank and reply draft ([search.md](search.md#recruiters-invitations)).
+5. **3. Tailor CV and apply**: Tailor CV (always a plan first; "Planning…" / "Tailoring…" while open), Mark
+   applied and Skip while Interested, afterwards a disabled "Applied · 3 Nov" or "Skipped"
+   ([applications.md](applications.md#mark-applied-and-skip)); then the Tailoring plan and Tailored CV
+   cards ([cvs.md](cvs.md)).
+6. Quiet: the Notes card ([applications.md](applications.md#notes)), the latest comment (read-only) and the
+   stage history, collapsed.
 
-The panel has no other forms but Notes and Employer: tasks, comments, stage, interview dates, tier and
-the sent CV are changed by the agent through the Applications Assistant box.
+Opening the panel of an open application queues its company research, CV fit and job brief **once** when
+they are missing (`web._research_on_open`, `db.requested_kinds`): never when one was ever asked for, and no
+research when the company has a profile or another application at it has research queued. A fit written
+while the job was an offer is taken over (`db.adopt_job_fit`). It never changes the application.
+
+The panel has no tasks, no Draft a reply form, no Employer select and no "Ask about this" tick (removed on
+27 Nov 2026: the row's tick does that, the employer kind comes from the research, a follow-up or thank-you
+note is asked in the Applications Assistant box). Its only forms are Notes, the plan and CV editors and the
+buttons above; tasks, comments, stage, tier and the sent CV are changed through the Applications Assistant.
+
+![An application's panel: the recommendation, the company and red flags, questions, Tailor CV and apply](../screenshots/application-panel.png)
+
+### Red flags and questions
+
+`prep/decision.py` builds both in plain code from what is stored:
+
+- **Red flags**: a gate that says no (level, location, interview style, sector, role family, a stated pay
+  below the floor), team size (a team of one; an unclear team once the ad is screened), client delivery,
+  a contract, the research's `red_flags` and the brief's "## Red flags / notable" bullets, duplicates
+  dropped. Team size is never a gate ([search.md](search.md#the-criteria-file)).
+- **Questions** (about 4-6, recruiter-call level, never technical): a fixed template where the answer is not
+  known (interview stages and what to prepare always; AI team size; office days unless the key facts or
+  the research say; the product without a research summary; the level), up to two of the research's
+  `call_questions`, and pay last, call only.
+
+`python -m prep.cli thread show APP` prints both for the Applications Assistant.
 
 ## Applications page: New offers view
 
@@ -286,16 +310,24 @@ are shared with the Pipeline view.
 ## The offer panel
 
 `job=<getjo id>` opens it. A tracked job opens its application's panel instead; an unknown id is
-ignored.
+ignored. It is the research and decision stage only: everything on it helps decide whether the role is
+interesting.
 
-- Company, role, score, location, seen date, the posting link (http(s) only), the chips.
-- Interested · Skip; a skipped job shows "Skipped · reason" and Undo skip.
-- The "Ask about this" tick and Draft a reply.
-- The job brief, or while there is none the description from getjo made readable
-  (`getjo.job_description`, read-only, escaped; a job getjo no longer has says so).
+- Header: company, role, score, location, seen date, the posting link (http(s) only), the chips.
+- The **Recommendation**, **1. Company and red flags** (with "What the role needs") and More (the brief or
+  the description from getjo made readable, `getjo.job_description`, read-only, escaped; no Write brief or
+  Redo button), as in the application panel. The company research is shared by every job at the company.
+- **2. Still unknown**: the same questions, read only (no Copy until it is Interested).
+- **3. Decide**: Interested · Skip; a skipped job shows "Skipped · reason" and Undo skip.
+- Opening it queues the job brief with its screen, the company check, the company research and the CV fit
+  with its recommendation, once, keyed by the job id (`web._queue_briefs`, `db.queue_job_fit` for an offer
+  briefed before job fits). Nothing is tracked and no status changes; Interested hands the fit to the new
+  application.
 - Interested (`/offers/interested`) and `/offers/apply` redirect to `/?app=ID` (JSON: `redirect`,
   `app_id`, `created`), built from the application id only; skip and unskip return to the `return`
   URL.
+
+![A job offer's panel: the recommendation, what the role needs, red flags, what is still unknown](../screenshots/offer-panel.png)
 
 ## Other pages
 

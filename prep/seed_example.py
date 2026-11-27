@@ -140,8 +140,8 @@ LATENCY = {"claude-opus-5-5": 9, "claude-sonnet-5-5": 4, "claude-fable-5-1": 16}
 
 
 def add_search_example(path: Path, data: dict, today: str) -> None:
-    """New offers' Top 5 on made-up data: company checks, job screens, briefs, a skip and last week's picks
-    (`days_before` days back) in the prep.db at `path`."""
+    """New offers' Top 5 on made-up data: company checks, job screens, briefs, a company profile and a job offer's
+    CV fit with its recommendation, a skip and last week's picks (`days_before` days back) in the prep.db at `path`."""
     from prep import search
     conn = db.connect(path)
     try:
@@ -151,6 +151,15 @@ def add_search_example(path: Path, data: dict, today: str) -> None:
             db.save_screen(conn, s["job"], {k: v for k, v in s.items() if k != "job"})
         for b in data.get("briefs", []):
             db.save_brief(conn, b["job"], b["brief"])
+        for p in data.get("profiles", []):  # company research summaries, with the panel's fields
+            db.save_company_profile(conn, db.company_slug(p["company"]), p)
+        for f in data.get("job_fits", []):  # a job offer's CV fit and its recommendation
+            db.save_job_fit(conn, f["job"], f["score"], f["gaps"], "fit/job-example.md", today, f["recommendation"])
+        apps = {a["company"]: a["id"] for a in db.list_applications(conn)}
+        for f in data.get("app_fits", []):  # an application's CV fit and its recommendation
+            if f["company"] in apps:
+                db.save_cv_fit(conn, apps[f["company"]], f["score"], f["gaps"], "fit/example.md", today,
+                               f["recommendation"])
         for d in data.get("decisions", []):
             db.record_decision(conn, {"id": d["job"]}, d["decision"], d.get("reason"))
         for p in data.get("picks", []):
