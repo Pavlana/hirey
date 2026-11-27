@@ -132,7 +132,10 @@ def _role_heading(match: re.Match) -> str:
 
 
 def _role_paragraph(match: re.Match) -> str:
-    """"**Title — Company**, City, 2019–2024": the title, then city and dates, then the company line."""
+    """"**Title — Company**, City, 2019–2024": the title, then city and dates, then the company line. A bold
+    line with neither " — " nor ", place/dates" after it (a bold link, a bold note) stays a bold paragraph."""
+    if " — " not in match.group(1) and not match.group(2):
+        return match.group(0)
     title, _, org = match.group(1).partition(" — ")
     return _role(title, match.group(2).lstrip(",").strip(), org)
 
