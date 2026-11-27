@@ -240,8 +240,10 @@ Recruiter conversations stay in LinkedIn and the mail app; Hirey drafts the repl
   named under the box ("Left empty, a reply uses your message of Nov 26, 14:02: '…'"). With no such
   message, a reply needs the paste. A follow-up or a thank-you note needs none.
 
-The draft arrives in the Applications Assistant box with **Copy** (email: **Copy subject** and **Copy
-body**); paste it and send it yourself. Nothing is sent from Hirey. An interview the message books is
+A draft about an application appears in that application's panel (the latest draft, under the
+shortcuts), editable, with **Copy** (email: **Copy subject** and **Copy body**); the box shows one line
+pointing there. A draft about the whole search stays in the box, editable too. Edit it, copy it and send
+it yourself. Nothing is sent from Hirey. An interview the message books is
 recorded on the application; a rejection or anything else is only proposed in the note above the
 draft. Without a Comms worker the Applications Assistant writes the draft; with neither set, run
 /reply in any Claude Code session.
